@@ -12,8 +12,10 @@ Using buildroot as a submodule makes it easy to build custom-br-configs-and-pack
     make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output
 
 ## Available Configs
+
 ```zynqmp_zcu106_defconfig``` (Xilinx Zynq Ultrascale+ SoC evaluation board)
 ```zynq_ebaz4205_defconfig``` (Refurbished crypto miner board based on Xilinx Zynq)
+
 
 ## Build Options
 ```BR2_DL=/some/path``` : Keeping buildroot download folder in a out-of-tree location(using ```BR2_DL_DIR```) helps to reduce the build time by avoiding repeated downloads of source-packages.
