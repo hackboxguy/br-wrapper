@@ -8,6 +8,7 @@ Using buildroot as a submodule makes it easy to build custom-br-configs-and-pack
 
 ## Build steps
     git clone --recursive https://github.com/hackboxguy/br-wrapper.git
+    cd br-wrapper
     make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output <config_name>
     make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output
 
@@ -27,9 +28,19 @@ Building the embedded linux image with buildroot is a time consuming task which 
     screen -R my-br-session
     cd ~/
     git clone --recursive https://github.com/hackboxguy/br-wrapper.git
+    cd br-wrapper
     make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output zynqmp_zcu106_defconfig
-    make -C buildroot BR2_DL_DIR=../../br-dl O=../../br-output
+    make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output
 press Ctr+a and then d to detatch from the buildroot-shell-terminal.
+
 Use following command to re-attach to  buildroot-shell-terminal
 
     screen -r my-br-session
+
+## How to build br-wrapper's custom-board-config with specific version of mainline-buildroot?
+    git clone --recursive https://github.com/hackboxguy/br-wrapper.git
+    cd br-wrapper/buildroot/
+    git checkout 2021.02.x
+    cd ..
+    make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output zynqmp_zcu106_defconfig
+    make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output
