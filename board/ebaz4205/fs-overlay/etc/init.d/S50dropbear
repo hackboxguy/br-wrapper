@@ -23,12 +23,13 @@ start() {
 		sync
 	fi
 
+	# NOTE: dss key generation is not supported by dropbear anymore
 	# Check for the Dropbear DSS key
-	if [ ! -f ${CONFIG_PATH}/etc/dropbear/dropbear_dss_host_key ] ; then
-		echo -n "generating dsa key... "
-		/usr/bin/dropbearkey -t dss -f ${CONFIG_PATH}/etc/dropbear/dropbear_dss_host_key > /dev/null 2>&1
-		sync
-	fi
+	#if [ ! -f ${CONFIG_PATH}/etc/dropbear/dropbear_dss_host_key ] ; then
+	#	echo -n "generating dsa key... "
+	#	/usr/bin/dropbearkey -t dss -f ${CONFIG_PATH}/etc/dropbear/dropbear_dss_host_key > /dev/null 2>&1
+	#	sync
+	#fi
 
 	# Check for the Dropbear ECDSA key
 	if [ ! -f ${CONFIG_PATH}/etc/dropbear/dropbear_ecdsa_host_key ] ; then
