@@ -23,7 +23,7 @@ Using buildroot as a submodule makes it easy to build custom-br-configs-and-pack
 ```O=/some/path``` : Saperating the buildroot output folder using ```O=``` option helps in development where multiple build configurations are built.
     
 ## Build tips
-Building the embedded linux image with buildroot is a time consuming task which may take few minutes to few hours depending on the pc-hw and board-configuration. Incase if you are bulding on a powerful remote server, use screen session to attach and detect from the buildroot shell terminal as shown below
+Building the embedded linux image with buildroot is a time consuming task which may take few minutes to few hours depending on the pc-hw and board-configuration. Incase if you are bulding on a powerful remote server, use screen session to attach and detach from the buildroot shell terminal as shown below
         
     screen -R my-br-session
     cd ~/
@@ -31,7 +31,7 @@ Building the embedded linux image with buildroot is a time consuming task which 
     cd br-wrapper
     make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output zynqmp_zcu106_defconfig
     make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output
-press Ctr+a and then d to detatch from the buildroot-shell-terminal.
+press Ctr+a and then d to detach from the buildroot-shell-terminal.
 
 Use following command to re-attach to  buildroot-shell-terminal
 
