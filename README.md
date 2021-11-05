@@ -31,7 +31,7 @@ Building the embedded linux image with buildroot is a time consuming task which 
     cd br-wrapper
     make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output zynqmp_zcu106_defconfig
     make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output
-press Ctr+a and then d to detach from the buildroot-shell-terminal.
+press ```Ctr+a``` and then ```d``` to detach from the buildroot-shell-terminal.
 
 Use following command to re-attach to  buildroot-shell-terminal
 
