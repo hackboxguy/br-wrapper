@@ -1,0 +1,1 @@
+source "$BR2_EXTERNAL_BRWRAPPER_PATH/package/Config.in"
