@@ -1,0 +1,5 @@
+config BR2_PACKAGE_XILINX_TEST_TOOLS
+        bool "xilinx-test-tools"
+        default n
+        help
+          set of utils used in testing or demo purpose on xilinx fpga+soc platforms(e.g zynq)
