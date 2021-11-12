@@ -1,10 +1,12 @@
 machine_name=zynq-zed
 kernel_image=/boot/uImage
-loadkernel=ext4load mmc 0:2 ${kernel_load_address} ${kernel_image}
+loadkernel=ext4load mmc 0:${active_disk} ${kernel_load_address} ${kernel_image}
 devicetree_image=/boot/zynq-zed.dtb
-loaddtb=ext4load mmc 0:2 ${devicetree_load_address} ${devicetree_image}
+loaddtb=ext4load mmc 0:${active_disk} ${devicetree_load_address} ${devicetree_image}
 bootargs=earlyprintk console=ttyPS0,115200 ro rootwait root=/dev/mmcblk0p2 rootfs=ext4
+active_disk_args=setenv bootargs earlyprintk console=ttyPS0,115200 ro rootwait root=/dev/mmcblk0p${active_disk} rootfs=ext4
 bitstream_image=zynq-zed-top.bin
 bitstream_type=load
 fpga_config=fpga ${bitstream_type} 0 ${bitstream_load_address} ${filesize}
-sdboot=if mmcinfo; then run uenvboot;echo Copying Linux from SD to RAM...; run loadkernel && run loaddtb ; echo Handoff to Linux kernel...;bootm ${kernel_load_address} - ${devicetree_load_address}; fi
+sdboot=if mmcinfo; then run uenvboot;echo Copying Linux from SD to RAM...; run loadkernel && run loaddtb && run active_disk_args; echo Handoff to Linux kernel...;bootm ${kernel_load_address} - ${devicetree_load_address}; fi
+active_disk=2
