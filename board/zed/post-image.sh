@@ -3,7 +3,7 @@ BOARD_DIR="$( dirname "${0}" )"
 
 IMAGE_UENV="uEnv.txt" #TODO: 
 IMAGE_FPGA="zed_top.bin" #TODO: for future
-#cp "${BOARD_DIR}/${IMAGE_UENV}" "${BINARIES_DIR}"
+cp "${BOARD_DIR}/${IMAGE_UENV}" "${BINARIES_DIR}"
 #cp "${BOARD_DIR}/${IMAGE_FPGA}" "${BINARIES_DIR}"
 
 #create blank settings image of 64MB in ext3 type to be mounted on target at /mnt/.settings from /dev/mmcblk0p4
