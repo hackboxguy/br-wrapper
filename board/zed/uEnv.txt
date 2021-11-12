@@ -1,9 +1,9 @@
 machine_name=zynq-zed
 kernel_image=/boot/uImage
-loadkernel=ext2load mmc 0:2 ${kernel_load_address} ${kernel_image}
+loadkernel=ext4load mmc 0:2 ${kernel_load_address} ${kernel_image}
 devicetree_image=/boot/zynq-zed.dtb
-loaddtb=ext2load mmc 0:2 ${devicetree_load_address} ${devicetree_image}
-bootargs=earlyprintk console=ttyPS0,115200 root=/dev/mmcblk0p2 ro rootwait rootfs=ext2
+loaddtb=ext4load mmc 0:2 ${devicetree_load_address} ${devicetree_image}
+bootargs=earlyprintk console=ttyPS0,115200 ro rootwait root=/dev/mmcblk0p2 rootfs=ext4
 bitstream_image=zynq-zed-top.bin
 bitstream_type=load
 fpga_config=fpga ${bitstream_type} 0 ${bitstream_load_address} ${filesize}
