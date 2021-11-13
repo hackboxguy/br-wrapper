@@ -61,16 +61,16 @@ update is needed, just copy output/update-image.swu to /tmp of the zedboard
 
 
 What changes/extensions have been added to buildroot's zynq_zed_defconfig?
-1)updated u-boot version to xilinx-v2019.2
-2)updated kernel version to xlnx_rebase_v5.10
-3)added automatic sdcard image creation with 4 partitions for dual-copy OTA mechanism
-4)added required uEnv.txt for booting the system from sdcard with correct bootmarker.
-5)added 4th partition as settings partition, i.e /mnt/.settings stores all persistent data
-6)enabled dropbear ssh, and for the first boot-up from sdcard, required rsa and ecdsa
+1)Updated u-boot version to xilinx-v2019.2
+2)Updated kernel version to xlnx_rebase_v5.10
+3)Added automatic sdcard image creation with 4 partitions for dual-copy OTA mechanism
+4)Added required uEnv.txt for booting the system from sdcard with correct bootmarker.
+5)Added 4th partition as settings partition, i.e /mnt/.settings stores all persistent data
+6)Enabled dropbear ssh, and for the first boot-up from sdcard, required rsa and ecdsa
   keys are generated and stored at persistent location /mnt/.settings/etc/dropbear
-7)configured the system to get the ip from dhcp server.
+7)Configured the system to get the ip from dhcp server.
 8)Enabled swupdate over-the-air sw update mechanism(OTA is only available for sdcard)
-9)enabled webUI of swupdated for updating the system using web-browser.
-10)added auto creation of OTA update image(i.e output/update-image.swu) which also
-  includes the version spefied during make of buildroot(BRIMAGE_VERSION)
+9)Enabled webUI of swupdate for updating the system using web-browser.
+10)Added auto creation of OTA update image(i.e output/update-image.swu) which also
+  includes the version spefied during buildroot make(BRIMAGE_VERSION)
 

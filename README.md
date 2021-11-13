@@ -15,6 +15,7 @@ Using buildroot as a submodule makes it easy to build custom-br-configs-and-pack
 ## Available Configs
 1. ```zynqmp_zcu106_defconfig``` (Xilinx Zynq Ultrascale+ SoC evaluation board)
 2. ```zynq_ebaz4205_defconfig``` (Refurbished crypto miner board based on Xilinx Zynq)
+3. ```zynq_zed_defconfig``` (Xilinx Zynq-7000 based zed-board from digilent: www.zedboard.org)
 
 
 ## Build Options
