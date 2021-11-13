@@ -1,0 +1,54 @@
+#!/bin/sh
+
+DAEMON="swupdate"
+DAEMON_WRAPPER="/usr/bin/swupdate" #"/usr/lib/swupdate/swupdate.sh"
+PIDFILE="/var/run/$DAEMON.pid"
+
+PART_STATUS=$(cat /proc/cmdline | grep -o "root=/dev/mmcblk0p.")
+if test "${PART_STATUS}" = "root=/dev/mmcblk0p2" ; then
+	NEXT_ROOTFS="rootfs-2"
+else
+	NEXT_ROOTFS="rootfs-1"
+fi
+
+start() {
+	printf 'Starting %s: ' "$DAEMON"
+	start-stop-daemon -S -q -b -m -p "$PIDFILE" -x $DAEMON_WRAPPER -- -v -f /etc/swupdate/swupdate.cfg -L -e rootfs,$NEXT_ROOTFS 
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
+}
+
+stop() {
+	printf 'Stopping %s: ' "$DAEMON"
+	start-stop-daemon -K -q -p "$PIDFILE"
+	status=$?
+	if [ "$status" -eq 0 ]; then
+		echo "OK"
+	else
+		echo "FAIL"
+	fi
+	return "$status"
+}
+
+restart() {
+	stop
+	sleep 1
+	start
+}
+
+case "$1" in
+	start|stop|restart)
+		"$1";;
+	reload)
+		# Restart, since there is no true "reload" feature (does not
+		# reconfigure/restart on SIGHUP, just closes all open files).
+		restart;;
+	*)
+		echo "Usage: $0 {start|stop|restart|reload}"
+		exit 1
+esac

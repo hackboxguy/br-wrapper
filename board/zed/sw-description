@@ -7,7 +7,7 @@ software = {
 			{
 				name = "rootfs-1";
 				version = "0.1.0";
-				install-if-different = true;
+				install-if-different = false;
 				filename = "rootfs.ext4.gz";
 				compressed = "zlib";
 				device = "/dev/mmcblk0p2";
@@ -18,7 +18,7 @@ software = {
 			{
 				name = "rootfs-2";
 				version = "0.1.0";
-				install-if-different = true;
+				install-if-different = false;
 				filename = "rootfs.ext4.gz";
 				compressed = "zlib";
 				device = "/dev/mmcblk0p3";
