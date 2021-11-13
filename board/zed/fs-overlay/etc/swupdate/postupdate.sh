@@ -1,4 +1,9 @@
 #!/bin/sh
+#this script is called after swupdate has updated the required rootfs partition,
+#after updating the non-active rootfs, this script when called as a last step, it would
+#flip the boot marker in uEnv.txt which resides in /dev/mmcblk0p1(FAT boot partition)
+#after flipping the boot marker, linux system will be rebooted, after reboot,
+#next time u-boot would boot the system with updated rootfs which becomes active rootfs
 
 BOOT_PARTITION=/dev/mmcblk0p1
 
