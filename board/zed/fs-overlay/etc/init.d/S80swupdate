@@ -13,7 +13,7 @@ fi
 
 start() {
 	printf 'Starting %s: ' "$DAEMON"
-	start-stop-daemon -S -q -b -m -p "$PIDFILE" -x $DAEMON_WRAPPER -- -v -f /etc/swupdate/swupdate.cfg -L -e rootfs,$NEXT_ROOTFS 
+	start-stop-daemon -S -q -b -m -p "$PIDFILE" -x $DAEMON_WRAPPER -- -v -f /etc/swupdate/swupdate.cfg -L -e rootfs,$NEXT_ROOTFS -w "-r /var/www/swupdate -p 8080"
 	status=$?
 	if [ "$status" -eq 0 ]; then
 		echo "OK"
