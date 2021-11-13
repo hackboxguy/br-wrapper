@@ -3,8 +3,8 @@ This configuration is tested on Rev-E of ZedBoard.
 
 Steps to create a bootable sdcard.img for ZedBoard:
 1) Configuration
-   make zynq_zed_defconfig
-2) make BRIMAGE_VERSION=0.1.1  (provided version is optional for 
+   make BR2_EXTERNAL=../ zynq_zed_defconfig
+2) make BR2_EXTERNAL=../ BRIMAGE_VERSION=0.1.1  (provided version is optional for 
    for including the version in OTA image for swupdate)
 3) In output/images directory, there will 2 files which are required for
    zedboard.
@@ -28,7 +28,7 @@ How to build zedboard bootable-sdcard image from scratch:
 	d)make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output \
           BRIMAGE_VERSION=0.1.1
 
-Sdcard image partitions(defined in board/zed/genimage.cfg):
+Automatically generated Sdcard image partitions(defined in board/zed/genimage.cfg):
 +-------------+----------+------+---------------------------------------------+
 | partition   | file     | Size |     Description                             |
 |             | system   |      |                                             |
@@ -42,7 +42,7 @@ Sdcard image partitions(defined in board/zed/genimage.cfg):
 |    4        |  EXT3    | 64MB | writing settings partition                  |
 +-------------+----------+----------------------------------------------------+
 
-As shows above, sdcard image uses dual copy rootfs where all sw-components including
+As shown above, sdcard image uses dual copy rootfs where all sw-components including
 Kernel are packed.
 sdcard.img contains bootable files in 1st partition and ext4 rootfs in 2nd partition.
 partition-3 is kept blank, and partition-4 is blank but ext3 formatted.
