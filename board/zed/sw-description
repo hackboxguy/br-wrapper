@@ -1,9 +1,13 @@
 software = {
 	version = "0.1.0";
-	rootfs = {
+
+	rootfs =  {
 		rootfs-1: {
 			images: (
 			{
+				name = "rootfs-1";
+				version = "0.1.0";
+				install-if-different = true;
 				filename = "rootfs.ext4.gz";
 				compressed = "zlib";
 				device = "/dev/mmcblk0p2";
@@ -12,10 +16,13 @@ software = {
 		rootfs-2: {
 			images: (
 			{
+				name = "rootfs-2";
+				version = "0.1.0";
+				install-if-different = true;
 				filename = "rootfs.ext4.gz";
 				compressed = "zlib";
 				device = "/dev/mmcblk0p3";
 			});
 		}
-	}
+	};
 }
