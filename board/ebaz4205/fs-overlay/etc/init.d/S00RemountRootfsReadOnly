@@ -1,0 +1,36 @@
+#!/bin/sh
+#
+# Start logging
+#
+STTNGS_PARTITION=/dev/mmcblk0p4
+TARGET_MOUNT_POINT=/mnt/.settings
+start() {
+	echo -n "Remounting / as readonly: "
+	mount -o remount,ro /
+	echo "OK"
+}
+
+stop() {
+	echo -n "Unmounting readonly Partition: "
+	#just do nothing 
+	#umount /
+	echo "OK"
+}
+
+case "$1" in
+  start)
+	start
+	;;
+  stop)
+	stop
+	;;
+  restart|reload)
+	stop
+	start
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?
