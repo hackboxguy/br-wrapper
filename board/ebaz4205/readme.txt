@@ -81,3 +81,9 @@ What changes/extensions have been added to buildroot's zynq_ebaz4205_defconfig?
 8)Added auto creation of OTA update image(i.e output/update-image.swu) which also
   includes the version spefied during buildroot make(BRIMAGE_VERSION)
 
+
+Q: I have added some more fpga-logic to my ebaz4205_top.bin, how can I include updated fpga
+image in the build?
+A: just overwrite existing br-wrapper/board/ebaz4205/ebaz4205_top.bin and re-trigger the build.
+newly generated output/sdcard.img or output/update-image.swu will include latest fpga config which
+gets configured by u-boot before loading kernel.
