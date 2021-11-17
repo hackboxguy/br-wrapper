@@ -57,7 +57,9 @@ update is needed, just copy output/update-image.swu to /tmp of the zedboard
 		drag and drop the update-image.swu in the sw-update page,
 		after update, system will flip the boot marker in boot-partition:uEnv.txt,
 		so that during next reboot, u-boot would load uImage+rootfs from
-		flipped rootfs partition.
+		flipped rootfs partition(as of now, whole update process takes around
+                37seconds starting from drag_n_drop_in_browser+update+reboot, this may
+                increas if rootfs size increases due to added packages).
 
 
 What changes/extensions have been added to buildroot's zynq_zed_defconfig?
