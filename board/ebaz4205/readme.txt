@@ -63,7 +63,7 @@ is needed, just copy output/update-image.swu to /tmp of the ebaz4205-board
 	1)using browser, open http://ez4205-board-ip:8080
 		drag and drop the update-image.swu in the sw-update page,
 		after update, system will flip the boot marker in boot-partition:uEnv.txt,
-		so that during next reboot, u-boot would load uImage+rootfs from
+		so that during next reboot, u-boot would load uImage+rootfs+fpga_top.bin from
 		flipped rootfs partition(as of now, whole update process takes around
                 37seconds starting from drag_n_drop_in_browser+update+reboot, this may
                 increas if rootfs size increases due to added packages).
