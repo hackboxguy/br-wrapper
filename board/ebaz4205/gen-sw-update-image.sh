@@ -9,6 +9,9 @@ IMG_FILES="sw-description rootfs.ext4.gz"
 
 sed -i "s|version = *.*|version = \"$BRIMAGE_VERSION\";|" ${BINARIES_DIR}/sw-description
 
+#BOARD_NAME="$(basename ${BOARD_DIR})"
+#sed -i "s|TestHWType|$BOARD_NAME|" ${BINARIES_DIR}/sw-description
+
 #cd into binary director
 cd ${BINARIES_DIR}
 

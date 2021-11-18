@@ -12,3 +12,6 @@ cp "${BOARD_DIR}/${IMAGE_FPGA}" "${TARGET_DIR}/boot/"
 echo "software $BRIMAGE_VERSION" > ${TARGET_DIR}/etc/sw-versions
 echo "rootfs-1 $BRIMAGE_VERSION" >> ${TARGET_DIR}/etc/sw-versions
 echo "rootfs-2 $BRIMAGE_VERSION" >> ${TARGET_DIR}/etc/sw-versions
+#needed for swupdate to hw-compatibility check during update
+BOARD_NAME="$(basename ${BOARD_DIR})"
+echo "$BOARD_NAME 1.0" > ${TARGET_DIR}/etc/hwrevision

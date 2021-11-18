@@ -1,8 +1,9 @@
 software = {
 	version = "0.1.0";
-
+	ebaz4205 = {
 	rootfs =  {
 		rootfs-1: {
+			hardware-compatibility = [ "1.0" ];
 			images: (
 			{
 				name = "rootfs-1";
@@ -14,6 +15,7 @@ software = {
 			});
 		}
 		rootfs-2: {
+			hardware-compatibility = [ "1.0" ];
 			images: (
 			{
 				name = "rootfs-2";
@@ -24,5 +26,6 @@ software = {
 				device = "/dev/mmcblk0p3";
 			});
 		}
+	};
 	};
 }
