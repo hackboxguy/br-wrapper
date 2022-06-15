@@ -1,0 +1,27 @@
+diff -ruN linux-headers-v5.15.36-rt41.orig/drivers/tty/serial/stm32-usart.c linux-headers-v5.15.36-rt41/drivers/tty/serial/stm32-usart.c
+--- linux-headers-v5.15.36-rt41.orig/drivers/tty/serial/stm32-usart.c	2022-05-02 01:59:00.000000000 +0200
++++ linux-headers-v5.15.36-rt41/drivers/tty/serial/stm32-usart.c	2022-06-15 21:37:54.626515335 +0200
+@@ -494,9 +494,10 @@
+ 		stm32_usart_receive_chars(port, false);
+ 
+ 	if ((sr & USART_SR_TXE) && !(stm32_port->tx_ch)) {
+-		spin_lock(&port->lock);
+-		stm32_usart_transmit_chars(port);
+-		spin_unlock(&port->lock);
++		//spin_lock(&port->lock);
++		//stm32_usart_transmit_chars(port);
++		//spin_unlock(&port->lock);
++		return IRQ_WAKE_THREAD;	
+ 	}
+ 
+ 	if (stm32_port->rx_ch)
+@@ -509,6 +510,9 @@
+ {
+ 	struct uart_port *port = ptr;
+ 	struct stm32_port *stm32_port = to_stm32_port(port);
++	spin_lock(&port->lock);
++        stm32_usart_transmit_chars(port);
++        spin_unlock(&port->lock);
+ 
+ 	if (stm32_port->rx_ch)
+ 		stm32_usart_receive_chars(port, true);
