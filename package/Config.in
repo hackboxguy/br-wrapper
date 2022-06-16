@@ -1,1 +1,2 @@
 source "$BR2_EXTERNAL_BRWRAPPER_PATH/package/xilinx-test-tools/Config.in"
+source "$BR2_EXTERNAL_BRWRAPPER_PATH/package/preemptrt-gpiotest/Config.in"
