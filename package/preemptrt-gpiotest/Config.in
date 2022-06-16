@@ -1,0 +1,6 @@
+config BR2_PACKAGE_PREEMPTRT_GPIOTEST
+        bool "preemptrt-gpiotest"
+        select BR2_PACKAGE_LIBGPIOD
+	default n
+        help
+          A utility used for testing the preempt-rt latency on gpio pin using an oscilloscope
