@@ -1,0 +1,35 @@
+#!/bin/sh
+#
+# mount boot partition to read some of the settings
+#
+BOOT_PARTITION=/dev/mmcblk0p1
+TARGET_MOUNT_POINT=/mnt/certs/
+start() {
+	echo -n "Mounting Boot Partition: "
+	mount $BOOT_PARTITION $TARGET_MOUNT_POINT
+	echo "OK"
+}
+
+stop() {
+	echo -n "Unmounting Boot Partition: "
+	umount $TARGET_MOUNT_POINT
+	echo "OK"
+}
+
+case "$1" in
+  start)
+	start
+	;;
+  stop)
+	stop
+	;;
+  restart|reload)
+	stop
+	start
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?

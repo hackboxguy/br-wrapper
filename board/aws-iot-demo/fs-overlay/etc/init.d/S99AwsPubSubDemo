@@ -1,0 +1,42 @@
+#!/bin/sh
+#
+# startup script for aws-pub-sub-demo
+#
+
+get_certificate(){
+	CERT_FILE = $(find /mnt/certs | grep *certificate.pem.crt)
+	return $CERT_FILE
+}
+get_key(){
+	KEY_FILE = $(find /mnt/certs | grep *private.pem.key)
+	return $KEY_FILE
+}
+start() {
+	echo -n "Starting Aws-pub-sub-demo: "
+	get_certificate
+	get_key	
+	echo "OK"
+}
+
+stop() {
+	echo -n "Stopping Aws-pub-sub-demo: "
+	echo "OK"
+}
+
+case "$1" in
+  start)
+	start
+	;;
+  stop)
+	stop
+	;;
+  restart|reload)
+	stop
+	start
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?
