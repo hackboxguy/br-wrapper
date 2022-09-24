@@ -1,0 +1,6 @@
+config BR2_PACKAGE_AWS_IOT_PUBSUB_AGENT
+        bool "aws-iot-pubsub-agent"
+        select BR2_PACKAGE_AWS_IOT_DEVICE_SDK_CPP_V2
+	default n
+        help
+          A demo pub-sub client agent for connecting to aws-iot-core
