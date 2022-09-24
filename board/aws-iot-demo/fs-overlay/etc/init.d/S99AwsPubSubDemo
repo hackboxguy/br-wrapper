@@ -2,24 +2,69 @@
 #
 # startup script for aws-pub-sub-demo
 #
-
-get_certificate(){
-	CERT_FILE = $(find /mnt/certs | grep *certificate.pem.crt)
-	return $CERT_FILE
-}
-get_key(){
-	KEY_FILE = $(find /mnt/certs | grep *private.pem.key)
-	return $KEY_FILE
-}
+CONF_FILE_PATH=/mnt/certs/aws-iot-pubsub-agent.conf
+AWS_AGENT=aws-iot-pubsub-agent
 start() {
-	echo -n "Starting Aws-pub-sub-demo: "
-	get_certificate
-	get_key	
+	echo "Starting Aws-pub-sub-demo: "
+	if [ -f /mnt/certs/*certificate.pem.crt ]; then
+		CERT_FILE=$(ls /mnt/certs/|grep "certificate.pem.crt")
+		CERT_FILE_ARG="/mnt/certs/$CERT_FILE"
+	else
+		echo "Missing CERT_FILE!!"
+		return 1
+	fi
+	if [ -f /mnt/certs/*private.pem.key ]; then
+		KEY_FILE=$(ls /mnt/certs/|grep "private.pem.key")
+		KEY_FILE_ARG="/mnt/certs/$KEY_FILE"
+	else
+		echo "Missing KEY_FILE!!"
+		return 1
+	fi
+
+        #dong ask user for AmazonRootCA file, we already have it in our rootfs
+	if [ -f /etc/AmazonRootCA1.pem ]; then
+		CA_FILE=/etc/AmazonRootCA1.pem
+	else
+		echo "Missing CA_FILE!!"
+		return 1
+	fi
+
+	#check if aws-iot-pubsub-agent.conf exists in /boot partition
+	if [ ! -f "$CONF_FILE_PATH" ]; then
+		echo "Missing $CONF_FILE_PATH!!"
+		return 1
+	fi
+	#endpoint argument must be specified in aws-iot-pubsub-agent.conf else do not start the agent
+	ENDPOINT=$(cat $CONF_FILE_PATH | grep endpoint)
+	if [ $? != 0 ]; then
+		echo "Missing endpoint!!"
+		return 1
+	fi
+	ENDPOINT=$(cat $CONF_FILE_PATH | grep endpoint | awk '{print $2}')
+
+	#check if user has requested a custom log file
+	VERBOSE_FILE=$(cat $CONF_FILE_PATH | grep verbosefile)
+	if [ $? == 0 ]; then
+		VERBOSE_FILE=$(cat $CONF_FILE_PATH | grep verbosefile | awk '{print $2}')
+	else
+		VERBOSE_FILE="/tmp/aws-iot-pubsub-agent.log" #else use default
+	fi
+
+	#check if user has requested a loglevel [Trace/Debug/Info/Warn/Error/Fatal/None]
+	VERBOSE_ARGS=""
+	VERBOSITY=$(cat $CONF_FILE_PATH | grep verbosity)
+	if [ $? == 0 ]; then
+		VERBOSITY=$(cat $CONF_FILE_PATH | grep verbosity | awk '{print $2}')
+		VERBOSE_ARGS="--verbosity $VERBOSITY"
+	fi
+	#start the agent with all required args
+	$AWS_AGENT --ca_file $CA_FILE --cert $CERT_FILE_ARG --key $KEY_FILE_ARG --endpoint $ENDPOINT $VERBOSE_ARGS > $VERBOSE_FILE
 	echo "OK"
 }
 
 stop() {
 	echo -n "Stopping Aws-pub-sub-demo: "
+	#TODO: check if $AWS_AGENT is still runing, if so, then send SIGTERM for gracious shutdown
 	echo "OK"
 }
 
