@@ -5,7 +5,7 @@ This is a buildroot config for generating bootable linux images for various hw b
 ## Maintainer
 	Albert David (albert.david@gmail.com)
 
-## Build steps for creating sdcard image for raspberry-pi-4 hw
+## Build steps for creating AWS-IoT-Demo sdcard image for raspberry-pi-4 hw
     mkdir -o ~/aws-iot-demo/
     cd ~/aws-iot-demo/
     git clone --recursive https://github.com/hackboxguy/br-wrapper.git
@@ -26,3 +26,22 @@ This is a buildroot config for generating bootable linux images for various hw b
 9. Added [aws-iot-pubsub-agent.conf](https://github.com/hackboxguy/br-wrapper/blob/main/board/aws-iot-demo/fs-overlay/etc/aws-iot-pubsub-agent.conf) in boot-partition which is required by the agent in startup script.
 10. During linux boot, added /etc/init.d/S03MountBoot startup scirpt for mounting boot partition in /mnt/certs, this partition will have required certificate, key, and aws-iot-pubsub-agent.conf files
 11. Included startup script [/etc/init.d/S99AwsPubSubDemo](https://github.com/hackboxguy/br-wrapper/blob/main/board/aws-iot-demo/fs-overlay/etc/init.d/S99AwsPubSubDemo) so that aws-iot-pubsub-agent starts publishing configured messages
+
+## Configurable parameters of aws-iot-pubsub-agent utility(/etc/aws-iot-pubsub-agent.conf)
+1. ```endpoint: replace.this.with.your.endpoint``` Endpoint specific to your aws-iot-core accoun: this parameter is a must
+2. ```verbosefile: /tmp/aws-iot-pubsub-agent.log``` An optional parameter to specifiy the logfile path of aws-iot-pubsub-agent utility
+3. ```verbosity: Info``` An optional parameter to specifiy the verbosity of aws-iot-pubsub-agent utility [Trace/Debug/Info/Warn/Error/Fatal/None]
+4. ```publish-interval-sec: 5``` An optional parameter to specifiy the interval between two mqtt publish messages(default is 1sec)
+5. ```total-publish-count: 5``` An optional parameter to specifiy total number of mqtt publish messages (default is 10)
+6. ```publish-message: hello-world``` An optional parameter to specifiy mqtt publish message (default is Hello World)
+7. ```publish-topic: test/topic``` An optional parameter to specifiy mqtt publish topice (default is test/topic)
+
+## Future extensions/improvements(TODO-List)
+1. Make root pw writable so that user can override default pw with custom pw
+2. Add A/B upgrade mechanism using swupdate so that sd-card can be updated from a remote location without removing the card (dual rootfs with failsafe upgrade mechanism)
+3. Extend aws-iot-pubsub-agent to support publishing cpu temperature at a given interval
+4. Extend aws-iot-pubsub-agent to support subscribing for a topic to stress the cpu for simulating the cpu-temperature increase/decrese
+5. Extend aws-iot-pubsub-agent to support USB-OBD2 adapter which can read parameters of a car and publish the topics to aws-iot
+6. Extend aws-iot-pubsub-agent to support subscribing for a topic so that sw-upgrade can be triggered remotely
+7. Extend the Linux image to support usb-tethering for internet access
+8. Create multiple images of AWS-IoT-Demo sdcard for various opensource linux boards(e.g pi-1/pi-2/pi-3/beaglebone/openwrt-hw/etc)
