@@ -6,7 +6,7 @@ This is a buildroot config for generating bootable linux images for various hw b
 	Albert David (albert.david@gmail.com)
 
 ## Build steps for creating AWS-IoT-Demo sdcard image for raspberry-pi-4 hw
-    mkdir -o ~/aws-iot-demo/
+    mkdir -p ~/aws-iot-demo/
     cd ~/aws-iot-demo/
     git clone --recursive https://github.com/hackboxguy/br-wrapper.git
     cd br-wrapper
