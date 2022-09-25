@@ -16,6 +16,9 @@ Using buildroot as a submodule makes it easy to build custom-br-configs-and-pack
 1. ```zynqmp_zcu106_defconfig``` (Xilinx Zynq Ultrascale+ SoC evaluation board)
 2. ```zynq_ebaz4205_defconfig``` (Refurbished crypto miner board based on Xilinx Zynq)
 3. ```zynq_zed_defconfig``` (Xilinx Zynq-7000 based zed-board from digilent: www.zedboard.org)
+4. ```stm32mp157a_dk1rt_defconfig``` (stm32mp157a based board used for evaluating preempt-rt linux)
+5. ```stm32mp157a_dk1_brbox_defconfig``` (stm32mp157a based board with brbox packages)
+6. ```raspberrypi4_aws_iot_defconfig``` (custom linux image for rpi-4 with aws iot demo sdk and utils)
 
 
 ## Build Options
