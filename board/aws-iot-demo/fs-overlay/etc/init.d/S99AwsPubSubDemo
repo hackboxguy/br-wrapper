@@ -78,8 +78,16 @@ start() {
 		TOPIC_ARGS="--topic $TOPIC"
 	fi
 
+	#check if clientid is specified, if available, then use it to publish the topic
+	CLTID_ARGS=""
+	CLTID=$(cat $CONF_FILE_PATH | grep clientid)
+	if [ $? == 0 ]; then
+		CLTID=$(cat $CONF_FILE_PATH | grep clientid | awk '{print $2}')
+		CLTID_ARGS="--client_id $CLTID"
+	fi
+
 	#start the agent with all required args
-	$AWS_AGENT --ca_file $CA_FILE --cert $CERT_FILE_ARG --key $KEY_FILE_ARG --endpoint $ENDPOINT $VERBOSE_ARGS $COUNT_ARGS $TOPIC_ARGS > $VERBOSE_FILE 2>&1
+	$AWS_AGENT --ca_file $CA_FILE --cert $CERT_FILE_ARG --key $KEY_FILE_ARG --endpoint $ENDPOINT $VERBOSE_ARGS $COUNT_ARGS $TOPIC_ARGS $CLTID_ARGS > $VERBOSE_FILE 2>&1
 	echo "OK"
 }
 
