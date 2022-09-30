@@ -1,6 +1,8 @@
 config BR2_PACKAGE_AWS_IOT_DEVICE_SDK_CPP_V2
         bool "aws-iot-device-sdk-cpp-v2"
-        select BR2_PACKAGE_LIBGPIOD
+        select BR2_PACKAGE_HOST_CMAKE
+        select BR2_PACKAGE_LIBCURL
+        select BR2_PACKAGE_LIBTASN1
 	default n
         help
           Next generation AWS IoT Client SDK for C++ using the AWS Common Runtime
