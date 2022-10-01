@@ -86,8 +86,16 @@ start() {
 		CLTID_ARGS="--client_id $CLTID"
 	fi
 
+	#check if publish-interval-sec is specified, if available, then use it to add delay between two publish-msg
+	INTERVAL_ARGS=""
+	INTERVAL=$(cat $CONF_FILE_PATH | grep publish-interval-sec)
+	if [ $? == 0 ]; then
+		INTERVAL=$(cat $CONF_FILE_PATH | grep publish-interval-sec | awk '{print $2}')
+		INTERVAL_ARGS="--pub_interval $INTERVAL"
+	fi
+
 	#start the agent with all required args
-	$AWS_AGENT --ca_file $CA_FILE --cert $CERT_FILE_ARG --key $KEY_FILE_ARG --endpoint $ENDPOINT $VERBOSE_ARGS $COUNT_ARGS $TOPIC_ARGS $CLTID_ARGS > $VERBOSE_FILE 2>&1
+	$AWS_AGENT --ca_file $CA_FILE --cert $CERT_FILE_ARG --key $KEY_FILE_ARG --endpoint $ENDPOINT $VERBOSE_ARGS $COUNT_ARGS $TOPIC_ARGS $CLTID_ARGS $INTERVAL_ARGS > $VERBOSE_FILE 2>&1
 	echo "OK"
 }
 
