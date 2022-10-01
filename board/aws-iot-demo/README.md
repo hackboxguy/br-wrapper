@@ -35,6 +35,20 @@ This is a buildroot config for generating bootable linux images for various hw b
 5. ```total-publish-count: 5``` An optional parameter to specifiy total number of mqtt publish messages (default is 10)
 6. ```publish-message: hello-world``` An optional parameter to specifiy mqtt publish message (default is Hello World)
 7. ```publish-topic: test/topic``` An optional parameter to specifiy mqtt publish topice (default is test/topic)
+8. ```clientid: test-1``` An optional parameter to specifiy the clientid which is set in AWS-IoT-Policies on the cloud (iot:Connect => arn:iot-useast-1:usr_id:client/test-*)
+
+## How to compile and run modified aws-iot-pubsub-agent on Target Hardware?
+1. ```wget https://github.com/hackboxguy/lfs-downloads/raw/main/aws-iot-demo-toolchain/arm-buildroot-linux-uclibcgnueabihf_sdk-buildroot.tar.gz -O ~/arm-buildroot-linux-uclibcgnueabihf_sdk-buildroot.tar.gz``` Download Cross-Toolchain of AWS-IoT-Demo Image for Raspi-4 Hw
+2. ```tar -xvf ~/arm-buildroot-linux-uclibcgnueabihf_sdk-buildroot.tar.gz -C ~/``` untar downloaded Cross-Toolchain to HOME directory
+3. ```~/arm-buildroot-linux-uclibcgnueabihf_sdk-buildroot/relocate-sdk.sh``` Relocate the toolchain path to this specific installation
+4. ```git clone https://github.com/hackboxguy/aws-iot-pubsub-agent.git``` Clone the source-code of aws-iot-pubsub-agent
+5. ```cd aws-iot-pubsub-agent``` cd to cloned souce directory
+6. Modify the code of aws-iot-pubsub-agent
+7. ```cmake -H. -BOutput -DCMAKE_INSTALL_PREFIX=~/aws-output/ -DBUILD_SHARED_LIBS=ON -DCMAKE_TOOLCHAIN_FILE=~/aws-iot-pubsub-agent/cmake/arm-buildroot-linux-uclibcgnueabihf.cmake``` configure with cmake
+8. ```cmake --build Output -- install -j$(nproc)``` build with cmake(binary will be installed to ~/aws-output/sbin/)
+9. ```scp ~/aws-output/sbin/aws-iot-pubsub-agent root@aws-iot-demo-target:/usr/sbin/``` using scp, copy the modified binary to the Raspi-4 hw
+10. ```ssh root@aws-iot-demo-target``` using ssh, login to Raspi-4 hw (root pw is: brb0x)
+11. ```/usr/sbin/aws-iot-pubsub-agent --help``` run modified aws-iot-pubsub-agent on Raspi-4 hw
 
 ## Future extensions/improvements(TODO-List)
 1. Make root pw writable so that user can override default pw with custom pw
