@@ -1,7 +1,7 @@
 ################################################################################
 # aws-iot-pubsub-agent
 # ################################################################################
-AWS_IOT_PUBSUB_AGENT_VERSION = v1.1
+AWS_IOT_PUBSUB_AGENT_VERSION = v1.2
 AWS_IOT_PUBSUB_AGENT_SOURCE = $(AWS_IOT_PUBSUB_AGENT_VERSION).tar.gz
 AWS_IOT_PUBSUB_AGENT_SITE = https://github.com/hackboxguy/aws-iot-pubsub-agent/archive
 #AWS_IOT_PUBSUB_AGENT_SITE_METHOD = git
