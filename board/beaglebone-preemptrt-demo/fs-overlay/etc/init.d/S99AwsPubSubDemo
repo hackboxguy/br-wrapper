@@ -1,0 +1,43 @@
+#!/bin/sh
+#
+# startup script for preempt-rt latency measurement demo program
+#
+BINARY_NAME=preemptrt-gpiotest
+BINARY_PATH=/usr/sbin/
+BINARY_PRIORITY=99
+INCHIP=gpiochip0
+INPIN=28
+OUTCHIP=gpiochip0
+OUTPIN=17
+EXTRA_ARGS=" h p"
+
+start() {
+	echo "Starting preempt-rt latency measurement utility: "
+	#chrt -r 99 /usr/sbin/preemptrt-gpiotest gpiochip0 28 gpiochip0 17 h p	
+	chrt -r $BINARY_PRIORITY $BINARY_PATH/$BINARY_NAME $INCHIP $INPIN $OUTCHIP $OUTPIN $EXTRA_ARGS &
+	echo "OK"
+}
+
+stop() {
+	echo -n "Stopping preempt-rt latency measruement utility: "
+	killall $BINARY_NAME	
+	echo "OK"
+}
+
+case "$1" in
+  start)
+	start
+	;;
+  stop)
+	stop
+	;;
+  restart|reload)
+	stop
+	start
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?
