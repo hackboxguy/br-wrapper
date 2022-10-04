@@ -23,7 +23,8 @@ This is a buildroot config for generating bootable linux image for beaglebone. P
 6. Modify the code of preemptrt-gpiotest
 7. ```cmake -H. -BOutput -DCMAKE_INSTALL_PREFIX=~/preemptrt-demo-output/ -DCMAKE_TOOLCHAIN_FILE=~/preemptrt-gpiotest/cmake/arm-buildroot-linux-uclibcgnueabihf.cmake``` configure with cmake
 8. ```cmake --build Output -- install -j$(nproc)``` build with cmake(binary will be installed to ~/preemptrt-demo-output/sbin/)
-9. ```scp ~/preemptrt-demo-output/sbin/preemptrt-gpiotest root@preemptrt-demo-target:/usr/sbin/``` using scp, copy the modified binary to the beaglebone hw
-10. ```ssh root@preemprt-demo-target``` using ssh, login to beaglebone hw (root pw is: brb0x)
-11. ```/etc/init.d/S99PreemptrtGpio stop``` stop existing instance of preemptr-gpiotest
-12. ```/usr/sbin/preemptrt-gpiotest gpiochip0 28 gpiochip0 17 h p``` run modified preemptrt-gpiotest on beaglebone
+9. ```rm -rf ~/preemptrt-gpiotest/Output``` delete cmake generated Output folder when not required(remove this folder only when you are done developing the code)
+10. ```scp ~/preemptrt-demo-output/sbin/preemptrt-gpiotest root@preemptrt-demo-target:/usr/sbin/``` using scp, copy the modified binary to the beaglebone hw
+11. ```ssh root@preemprt-demo-target``` using ssh, login to beaglebone hw (root pw is: brb0x)
+12. ```/etc/init.d/S99PreemptrtGpio stop``` stop existing instance of preemptr-gpiotest
+13. ```/usr/sbin/preemptrt-gpiotest gpiochip0 28 gpiochip0 17 h p``` run modified preemptrt-gpiotest on beaglebone
