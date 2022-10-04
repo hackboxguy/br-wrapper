@@ -14,7 +14,7 @@ This is a buildroot config for generating bootable linux image for beaglebone. P
     make -C buildroot BR2_EXTERNAL=../ BR2_DL_DIR=../../br-dl O=../../br-output
     ls -lah ~/preempt-rt-demo/br-output/images/sdcard.img #this image can written to sdcard using dd
 
-## How to compile and run modified preemptrt-gpiotest on Target(beaglebone) Hardware?
+## How to cross-compile(on x86 host pc) and run modified preemptrt-gpiotest on Target(beaglebone) Hardware?
 1. ```wget https://github.com/hackboxguy/lfs-downloads/raw/main/beaglebone-preemptrt-demo/arm-buildroot-linux-gnueabihf_sdk-buildroot.tar.gz -O ~/arm-buildroot-linux-gnueabihf_sdk-buildroot.tar.gz``` Download Cross-Toolchain of beaglebone-preemptrt-demo
 2. ```tar -xvf ~/arm-buildroot-linux-gnueabihf_sdk-buildroot.tar.gz -C ~/``` untar downloaded Cross-Toolchain to HOME directory
 3. ```~/arm-buildroot-linux-gnueabihf_sdk-buildroot/relocate-sdk.sh``` Relocate the toolchain path to this specific installation
