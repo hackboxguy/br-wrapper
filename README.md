@@ -19,7 +19,7 @@ Using buildroot as a submodule makes it easy to build custom-br-configs-and-pack
 4. ```stm32mp157a_dk1rt_defconfig``` (stm32mp157a based board used for evaluating preempt-rt linux)
 5. ```stm32mp157a_dk1_brbox_defconfig``` (stm32mp157a based board with brbox packages)
 6. ```raspberrypi4_aws_iot_defconfig``` (custom linux image for rpi-4 with aws iot demo sdk and utils)
-
+7. ```olimex_a20_olinuxino_som204_defconfig``` (custom linux image for olimex-A20-SOM-204 board)
 
 ## Build Options
 ```BR2_DL=/some/path``` : Keeping buildroot download folder in a out-of-tree location(using ```BR2_DL_DIR```) helps to reduce the build time by avoiding repeated downloads of source-packages.
