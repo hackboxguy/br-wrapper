@@ -1,0 +1,16 @@
+config BR2_PACKAGE_BRBOX_GENINTRDRV
+        bool "generic-interrupt-driver"
+        depends on BR2_LINUX_KERNEL
+        help
+          Kernel modules for generic interrupt driver.
+
+comment "generic-interrupt-driver needs a Linux kernel to be built"
+        depends on !BR2_LINUX_KERNEL
+
+#config BR2_PACKAGE_BRBOX_GENINTRDRV_INIT_SCRIPT
+#       string "auto insert module through init.d order"
+#        default "S59GenIntrDrvStartup"
+#        depends on BR2_PACKAGE_BRBOX_GENINTRDRV
+#        help
+#          Name of the startup script for loading the module
+
