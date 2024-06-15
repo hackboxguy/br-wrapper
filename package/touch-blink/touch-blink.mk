@@ -3,11 +3,11 @@
 ## touch-blink
 #
 ##############################################################
-TOUCHBLINK_VERSION = 0.0.1
-TOUCHBLINK_SOURCE = $(TOUCHBLINK_VERSION).tar.gz
-TOUCHBLINK_SITE = https://github.com/hackboxguy/touch-blink/archive
-TOUCHBLINK_INSTALL_STAGING = NO
-TOUCHBLINK_INSTALL_TARGET = YES
-TOUCHBLINK_DEPENDENCIES = libevdev
-TOUCHBLINK_CONF_OPTS=-DCMAKE_INSTALL_PREFIX="/usr"
+TOUCH_BLINK_VERSION = 0.0.1
+TOUCH_BLINK_SOURCE = $(TOUCH_BLINK_VERSION).tar.gz
+TOUCH_BLINK_SITE = https://github.com/hackboxguy/touch-blink/archive
+TOUCH_BLINK_INSTALL_STAGING = NO
+TOUCH_BLINK_INSTALL_TARGET = YES
+TOUCH_BLINK_DEPENDENCIES = libevdev
+TOUCH_BLINK_CONF_OPTS=-DCMAKE_INSTALL_PREFIX="/usr"
 $(eval $(cmake-package))

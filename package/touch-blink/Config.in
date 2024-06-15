@@ -1,4 +1,4 @@
-config BR2_PACKAGE_TOUCHBLINK
+config BR2_PACKAGE_TOUCH_BLINK
         bool "touch-blink"
         select BR2_PACKAGE_LIBEVDEV
 	default n
