@@ -1,0 +1,6 @@
+config BR2_PACKAGE_TOUCHBLINK
+        bool "touch-blink"
+        select BR2_PACKAGE_LIBEVDEV
+	default n
+        help
+          A demo utility to test the touchscreen by blinking an led upon touch action
