@@ -29,3 +29,6 @@ dtoverlay=miniuart-bt
 dtoverlay=krnbt=on
 dtoverlay=i2c1=on
 dtparam=i2c_arm=on
+dtparam=i2c2_iknowwhatimdoing
+dtoverlay=vc4-kms-v3d
+max_framebuffers=2
