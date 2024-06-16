@@ -1,0 +1,12 @@
+diff -ruN libffi-3.4.4/src/tramp.c libffi-3.4.4-patched/src/tramp.c
+--- libffi-3.4.4/src/tramp.c	2022-10-23 17:23:27.000000000 +0200
++++ libffi-3.4.4-patched/src/tramp.c	2024-06-15 21:09:53.535520124 +0200
+@@ -196,7 +196,7 @@
+ static int tramp_table_alloc (void);
+ 
+ #if defined (__linux__) || defined (__CYGWIN__)
+-
++int open_temp_exec_file (void);
+ static int
+ ffi_tramp_get_libffi (void)
+ {

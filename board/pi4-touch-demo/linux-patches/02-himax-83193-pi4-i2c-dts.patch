@@ -1,0 +1,25 @@
+diff -ruN linux-17f135b742c4edb340afb365873c3a574f7e16cb/arch/arm/boot/dts/bcm2711-rpi-4-b.dts linux-17f135b742c4edb340afb365873c3a574f7e16cb-himax/arch/arm/boot/dts/bcm2711-rpi-4-b.dts
+--- linux-17f135b742c4edb340afb365873c3a574f7e16cb/arch/arm/boot/dts/bcm2711-rpi-4-b.dts	2023-11-02 18:13:18.000000000 +0100
++++ linux-17f135b742c4edb340afb365873c3a574f7e16cb-himax/arch/arm/boot/dts/bcm2711-rpi-4-b.dts	2024-06-16 20:50:26.942188265 +0200
+@@ -343,7 +343,20 @@
+ &i2c1 {
+ 	pinctrl-names = "default";
+ 	pinctrl-0 = <&i2c1_pins>;
+-	clock-frequency = <100000>;
++	//clock-frequency = <100000>;
++	status = "okay";
++        clock-frequency = <400000>;
++        i2c-scl-falling-time-ns = <50>; /* 2.5ns measured */
++        i2c-scl-rising-time-ns = <100>; /* 45ns measured */
++        hxchipset_ts@48 {
++                status = "okay";
++                compatible = "himax,hxcommon";
++                reg = <0x48>;
++                report_type = <1>;
++                interrupt-parent = <&gpio>;
++                interrupts = <17 2>;
++                himax,TSIX = <&gpio 17 2>; /*IRQ_TYPE_EDGE_FALLING*/
++        };
+ };
+ 
+ &i2s {
