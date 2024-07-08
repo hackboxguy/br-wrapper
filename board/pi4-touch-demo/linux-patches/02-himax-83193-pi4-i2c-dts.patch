@@ -1,34 +1,88 @@
 diff -ruN linux-17f135b742c4edb340afb365873c3a574f7e16cb/arch/arm/boot/dts/bcm2711-rpi-4-b.dts linux-17f135b742c4edb340afb365873c3a574f7e16cb-himax/arch/arm/boot/dts/bcm2711-rpi-4-b.dts
 --- linux-17f135b742c4edb340afb365873c3a574f7e16cb/arch/arm/boot/dts/bcm2711-rpi-4-b.dts	2023-11-02 18:13:18.000000000 +0100
-+++ linux-17f135b742c4edb340afb365873c3a574f7e16cb-himax/arch/arm/boot/dts/bcm2711-rpi-4-b.dts	2024-06-18 12:44:21.755522829 +0200
-@@ -343,7 +343,29 @@
++++ linux-17f135b742c4edb340afb365873c3a574f7e16cb-himax/arch/arm/boot/dts/bcm2711-rpi-4-b.dts	2024-07-08 16:03:36.542199641 +0200
+@@ -56,6 +56,42 @@
+ 		enable-active-high;
+ 		gpio = <&expgpio 6 GPIO_ACTIVE_HIGH>;
+ 	};
++	gpio-button {
++                compatible = "gpio-keys";
++		autorepeat;
++		pinctrl-names = "default";
++		status = "okay";
++                button@0 {
++                        gpios = <&pcf8574 0 GPIO_ACTIVE_LOW>;
++                        linux,code = <116>;
++                        label = "KEY_POWER";
++                };
++                button@1 {
++                        gpios = <&pcf8574 1 GPIO_ACTIVE_LOW>;
++                        linux,code = <114>;
++                        label = "KEY_VOL_DN";
++                };
++                button@2 {
++                        gpios = <&pcf8574 2 GPIO_ACTIVE_LOW>;
++                        linux,code = <115>;
++                        label = "KEY_VOL_UP";
++                };
++ 		button@3 {
++                        gpios = <&pcf8574 3 GPIO_ACTIVE_LOW>;
++                        linux,code = <102>;
++                        label = "KEY_HOME";
++                };
++                button@4 {
++                        gpios = <&pcf8574 4 GPIO_ACTIVE_LOW>;
++                        linux,code = <104>; //PAGE_UP AS map key
++                        label = "KEY_MAP";
++                };
++                button@5 {
++                        gpios = <&pcf8574 5 GPIO_ACTIVE_LOW>;
++                        linux,code = <113>;
++                        label = "KEY_MUTE";
++                };
++        };
+ };
+ 
+ &bt {
+@@ -343,7 +379,40 @@
  &i2c1 {
  	pinctrl-names = "default";
  	pinctrl-0 = <&i2c1_pins>;
 -	clock-frequency = <100000>;
 +	//clock-frequency = <100000>;
-+	status = "okay";
-+	clock-frequency = <400000>;
-+	i2c-scl-falling-time-ns = <50>; /* 2.5ns measured */
-+	i2c-scl-rising-time-ns = <100>; /* 45ns measured */
-+	hxchipset_ts@48 {
-+		status = "okay";
-+		compatible = "himax,hxcommon";
-+		reg = <0x48>;
-+		report_type = <1>;
-+		interrupt-parent = <&gpio>;
-+		interrupts = <17 2>;
-+		himax,TSIX = <&gpio 17 2>; /*IRQ_TYPE_EDGE_FALLING*/
-+	};
-+	haptics: haptics@5a {
-+		compatible = "ti,drv2605l";
-+		reg = <0x5a>;
-+		vbat-supply = <&sd_vcc_reg>;
-+		mode = <0x02>; //DRV260X_LRA_MODE
-+		library-sel = <0x07>; //DRV260X_LIB_LRA
-+		vib-rated-mv = <3200>;
-+		vib-overdrive-mv = <3200>;
-+	};
++        status = "okay";
++        clock-frequency = <400000>;
++        i2c-scl-falling-time-ns = <50>; /* 2.5ns measured */
++        i2c-scl-rising-time-ns = <100>; /* 45ns measured */
++        hxchipset_ts@48 {
++               status = "okay";
++               compatible = "himax,hxcommon";
++               reg = <0x48>;
++               report_type = <1>;
++               interrupt-parent = <&gpio>;
++               interrupts = <17 2>;
++               himax,TSIX = <&gpio 17 2>; /*IRQ_TYPE_EDGE_FALLING*/
++        };
++        haptics: haptics@5a {
++               compatible = "ti,drv2605l";
++               reg = <0x5a>;
++               vbat-supply = <&sd_vcc_reg>;
++               mode = <0x02>; //DRV260X_LRA_MODE
++               library-sel = <0x07>; //DRV260X_LIB_LRA
++               vib-rated-mv = <3200>;
++               vib-overdrive-mv = <3200>;
++        };
++        pcf8574: pcf8574@38 {
++               compatible = "nxp,pcf8574";
++               reg = <0x38>;
++               gpio-controller;
++               #gpio-cells = <2>;
++               interrupt-parent = <&gpio>;
++               interrupts = <18 2>;
++               interrupt-controller;
++               #interrupt-cells = <2>;
++        };
++
  };
  
  &i2s {
