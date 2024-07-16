@@ -1,7 +1,7 @@
 diff -ruN linux-17f135b742c4edb340afb365873c3a574f7e16cb/arch/arm/boot/dts/bcm2711-rpi-4-b.dts linux-17f135b742c4edb340afb365873c3a574f7e16cb-himax/arch/arm/boot/dts/bcm2711-rpi-4-b.dts
 --- linux-17f135b742c4edb340afb365873c3a574f7e16cb/arch/arm/boot/dts/bcm2711-rpi-4-b.dts	2023-11-02 18:13:18.000000000 +0100
-+++ linux-17f135b742c4edb340afb365873c3a574f7e16cb-himax/arch/arm/boot/dts/bcm2711-rpi-4-b.dts	2024-07-08 16:03:36.542199641 +0200
-@@ -56,6 +56,42 @@
++++ linux-17f135b742c4edb340afb365873c3a574f7e16cb-himax/arch/arm/boot/dts/bcm2711-rpi-4-b.dts	2024-07-10 17:41:28.362200279 +0200
+@@ -56,6 +56,39 @@
  		enable-active-high;
  		gpio = <&expgpio 6 GPIO_ACTIVE_HIGH>;
  	};
@@ -17,34 +17,31 @@ diff -ruN linux-17f135b742c4edb340afb365873c3a574f7e16cb/arch/arm/boot/dts/bcm27
 +                };
 +                button@1 {
 +                        gpios = <&pcf8574 1 GPIO_ACTIVE_LOW>;
-+                        linux,code = <114>;
-+                        label = "KEY_VOL_DN";
-+                };
-+                button@2 {
-+                        gpios = <&pcf8574 2 GPIO_ACTIVE_LOW>;
-+                        linux,code = <115>;
-+                        label = "KEY_VOL_UP";
-+                };
-+ 		button@3 {
-+                        gpios = <&pcf8574 3 GPIO_ACTIVE_LOW>;
 +                        linux,code = <102>;
 +                        label = "KEY_HOME";
 +                };
-+                button@4 {
-+                        gpios = <&pcf8574 4 GPIO_ACTIVE_LOW>;
-+                        linux,code = <104>; //PAGE_UP AS map key
++                button@2 {
++                        gpios = <&pcf8574 2 GPIO_ACTIVE_LOW>;
++                        linux,code = <104>;
 +                        label = "KEY_MAP";
 +                };
-+                button@5 {
-+                        gpios = <&pcf8574 5 GPIO_ACTIVE_LOW>;
++ 		button@3 {
++                        gpios = <&pcf8574 3 GPIO_ACTIVE_LOW>;
 +                        linux,code = <113>;
 +                        label = "KEY_MUTE";
 +                };
 +        };
++	rotary-knob {
++			compatible = "rotary-encoder";
++			gpios = <&pcf8574 4 0>, <&pcf8574 5 0>;
++			linux,axis = <9>; /* REL_X */
++			rotary-encoder,encoding = "gray";
++			rotary-encoder,relative-axis;
++	};
  };
  
  &bt {
-@@ -343,7 +379,40 @@
+@@ -343,7 +376,40 @@
  &i2c1 {
  	pinctrl-names = "default";
  	pinctrl-0 = <&i2c1_pins>;
