@@ -18,9 +18,9 @@ disable_overscan=1
 
 # How much memory in MB to assign to the GPU on Pi models having
 # 256, 512 or 1024 MB total memory
-gpu_mem_256=100
-gpu_mem_512=100
-gpu_mem_1024=100
+gpu_mem_256=200
+gpu_mem_512=200
+gpu_mem_1024=200
 
 # fixes rpi (3B, 3B+, 3A+, 4B and Zero W) ttyAMA0 serial console
 dtoverlay=miniuart-bt
@@ -34,5 +34,25 @@ arm_64bit=1
 dtoverlay=i2c1=on
 dtparam=i2c_arm=on
 #dtparam=i2c2_iknowwhatimdoing
-dtoverlay=vc4-kms-v3d
+dtoverlay=vc4-fkms-v3d
+disable_fw_kms_setup=1
 #max_framebuffers=2
+
+#gpu_mem=512
+#hdmi_force_hotplug=1
+#hdmi_drive=1
+hdmi_group=2
+hdmi_mode=87
+#hdmi_force_mode=1
+#hdmi_cvt=2560 1440 60 3 0 0 0
+hdmi_timings=2560 0 10 24 222 1440 0 11 3 38 0 0 0 62 0 261888000 4
+#hdmi_timings=2560 0 48 32 80 1440 0 3 5 33 0 0 0 60 0 242000000 5
+framebuffer_width=2560
+framebuffer_height=1440
+max_framebuffer_width=2560
+max_framebuffer_height=1440
+#hdmi_pixel_freq_limit=242000000
+hdmi_pixel_freq_limit=261888000
+config_hdmi_boost=4
+#framebuffer_depth=16
+#drm.edid_filename=edid-15-6.bin video=HDMI-A-1:2560x1440@62D

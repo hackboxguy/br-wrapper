@@ -1,0 +1,11 @@
+[Unit]
+Description=himax-touch-driver
+
+[Service]
+Type=oneshot
+ExecStart=/etc/init.d/S59TouchBlinkServer start
+ExecStop=/etc/init.d/S59TouchBlinkServer stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
