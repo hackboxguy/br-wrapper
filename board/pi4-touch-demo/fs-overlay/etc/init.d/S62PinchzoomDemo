@@ -1,0 +1,37 @@
+#!/bin/sh
+#
+# Start/stop server script
+#
+SERVER_NAME=pinchzoom
+SERVER_PATH=/usr/lib/qt/examples/widgets/touch/pinchzoom/
+start() {
+	echo -n "Starting $SERVER_NAME Service: "
+	killall $SERVER_NAME #ensure this utility is stopped
+	export QT_QPA_FONTDIR=/usr/share/fonts/dejavu/	
+	$SERVER_PATH/$SERVER_NAME &
+	echo "OK"
+}
+
+stop() {
+	echo -n "Stopping $SERVER_NAME Service:  "
+	killall $SERVER_NAME
+	echo "OK"
+}
+
+case "$1" in
+  start)
+	start
+	;;
+  stop)
+	stop
+	;;
+  restart|reload)
+	stop
+	start
+	;;
+  *)
+	echo "Usage: $0 {start|stop|restart}"
+	exit 1
+esac
+
+exit $?

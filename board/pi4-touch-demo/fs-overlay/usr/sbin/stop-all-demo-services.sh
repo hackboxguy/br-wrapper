@@ -1,2 +1,7 @@
 #!/bin/sh
-systemctl stop systemd-qtdemo.service systemd-mpvdemo.service systemd-fingerpaintdemo.service systemd-pinchzoomdemo.service systemd-scribbledemo.service
+systemctl stop systemd-mpvdemo.service
+/etc/init.d/S60DialsDemo stop
+/etc/init.d/S61FingerpaintDemo stop
+/etc/init.d/S62PinchzoomDemo stop
+/etc/init.d/S63ScribbleDemo stop
+
