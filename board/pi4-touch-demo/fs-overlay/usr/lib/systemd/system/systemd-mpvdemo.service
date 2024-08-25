@@ -1,0 +1,10 @@
+[Unit]
+Description=mpv-slideshow-demo
+Requires=systemd-himaxtouch.service
+After=systemd-himaxtouch.service
+
+[Service]
+ExecStart=/bin/mpv --fs --image-display-duration=5 /Pictures/PlayList.m3u --loop-playlist=inf
+
+[Install]
+WantedBy=multi-user.target
