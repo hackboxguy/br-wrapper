@@ -30,7 +30,7 @@ dtparam=krnbt=on
 
 # enable 64bits support
 arm_64bit=1
-
+arm_boost=1
 dtoverlay=i2c1=on
 dtparam=i2c_arm=on
 #dtparam=i2c2_iknowwhatimdoing
