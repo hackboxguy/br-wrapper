@@ -1,0 +1,5 @@
+config BR2_PACKAGE_HH983_SERIALIZER
+	bool "hh983-serializer"
+	depends on BR2_LINUX_KERNEL
+	help
+	  HH983 FPDLink Serializer driver for I2C passthrough support.

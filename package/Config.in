@@ -4,3 +4,4 @@ source "$BR2_EXTERNAL_BRWRAPPER_PATH/package/aws-iot-device-sdk-cpp-v2/Config.in
 source "$BR2_EXTERNAL_BRWRAPPER_PATH/package/aws-iot-pubsub-agent/Config.in"
 source "$BR2_EXTERNAL_BRWRAPPER_PATH/package/brbox_genintrdrv/Config.in"
 source "$BR2_EXTERNAL_BRWRAPPER_PATH/package/touch-blink/Config.in"
+source "$BR2_EXTERNAL_BRWRAPPER_PATH/package/hh983-serializer/Config.in"
