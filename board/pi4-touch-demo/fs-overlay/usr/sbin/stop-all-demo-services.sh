@@ -4,4 +4,5 @@ systemctl stop systemd-mpvdemo.service
 /etc/init.d/S61FingerpaintDemo stop
 /etc/init.d/S62PinchzoomDemo stop
 /etc/init.d/S63ScribbleDemo stop
+/etc/init.d/S64MpvDemo stop
 
