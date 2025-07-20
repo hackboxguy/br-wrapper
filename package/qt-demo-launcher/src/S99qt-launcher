@@ -1,0 +1,63 @@
+#!/bin/sh
+#
+# Qt Demo Launcher startup script
+#
+
+DAEMON="qt_demo_launcher"
+DAEMON_PATH="/usr/bin"
+DAEMON_ARGS=""
+PIDFILE="/var/run/$DAEMON.pid"
+
+# Set Qt environment variables
+export QT_QPA_PLATFORM=linuxfb
+export QT_QPA_FONTDIR=/usr/share/fonts/dejavu/
+
+start() {
+    printf "Starting $DAEMON: "
+    
+    # Wait for framebuffer to be ready
+    sleep 2
+    
+    start-stop-daemon -S -q -p $PIDFILE -b -m --exec $DAEMON_PATH/$DAEMON -- $DAEMON_ARGS
+    
+    if [ $? -eq 0 ]; then
+        echo "OK"
+    else
+        echo "FAIL"
+    fi
+}
+
+stop() {
+    printf "Stopping $DAEMON: "
+    start-stop-daemon -K -q -p $PIDFILE
+    
+    if [ $? -eq 0 ]; then
+        echo "OK"
+    else
+        echo "FAIL"
+    fi
+    
+    rm -f $PIDFILE
+}
+
+restart() {
+    stop
+    start
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

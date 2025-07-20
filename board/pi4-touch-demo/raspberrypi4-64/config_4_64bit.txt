@@ -1,16 +1,7 @@
-# Please note that this is only a sample, we recommend you to change it to fit
-# your needs.
-# You should override this file using BR2_PACKAGE_RPI_FIRMWARE_CONFIG_FILE.
-# See http://buildroot.org/manual.html#rootfs-custom
-# and http://elinux.org/RPiconfig for a description of config.txt syntax
-
 start_file=start4.elf
 fixup_file=fixup4.dat
 
 kernel=Image
-
-# To use an external initramfs file
-#initramfs rootfs.cpio.gz
 
 # Disable overscan assuming the display supports displaying the full resolution
 # If the text shown on the screen disappears off the edge, comment this out
@@ -33,26 +24,25 @@ arm_64bit=1
 arm_boost=1
 dtoverlay=i2c1=on
 dtparam=i2c_arm=on
-#dtparam=i2c2_iknowwhatimdoing
 dtoverlay=vc4-fkms-v3d
 disable_fw_kms_setup=1
-#max_framebuffers=2
 
-#gpu_mem=512
-#hdmi_force_hotplug=1
-#hdmi_drive=1
 hdmi_group=2
 hdmi_mode=87
-#hdmi_force_mode=1
-#hdmi_cvt=2560 1440 60 3 0 0 0
-hdmi_timings=2560 0 10 24 222 1440 0 11 3 38 0 0 0 62 0 261888000 4
-#hdmi_timings=2560 0 48 32 80 1440 0 3 5 33 0 0 0 60 0 242000000 5
-framebuffer_width=2560
-framebuffer_height=1440
-max_framebuffer_width=2560
-max_framebuffer_height=1440
-#hdmi_pixel_freq_limit=242000000
-hdmi_pixel_freq_limit=261888000
 config_hdmi_boost=4
-#framebuffer_depth=16
-#drm.edid_filename=edid-15-6.bin video=HDMI-A-1:2560x1440@62D
+
+#15.6(2.5k)
+#hdmi_timings=2560 0 10 24 222 1440 0 11 3 38 0 0 0 62 0 261888000 4
+#framebuffer_width=2560
+#framebuffer_height=1440
+#max_framebuffer_width=2560
+#max_framebuffer_height=1440
+#hdmi_pixel_freq_limit=261888000
+
+#ej-14.6(fullHD)
+hdmi_timings=1920 0 76 22 10 1080 0 28 4 10 0 0 0 60 0 136687000 3
+framebuffer_width=1920
+framebuffer_height=1080
+max_framebuffer_width=1920
+max_framebuffer_height=1080
+hdmi_pixel_freq_limit=136687000

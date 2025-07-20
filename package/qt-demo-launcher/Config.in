@@ -1,0 +1,9 @@
+config BR2_PACKAGE_QT_DEMO_LAUNCHER
+	bool "qt-demo-launcher"
+	depends on BR2_PACKAGE_QT5BASE
+	depends on BR2_PACKAGE_QT5BASE_WIDGETS
+	help
+	  Qt Demo Launcher for embedded devices.
+	  
+	  Simple launcher application that provides a menu to
+	  launch different Qt demo programs on embedded devices.
