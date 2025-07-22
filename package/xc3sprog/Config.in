@@ -1,0 +1,52 @@
+config BR2_PACKAGE_XC3SPROG
+	bool "xc3sprog"
+	depends on BR2_USE_MMU # cmake
+	depends on BR2_INSTALL_LIBSTDCPP
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_LIBFTDI if !BR2_PACKAGE_XC3SPROG_LIBFTDI1
+	select BR2_PACKAGE_LIBUSB if !BR2_PACKAGE_XC3SPROG_LIBFTDI1
+	select BR2_PACKAGE_LIBUSB_COMPAT if !BR2_PACKAGE_XC3SPROG_LIBFTDI1
+	select BR2_PACKAGE_LIBFTDI1 if BR2_PACKAGE_XC3SPROG_LIBFTDI1
+	select BR2_PACKAGE_LIBGPIOD if BR2_PACKAGE_XC3SPROG_GPIOD_SUPPORT
+	help
+	  xc3sprog is a suite of utilities for programming Xilinx FPGAs, 
+	  CPLDs, and configuration PROMs via JTAG interface. It supports 
+	  various JTAG adapters including FTDI-based cables and GPIO-based 
+	  interfaces.
+
+	  This version includes enhanced features:
+	  - FPGA JTAG flasher wrapper script with auto-detection
+	  - SPI flash programming support
+	  - GPIO-based JTAG interface support
+	  - Comprehensive device database
+
+	  https://github.com/hackboxguy/xc3sprog
+
+if BR2_PACKAGE_XC3SPROG
+
+config BR2_PACKAGE_XC3SPROG_LIBFTDI1
+	bool "use libftdi1 (1.x) instead of legacy libftdi"
+	help
+	  Use newer libftdi1 instead of legacy libftdi 0.x. 
+	  Note: May have CMake compatibility issues with some Buildroot versions.
+	  If build fails, disable this option to use legacy libftdi.
+
+config BR2_PACKAGE_XC3SPROG_GPIOD_SUPPORT
+	bool "GPIO support via libgpiod"
+	help
+	  Enable GPIO-based JTAG interface support using libgpiod.
+	  This allows using GPIO pins (e.g., on Raspberry Pi) as JTAG
+	  interface without additional hardware.
+
+config BR2_PACKAGE_XC3SPROG_FTD2XX_SUPPORT
+	bool "FTDI FTD2XX proprietary driver support"
+	help
+	  Enable support for FTDI's proprietary FTD2XX driver instead
+	  of the open-source libftdi. This may provide better performance
+	  with some FTDI-based JTAG adapters.
+
+endif
+
+comment "xc3sprog needs a toolchain w/ C++, threads, MMU"
+	depends on !BR2_USE_MMU || !BR2_INSTALL_LIBSTDCPP || \
+		!BR2_TOOLCHAIN_HAS_THREADS

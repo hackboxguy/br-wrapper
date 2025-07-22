@@ -1,0 +1,21 @@
+# udev rules for xc3sprog JTAG adapters
+# This file should be installed to /etc/udev/rules.d/
+
+# FTDI-based JTAG adapters
+SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6001", GROUP="plugdev", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6010", GROUP="plugdev", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6011", GROUP="plugdev", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0403", ATTR{idProduct}=="6014", GROUP="plugdev", MODE="0666"
+
+# Xilinx Platform Cable USB
+SUBSYSTEM=="usb", ATTR{idVendor}=="03fd", ATTR{idProduct}=="0008", GROUP="plugdev", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="03fd", ATTR{idProduct}=="0009", GROUP="plugdev", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="03fd", ATTR{idProduct}=="000d", GROUP="plugdev", MODE="0666"
+SUBSYSTEM=="usb", ATTR{idVendor}=="03fd", ATTR{idProduct}=="000f", GROUP="plugdev", MODE="0666"
+
+# Digilent JTAG adapters
+SUBSYSTEM=="usb", ATTR{idVendor}=="1443", ATTR{idProduct}=="0007", GROUP="plugdev", MODE="0666"
+
+# GPIO access for gpiod-based JTAG (Raspberry Pi, etc.)
+SUBSYSTEM=="gpio", GROUP="gpio", MODE="0664"
+KERNEL=="gpiochip*", GROUP="gpio", MODE="0664"
