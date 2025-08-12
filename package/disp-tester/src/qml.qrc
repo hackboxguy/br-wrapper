@@ -1,0 +1,9 @@
+<RCC>
+    <qresource prefix="/">
+        <file>main.qml</file>
+        <file>patterns/PatternBase.qml</file>
+        <file>patterns/GrayscaleRamp.qml</file>
+        <file>patterns/AnsiChecker.qml</file>
+        <file>patterns/WhiteTextBlack.qml</file>
+    </qresource>
+</RCC>

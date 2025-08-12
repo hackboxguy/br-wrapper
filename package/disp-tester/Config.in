@@ -1,0 +1,9 @@
+config BR2_PACKAGE_DISP_TESTER
+    bool "disp-tester"
+    depends on BR2_PACKAGE_QT5
+    select BR2_PACKAGE_QT5DECLARATIVE
+    select BR2_PACKAGE_QT5QUICKCONTROLS2
+    help
+      Qt5-based display pattern generator for testing automotive
+      displays. Features TCP network interface for automated
+      color measurement integration. Optimized for embedded systems.

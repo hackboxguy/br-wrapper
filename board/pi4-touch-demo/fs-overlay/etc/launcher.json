@@ -108,11 +108,11 @@
       },
       {
         "id": "system",
-        "enabled": false,
-        "text": "System Tools",
+        "enabled": true,
+        "text": "Pattern Generator",
         "icon": "/usr/share/icons/tools-large.png",
-        "program": "/usr/bin/system-manager",
-        "arguments": ["--touch-mode"],
+        "program": "/usr/bin/disp-tester",
+        "arguments": [],
         "working_directory": "/tmp",
         "position": {
           "row": 1,
@@ -134,7 +134,7 @@
       },
       {
         "id": "exit",
-        "enabled": true,
+        "enabled": false,
         "text": "Exit",
         "icon": "/usr/share/icons/power-off.png",
         "action": "quit",
