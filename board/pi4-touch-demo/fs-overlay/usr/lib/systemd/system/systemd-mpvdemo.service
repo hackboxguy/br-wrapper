@@ -4,8 +4,8 @@ After=systemd-himaxtouch.service
 
 [Service]
 Type=oneshot
-ExecStart=/etc/init.d/S61FingerpaintDemo start
-ExecStop=/etc/init.d/S61FingerpaintDemo stop
+ExecStart=/etc/init.d/S99qt-launcher start
+ExecStop=/etc/init.d/S99qt-launcher stop
 RemainAfterExit=yes
 
 [Install]
