@@ -1,0 +1,13 @@
+diff -Naur photoqt-3.4.orig/CMakeLists.txt photoqt-3.4/CMakeLists.txt
+--- photoqt-3.4.orig/CMakeLists.txt	2023-10-06 00:00:00.000000000 +0000
++++ photoqt-3.4/CMakeLists.txt	2025-08-11 00:00:00.000000000 +0000
+@@ -96,7 +96,8 @@
+ ################################
+ #### FIND REQUIRED PACKAGES ####
+ ################################
+-find_package(Qt5 COMPONENTS Core Quick Xml Svg Multimedia DBus LinguistTools Sql PrintSupport Concurrent REQUIRED)
++find_package(Qt5 COMPONENTS Core Quick Xml Svg Multimedia DBus Sql PrintSupport Concurrent REQUIRED)
++find_package(Qt5LinguistTools QUIET)
+ 
+ set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/CMake" ${CMAKE_MODULE_PATH})
+ if(IMAGEMAGICK)

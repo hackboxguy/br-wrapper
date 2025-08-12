@@ -1,0 +1,8 @@
+config BR2_PACKAGE_TOUCH_GALLERY
+    bool "touch-gallery"
+    depends on BR2_PACKAGE_QT5
+    select BR2_PACKAGE_QT5DECLARATIVE
+    select BR2_PACKAGE_QT5QUICKCONTROLS2
+    help
+      Simple touch-friendly image gallery using Qt5 QML
+      Designed for framebuffer displays with touch input.
