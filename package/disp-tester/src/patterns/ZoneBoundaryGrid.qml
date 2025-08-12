@@ -58,24 +58,4 @@ PatternBase {
             }
         }
     }
-    
-    // Grid info overlay (bottom-right)
-    Rectangle {
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.margins: 10
-        width: infoText.width + 20
-        height: infoText.height + 10
-        color: "black"
-        opacity: 0.8
-        
-        Text {
-            id: infoText
-            x: 10
-            y: 5
-            color: "white"
-            font.pixelSize: 14
-            text: "16x9 Zone Grid\n144 Total Zones\nSpacing: " + actualSpacingX + "x" + actualSpacingY
-        }
-    }
 }

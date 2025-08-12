@@ -30,10 +30,12 @@ public:
 
 public slots:
     void nextPattern();
+    void previousPattern();
     void setPattern(const QString &pattern);
     void setCustomColor(int r, int g, int b);
     QString getResolution();
     QString listPatterns();
+    QString getNetworkInfo();
 
 signals:
     void currentPatternChanged();

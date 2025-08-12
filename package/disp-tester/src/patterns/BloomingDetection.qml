@@ -52,24 +52,4 @@ PatternBase {
         color: "white"
         opacity: 0.1
     }
-    
-    // Position info overlay (bottom-right)
-    Rectangle {
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.margins: 10
-        width: positionText.width + 20
-        height: positionText.height + 10
-        color: "black"
-        opacity: 0.8
-        
-        Text {
-            id: positionText
-            x: 10
-            y: 5
-            color: "white"
-            font.pixelSize: 14
-            text: "Single Pixel Test\nCenter Position\nBlooming Detection"
-        }
-    }
 }

@@ -11,12 +11,22 @@ Window {
     // Force fullscreen
     visibility: Window.FullScreen
     
-    // Handle touch/mouse events for pattern cycling
-    MouseArea {
-        anchors.fill: parent
-        onClicked: {
-            patternController.nextPattern()
-        }
+    property bool uiVisible: true
+    
+    // Pattern navigation functions
+    function nextPattern() {
+        patternController.nextPattern()
+        showUITemporarily()
+    }
+    
+    function previousPattern() {
+        patternController.previousPattern()
+        showUITemporarily()
+    }
+    
+    function showUITemporarily() {
+        uiVisible = true
+        uiHideTimer.restart()
     }
     
     // Custom color overlay (when RGB patch or solid color is active)
@@ -52,33 +62,225 @@ Window {
         }
     }
     
-    // Debug info overlay (top-left corner)
+    // Touch navigation overlay
     Rectangle {
-        x: 10
-        y: 10
-        width: debugText.width + 20
-        height: debugText.height + 10
-        color: "black"
-        opacity: 0.7
+        anchors.fill: parent
+        color: "transparent"
         
-        Text {
-            id: debugText
-            x: 10
-            y: 5
-            color: "white"
-            font.pixelSize: 16
-            text: {
-                var patterns = ["grayscale-ramp", "ansi-checker", "white-text-black", 
-                               "red", "green", "blue", "cyan", "magenta", "yellow",
-                               "zone-boundary-grid", "blooming-detection", "cross-dimming"];
-                var currentIndex = patterns.indexOf(patternController.currentPattern) + 1;
-                var totalPatterns = patterns.length;
-                
-                return "Pattern: " + patternController.currentPattern + 
-                       " (" + currentIndex + "/" + totalPatterns + ")" +
-                       "\nResolution: " + Screen.width + "x" + Screen.height +
-                       "\nTouch to cycle (exit at end)"
+        MouseArea {
+            anchors.fill: parent
+            
+            property real startX: 0
+            property real startY: 0
+            property bool hasMoved: false
+            
+            onPressed: {
+                startX = mouse.x
+                startY = mouse.y
+                hasMoved = false
+            }
+            
+            onPositionChanged: {
+                if (Math.abs(mouse.x - startX) > 10 || Math.abs(mouse.y - startY) > 10) {
+                    hasMoved = true
+                }
+            }
+            
+            onClicked: {
+                if (!hasMoved) {
+                    // Touch areas for navigation
+                    if (mouse.x < parent.width / 4) {
+                        // Left 25% - Previous pattern
+                        previousPattern()
+                    } else if (mouse.x > parent.width * 3 / 4) {
+                        // Right 25% - Next pattern
+                        nextPattern()
+                    } else {
+                        // Center 50% - Toggle UI
+                        uiVisible = !uiVisible
+                        if (uiVisible) {
+                            uiHideTimer.restart()
+                        }
+                    }
+                }
+            }
+            
+            onReleased: {
+                // Swipe navigation
+                if (hasMoved) {
+                    var deltaX = mouse.x - startX
+                    if (Math.abs(deltaX) > 100) {
+                        if (deltaX > 0) {
+                            // Swipe right - Previous pattern
+                            previousPattern()
+                        } else {
+                            // Swipe left - Next pattern
+                            nextPattern()
+                        }
+                    }
+                }
+                hasMoved = false
             }
         }
+    }
+    
+    // UI Overlay
+    Rectangle {
+        id: uiOverlay
+        anchors.fill: parent
+        color: "transparent"
+        visible: uiVisible
+        
+        // Pattern counter (top-left)
+        Rectangle {
+            anchors.top: parent.top
+            anchors.left: parent.left
+            anchors.margins: 20
+            width: 160
+            height: 60
+            color: "#C0000000"
+            radius: 8
+            border.color: "white"
+            border.width: 1
+            
+            Text {
+                anchors.centerIn: parent
+                text: {
+                    var patterns = ["grayscale-ramp", "ansi-checker", "white-text-black", 
+                                   "red", "green", "blue", "cyan", "magenta", "yellow",
+                                   "zone-boundary-grid", "blooming-detection", "cross-dimming"];
+                    var currentIndex = patterns.indexOf(patternController.currentPattern) + 1;
+                    var totalPatterns = patterns.length;
+                    return currentIndex + "/" + totalPatterns;
+                }
+                color: "white"
+                font.pixelSize: 28
+                font.bold: true
+            }
+        }
+        
+        // Pattern name (top-center)
+        Rectangle {
+            anchors.top: parent.top
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.margins: 20
+            width: patternNameText.width + 40
+            height: 60
+            color: "#C0004080"
+            radius: 8
+            border.color: "white"
+            border.width: 1
+            
+            Text {
+                id: patternNameText
+                anchors.centerIn: parent
+                text: patternController.currentPattern.toUpperCase()
+                color: "white"
+                font.pixelSize: 24
+                font.bold: true
+            }
+        }
+        
+        // Exit button (top-right)
+        Rectangle {
+            anchors.top: parent.top
+            anchors.right: parent.right
+            anchors.margins: 20
+            width: 100
+            height: 60
+            color: "#C0800000"
+            radius: 8
+            border.color: "white"
+            border.width: 1
+            
+            Text {
+                anchors.centerIn: parent
+                text: "EXIT"
+                color: "white"
+                font.pixelSize: 24
+                font.bold: true
+            }
+            
+            MouseArea {
+                anchors.fill: parent
+                onClicked: Qt.quit()
+            }
+        }
+        
+        // Instructions (bottom-center)
+        Rectangle {
+            anchors.bottom: parent.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.margins: 20
+            width: Math.max(instructionText.width + 20, 300)
+            height: 50
+            color: "#C0000000"
+            radius: 8
+            border.color: "white"
+            border.width: 1
+            
+            Text {
+                id: instructionText
+                anchors.centerIn: parent
+                text: "Tap edges or swipe to navigate • Tap center to hide UI"
+                color: "white"
+                font.pixelSize: 18
+            }
+        }
+        
+        // Resolution info (bottom-left)
+        Rectangle {
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            anchors.margins: 20
+            width: resolutionText.width + 20
+            height: 50
+            color: "#C0000000"
+            radius: 8
+            border.color: "white"
+            border.width: 1
+            
+            Text {
+                id: resolutionText
+                anchors.centerIn: parent
+                text: Screen.width + "x" + Screen.height
+                color: "white"
+                font.pixelSize: 16
+            }
+        }
+        
+        // Network info (bottom-right)
+        Rectangle {
+            anchors.bottom: parent.bottom
+            anchors.right: parent.right
+            anchors.margins: 20
+            width: networkText.width + 20
+            height: 50
+            color: "#C0000000"
+            radius: 8
+            border.color: "white"
+            border.width: 1
+            
+            Text {
+                id: networkText
+                anchors.centerIn: parent
+                text: patternController.getNetworkInfo()
+                color: "white"
+                font.pixelSize: 16
+            }
+        }
+    }
+    
+    // Auto-hide timer
+    Timer {
+        id: uiHideTimer
+        interval: 4000
+        running: false
+        onTriggered: uiVisible = false
+    }
+    
+    // Show UI initially
+    Component.onCompleted: {
+        showUITemporarily()
     }
 }

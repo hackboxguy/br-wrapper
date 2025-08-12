@@ -2,6 +2,10 @@
 #include <QGuiApplication>
 #include <QScreen>
 #include <QDebug>
+#include <QFile>
+#include <QTextStream>
+#include <QProcess>
+#include <QRegExp>
 
 PatternController::PatternController(QObject *parent)
     : QObject(parent)
@@ -39,13 +43,36 @@ void PatternController::nextPattern()
     m_currentIndex = (m_currentIndex + 1) % m_patterns.size();
     m_currentPattern = m_patterns[m_currentIndex];
     
-    // If we're at index 0 and just wrapped around from cross-dimming, exit instead
-    if (m_currentIndex == 0 && m_currentPattern == "grayscale-ramp") {
-        // This means we wrapped around from cross-dimming, so exit
-        qDebug() << "Wrapped around from last pattern, exiting to launcher";
-        QGuiApplication::quit();
-        return;
+    // Handle solid color patterns
+    QStringList solidColors = {"red", "green", "blue", "cyan", "magenta", "yellow"};
+    if (solidColors.contains(m_currentPattern)) {
+        QColor color;
+        if (m_currentPattern == "red") color = QColor(255, 0, 0);
+        else if (m_currentPattern == "green") color = QColor(0, 255, 0);
+        else if (m_currentPattern == "blue") color = QColor(0, 0, 255);
+        else if (m_currentPattern == "cyan") color = QColor(0, 255, 255);
+        else if (m_currentPattern == "magenta") color = QColor(255, 0, 255);
+        else if (m_currentPattern == "yellow") color = QColor(255, 255, 0);
+        
+        m_customColor = color;
+        m_showCustomColor = true;
+        
+        qDebug() << "Touch: switched to solid color:" << m_currentPattern;
+    } else {
+        m_showCustomColor = false;
+        qDebug() << "Touch: switched to pattern:" << m_currentPattern;
     }
+    
+    emit currentPatternChanged();
+    emit showCustomColorChanged();
+    emit customColorChanged();
+}
+
+void PatternController::previousPattern()
+{
+    // Move to previous pattern
+    m_currentIndex = m_currentIndex > 0 ? m_currentIndex - 1 : m_patterns.size() - 1;
+    m_currentPattern = m_patterns[m_currentIndex];
     
     // Handle solid color patterns
     QStringList solidColors = {"red", "green", "blue", "cyan", "magenta", "yellow"};
@@ -103,6 +130,60 @@ QString PatternController::getResolution()
 QString PatternController::listPatterns()
 {
     return m_patterns.join(",");
+}
+
+QString PatternController::getNetworkInfo()
+{
+    // Try to get the actual IP address of the machine
+    QString ipAddress = "127.0.0.1"; // fallback
+    
+    // Read network interfaces to find non-loopback IP
+    QFile netFile("/proc/net/route");
+    if (netFile.open(QIODevice::ReadOnly)) {
+        QTextStream stream(&netFile);
+        QString line;
+        
+        // Skip header line
+        stream.readLine();
+        
+        // Look for default route (destination 00000000)
+        while (stream.readLineInto(&line)) {
+            QStringList parts = line.split('\t');
+            if (parts.size() >= 2 && parts[1] == "00000000") {
+                QString interface = parts[0];
+                
+                // Found default interface, now get its IP
+                QFile ifaceFile(QString("/sys/class/net/%1/address").arg(interface));
+                if (ifaceFile.exists()) {
+                    // Try to get IP from ip command output (simple approach)
+                    QProcess process;
+                    process.start("ip", QStringList() << "addr" << "show" << interface);
+                    process.waitForFinished(1000);
+                    
+                    QString output = process.readAllStandardOutput();
+                    QRegExp ipRegex("inet (\\d+\\.\\d+\\.\\d+\\.\\d+)");
+                    if (ipRegex.indexIn(output) != -1) {
+                        QString foundIp = ipRegex.cap(1);
+                        if (foundIp != "127.0.0.1") {
+                            ipAddress = foundIp;
+                            break;
+                        }
+                    }
+                }
+                break;
+            }
+        }
+        netFile.close();
+    }
+    
+    // Get port from network interface
+    int port = 8080; // default
+    if (m_networkInterface) {
+        // We could store the port in NetworkInterface class, but for now use default
+        port = 8080;
+    }
+    
+    return QString("TCP:%1:%2").arg(ipAddress).arg(port);
 }
 
 void PatternController::handleNetworkCommand(const QString &command)
@@ -202,6 +283,8 @@ void PatternController::updatePattern(const QString &pattern)
             qDebug() << "Network: switched to pattern:" << pattern;
         }
         
+        // Note: Network commands do NOT trigger UI visibility
+        // Only emit pattern/color changes, not UI changes
         emit currentPatternChanged();
         emit showCustomColorChanged();
         emit customColorChanged();
