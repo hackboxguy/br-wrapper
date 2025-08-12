@@ -48,6 +48,17 @@ private slots:
         launchApp(program, args, env);
     }
 
+    void launchSlideshow()
+    {
+        QString program = "/usr/bin/touch-gallery";
+        QStringList args;
+        args << "/Pictures";    // Pictures directory
+        args << "slideshow";    // Slideshow mode
+        args << "5";           // 5 second interval
+        QProcessEnvironment env = createTouchEnvironment();
+        launchApp(program, args, env);
+    }
+
     void exitLauncher()
     {
         QApplication::quit();
@@ -130,6 +141,13 @@ private:
                       "  background-color: #303030; "
                       "  border-color: #404040; "
                       "}"
+                      "QPushButton#slideshowBtn { "
+                      "  background-color: #2e8b57; "
+                      "  border-color: #90ee90; "
+                      "}"
+                      "QPushButton#slideshowBtn:hover { "
+                      "  background-color: #3cb371; "
+                      "}"
                       "QPushButton#exitBtn { "
                       "  background-color: #8b0000; "
                       "  border-color: #cd5c5c; "
@@ -177,6 +195,13 @@ private:
         galleryBtn->setMinimumHeight(100);
         connect(galleryBtn, &QPushButton::clicked, this, &TouchAppLauncher::launchTouchGallery);
         buttonLayout->addWidget(galleryBtn);
+
+        // Slideshow Button (NEW)
+        QPushButton *slideshowBtn = new QPushButton("🎞️ Slideshow");
+        slideshowBtn->setObjectName("slideshowBtn");
+        slideshowBtn->setMinimumHeight(100);
+        connect(slideshowBtn, &QPushButton::clicked, this, &TouchAppLauncher::launchSlideshow);
+        buttonLayout->addWidget(slideshowBtn);
 
         mainLayout->addLayout(buttonLayout);
 

@@ -8,12 +8,14 @@ ApplicationWindow {
     width: 2560
     height: 1440
     title: "Touch Gallery"
-    
+
     visibility: ApplicationWindow.FullScreen
-    
+
     property int currentImageIndex: 0
     property bool uiVisible: true
-    
+    property bool isSlideshow: slideshowMode || false
+    property bool slideshowPaused: false
+
     FolderListModel {
         id: folderModel
         folder: picturesPath || "file:///Pictures"
@@ -21,11 +23,11 @@ ApplicationWindow {
         showDirs: false
         sortField: FolderListModel.Name
     }
-    
+
     Rectangle {
         anchors.fill: parent
         color: "black"
-        
+
         Image {
             id: mainImage
             anchors.centerIn: parent
@@ -34,35 +36,36 @@ ApplicationWindow {
             fillMode: Image.PreserveAspectFit
             smooth: true
             source: folderModel.count > 0 ? folderModel.get(currentImageIndex, "fileURL") : ""
-            
+
             onSourceChanged: {
                 resetImageTransform()
             }
-            
+
             function resetImageTransform() {
                 scale = 1.0
                 x = 0
                 y = 0
             }
-            
+
             PinchArea {
                 id: pinchArea
                 anchors.fill: parent
                 pinch.target: mainImage
                 pinch.minimumScale: 0.5
                 pinch.maximumScale: 4.0
-                
+                enabled: !isSlideshow // Disable pinch in slideshow mode
+
                 MouseArea {
                     id: mouseArea
                     anchors.fill: parent
-                    
+
                     property real lastX: 0
                     property real lastY: 0
                     property real startX: 0
                     property real startY: 0
                     property bool isPanning: false
                     property bool hasMoved: false
-                    
+
                     onPressed: {
                         lastX = mouse.x
                         lastY = mouse.y
@@ -71,76 +74,92 @@ ApplicationWindow {
                         isPanning = false
                         hasMoved = false
                     }
-                    
+
                     onPositionChanged: {
-                        var deltaX = mouse.x - lastX
-                        var deltaY = mouse.y - lastY
-                        
-                        if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
-                            hasMoved = true
-                            
-                            // Always allow panning when not at normal scale
-                            if (mainImage.scale !== 1.0) {
-                                isPanning = true
-                                mainImage.x += deltaX
-                                mainImage.y += deltaY
-                                
-                                // Optional: Add bounds checking
-                                var imageWidth = mainImage.width * mainImage.scale
-                                var imageHeight = mainImage.height * mainImage.scale
-                                var maxX = Math.max(0, (imageWidth - parent.width) / 2)
-                                var maxY = Math.max(0, (imageHeight - parent.height) / 2)
-                                
-                                if (maxX > 0) {
-                                    mainImage.x = Math.max(-maxX, Math.min(maxX, mainImage.x))
-                                }
-                                if (maxY > 0) {
-                                    mainImage.y = Math.max(-maxY, Math.min(maxY, mainImage.y))
+                        if (!isSlideshow) {
+                            var deltaX = mouse.x - lastX
+                            var deltaY = mouse.y - lastY
+
+                            if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+                                hasMoved = true
+
+                                // Always allow panning when not at normal scale
+                                if (mainImage.scale !== 1.0) {
+                                    isPanning = true
+                                    mainImage.x += deltaX
+                                    mainImage.y += deltaY
+
+                                    // Optional: Add bounds checking
+                                    var imageWidth = mainImage.width * mainImage.scale
+                                    var imageHeight = mainImage.height * mainImage.scale
+                                    var maxX = Math.max(0, (imageWidth - parent.width) / 2)
+                                    var maxY = Math.max(0, (imageHeight - parent.height) / 2)
+
+                                    if (maxX > 0) {
+                                        mainImage.x = Math.max(-maxX, Math.min(maxX, mainImage.x))
+                                    }
+                                    if (maxY > 0) {
+                                        mainImage.y = Math.max(-maxY, Math.min(maxY, mainImage.y))
+                                    }
                                 }
                             }
+
+                            lastX = mouse.x
+                            lastY = mouse.y
                         }
-                        
-                        lastX = mouse.x
-                        lastY = mouse.y
                     }
-                    
+
                     onClicked: {
-                        if (!isPanning && !hasMoved) {
-                            if (mainImage.scale === 1.0) {
-                                // Navigation only works at normal scale
-                                if (mouse.x < parent.width / 4) {
-                                    previousImage()
-                                } else if (mouse.x > parent.width * 3 / 4) {
-                                    nextImage()
+                        if (isSlideshow) {
+                            // In slideshow mode, toggle pause/play
+                            slideshowPaused = !slideshowPaused
+                            if (slideshowPaused) {
+                                slideshowTimer.stop()
+                            } else {
+                                slideshowTimer.start()
+                            }
+                            showUITemporarily()
+                        } else {
+                            // Normal gallery mode behavior
+                            if (!isPanning && !hasMoved) {
+                                if (mainImage.scale === 1.0) {
+                                    // Navigation only works at normal scale
+                                    if (mouse.x < parent.width / 4) {
+                                        previousImage()
+                                    } else if (mouse.x > parent.width * 3 / 4) {
+                                        nextImage()
+                                    } else {
+                                        uiVisible = !uiVisible
+                                        if (uiVisible) {
+                                            uiHideTimer.restart()
+                                        }
+                                    }
                                 } else {
+                                    // When zoomed, only toggle UI
                                     uiVisible = !uiVisible
                                     if (uiVisible) {
                                         uiHideTimer.restart()
                                     }
                                 }
-                            } else {
-                                // When zoomed, only toggle UI
-                                uiVisible = !uiVisible
-                                if (uiVisible) {
-                                    uiHideTimer.restart()
-                                }
                             }
                         }
                     }
-                    
+
                     onReleased: {
-                        // Swipe navigation only at normal scale
-                        if (mainImage.scale === 1.0 && hasMoved && !isPanning) {
-                            var deltaX = mouse.x - startX
-                            if (Math.abs(deltaX) > 100) {
-                                if (deltaX > 0) {
-                                    previousImage()
-                                } else {
-                                    nextImage()
+                        if (!isSlideshow) {
+                            // Swipe navigation only at normal scale
+                            if (mainImage.scale === 1.0 && hasMoved && !isPanning) {
+                                var deltaX = mouse.x - startX
+                                if (Math.abs(deltaX) > 100) {
+                                    if (deltaX > 0) {
+                                        previousImage()
+                                    } else {
+                                        nextImage()
+                                    }
                                 }
                             }
                         }
-                        
+
                         // Reset states
                         isPanning = false
                         hasMoved = false
@@ -148,13 +167,13 @@ ApplicationWindow {
                 }
             }
         }
-        
+
         Rectangle {
             id: uiOverlay
             anchors.fill: parent
             color: "transparent"
             visible: uiVisible
-            
+
             Rectangle {
                 anchors.top: parent.top
                 anchors.left: parent.left
@@ -166,7 +185,7 @@ ApplicationWindow {
                 border.color: "white"
                 border.width: 1
                 visible: folderModel.count > 0
-                
+
                 Text {
                     anchors.centerIn: parent
                     text: (currentImageIndex + 1) + "/" + folderModel.count
@@ -177,7 +196,32 @@ ApplicationWindow {
                     renderType: Text.NativeRendering
                 }
             }
-            
+
+            // Slideshow indicator
+            Rectangle {
+                anchors.top: parent.top
+                anchors.left: parent.left
+                anchors.leftMargin: 180
+                anchors.topMargin: 20
+                width: 120
+                height: 60
+                color: slideshowPaused ? "#C0800000" : "#C0008000"
+                radius: 8
+                border.color: "white"
+                border.width: 1
+                visible: isSlideshow
+
+                Text {
+                    anchors.centerIn: parent
+                    text: slideshowPaused ? "PAUSED" : "SLIDE"
+                    color: "white"
+                    font.pixelSize: 20
+                    font.family: "DejaVu Sans"
+                    font.bold: true
+                    renderType: Text.NativeRendering
+                }
+            }
+
             Rectangle {
                 anchors.top: parent.top
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -188,8 +232,8 @@ ApplicationWindow {
                 radius: 8
                 border.color: "white"
                 border.width: 1
-                visible: mainImage.scale !== 1.0
-                
+                visible: mainImage.scale !== 1.0 && !isSlideshow
+
                 Text {
                     anchors.centerIn: parent
                     text: "FIT"
@@ -199,7 +243,7 @@ ApplicationWindow {
                     font.bold: true
                     renderType: Text.NativeRendering
                 }
-                
+
                 MouseArea {
                     anchors.fill: parent
                     onClicked: {
@@ -207,7 +251,7 @@ ApplicationWindow {
                     }
                 }
             }
-            
+
             Rectangle {
                 anchors.top: parent.top
                 anchors.right: parent.right
@@ -218,7 +262,7 @@ ApplicationWindow {
                 radius: 8
                 border.color: "white"
                 border.width: 1
-                
+
                 Text {
                     anchors.centerIn: parent
                     text: "EXIT"
@@ -228,13 +272,13 @@ ApplicationWindow {
                     font.bold: true
                     renderType: Text.NativeRendering
                 }
-                
+
                 MouseArea {
                     anchors.fill: parent
                     onClicked: Qt.quit()
                 }
             }
-            
+
             Rectangle {
                 anchors.bottom: parent.bottom
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -246,11 +290,13 @@ ApplicationWindow {
                 border.color: "white"
                 border.width: 1
                 visible: folderModel.count > 1
-                
+
                 Text {
                     id: instructionText
                     anchors.centerIn: parent
-                    text: mainImage.scale !== 1.0 ? "Tap center to fit image" : "Swipe or tap edges to navigate"
+                    text: isSlideshow ? 
+                          (slideshowPaused ? "Tap to resume slideshow" : "Tap to pause slideshow") :
+                          (mainImage.scale !== 1.0 ? "Tap center to fit image" : "Swipe or tap edges to navigate")
                     color: "white"
                     font.pixelSize: 20
                     font.family: "DejaVu Sans"
@@ -258,7 +304,7 @@ ApplicationWindow {
                 }
             }
         }
-        
+
         Rectangle {
             anchors.centerIn: parent
             width: 400
@@ -268,7 +314,7 @@ ApplicationWindow {
             border.color: "white"
             border.width: 2
             visible: folderModel.count === 0
-            
+
             Text {
                 anchors.centerIn: parent
                 text: "No images found in " + (picturesPath || "/Pictures")
@@ -279,35 +325,72 @@ ApplicationWindow {
                 renderType: Text.NativeRendering
             }
         }
-        
+
         Timer {
             id: uiHideTimer
             interval: 4000
             running: false
             onTriggered: uiVisible = false
         }
+
+        Timer {
+            id: slideshowTimer
+            interval: slideshowInterval || 5000 // Use passed interval or default 5 seconds
+            running: isSlideshow && !slideshowPaused && folderModel.count > 1
+            repeat: true
+            onTriggered: nextImage()
+        }
     }
-    
+
     function nextImage() {
         if (folderModel.count > 0) {
             currentImageIndex = (currentImageIndex + 1) % folderModel.count
-            showUITemporarily()
+            if (!isSlideshow) {
+                showUITemporarily()
+            }
         }
     }
-    
+
     function previousImage() {
         if (folderModel.count > 0) {
             currentImageIndex = currentImageIndex > 0 ? currentImageIndex - 1 : folderModel.count - 1
+            if (!isSlideshow) {
+                showUITemporarily()
+            }
+        }
+    }
+
+    function showUITemporarily() {
+        uiVisible = true
+        if (!isSlideshow) {
+            uiHideTimer.restart()
+        } else {
+            // In slideshow mode, hide UI after 2 seconds instead of 4
+            uiHideTimer.interval = 2000
+            uiHideTimer.restart()
+            uiHideTimer.interval = 4000 // Reset for normal mode
+        }
+    }
+
+    Component.onCompleted: {
+        showUITemporarily()
+        if (isSlideshow && folderModel.count > 1) {
+            console.log("Starting slideshow with", slideshowInterval/1000, "second interval")
+        }
+    }
+
+    // Handle keyboard shortcuts for slideshow
+    Keys.onSpacePressed: {
+        if (isSlideshow) {
+            slideshowPaused = !slideshowPaused
+            if (slideshowPaused) {
+                slideshowTimer.stop()
+            } else {
+                slideshowTimer.start()
+            }
             showUITemporarily()
         }
     }
-    
-    function showUITemporarily() {
-        uiVisible = true
-        uiHideTimer.restart()
-    }
-    
-    Component.onCompleted: {
-        showUITemporarily()
-    }
+
+    Keys.onEscapePressed: Qt.quit()
 }
