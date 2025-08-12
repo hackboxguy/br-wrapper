@@ -11,7 +11,8 @@ SOURCES += \
 
 HEADERS += \
     PatternController.h \
-    NetworkInterface.h
+    NetworkInterface.h \
+    PatternParameters.h
 
 RESOURCES += qml.qrc
 

@@ -5,5 +5,8 @@
         <file>patterns/GrayscaleRamp.qml</file>
         <file>patterns/AnsiChecker.qml</file>
         <file>patterns/WhiteTextBlack.qml</file>
+        <file>patterns/ZoneBoundaryGrid.qml</file>
+        <file>patterns/BloomingDetection.qml</file>
+        <file>patterns/CrossDimming.qml</file>
     </qresource>
 </RCC>

@@ -19,7 +19,7 @@ Window {
         }
     }
     
-    // Custom color overlay (when RGB patch is active)
+    // Custom color overlay (when RGB patch or solid color is active)
     Rectangle {
         anchors.fill: parent
         visible: patternController.showCustomColor
@@ -40,6 +40,12 @@ Window {
                     return "qrc:/patterns/AnsiChecker.qml"
                 case "white-text-black":
                     return "qrc:/patterns/WhiteTextBlack.qml"
+                case "zone-boundary-grid":
+                    return "qrc:/patterns/ZoneBoundaryGrid.qml"
+                case "blooming-detection":
+                    return "qrc:/patterns/BloomingDetection.qml"
+                case "cross-dimming":
+                    return "qrc:/patterns/CrossDimming.qml"
                 default:
                     return "qrc:/patterns/GrayscaleRamp.qml"
             }
@@ -61,9 +67,18 @@ Window {
             y: 5
             color: "white"
             font.pixelSize: 16
-            text: "Pattern: " + patternController.currentPattern + 
-                  "\nResolution: " + Screen.width + "x" + Screen.height +
-                  "\nTouch to cycle patterns"
+            text: {
+                var patterns = ["grayscale-ramp", "ansi-checker", "white-text-black", 
+                               "red", "green", "blue", "cyan", "magenta", "yellow",
+                               "zone-boundary-grid", "blooming-detection", "cross-dimming"];
+                var currentIndex = patterns.indexOf(patternController.currentPattern) + 1;
+                var totalPatterns = patterns.length;
+                
+                return "Pattern: " + patternController.currentPattern + 
+                       " (" + currentIndex + "/" + totalPatterns + ")" +
+                       "\nResolution: " + Screen.width + "x" + Screen.height +
+                       "\nTouch to cycle (exit at end)"
+            }
         }
     }
 }
