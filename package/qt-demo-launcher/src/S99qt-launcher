@@ -5,7 +5,7 @@
 
 DAEMON="qt_demo_launcher"
 DAEMON_PATH="/usr/bin"
-DAEMON_ARGS=""
+DAEMON_ARGS="/etc/launcher.json"
 PIDFILE="/var/run/$DAEMON.pid"
 
 # Set Qt environment variables
