@@ -1,0 +1,86 @@
+#!/bin/sh
+#
+# Start/stop PhotoQt image viewer
+#
+SERVER_NAME=photoqt
+SERVER_PATH=/usr/bin/
+PICTURE_DIR=/Pictures/
+start() {
+        echo -n "Starting $SERVER_NAME Service: "
+        killall $SERVER_NAME 2>/dev/null #ensure this utility is stopped
+        
+        # Qt5 environment variables for 15.6" 2560x1440 touch display
+        export QT_QPA_FONTDIR=/usr/share/fonts/dejavu/
+        export QT_QPA_PLATFORM=linuxfb
+        export QT_QPA_FB_HIDECURSOR=1
+        
+        # Touch input device - himax touchscreen
+        export QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event0
+        
+        # Set XDG runtime directory
+        export XDG_RUNTIME_DIR=/tmp/runtime-root
+        mkdir -p $XDG_RUNTIME_DIR
+        chmod 700 $XDG_RUNTIME_DIR
+        
+        # Create a default photos directory if needed
+        #mkdir -p /home/photos
+        
+        # Add some debug output (can be removed for production)
+        export QT_LOGGING_RULES="qt.qpa.*=false"
+        
+        # Start PhotoQt with a default photos directory
+        cd $PICTURE_DIR 2>/dev/null || cd /tmp
+        
+        # Try starting with reset config on first run, normal start afterwards
+        if [ ! -f /tmp/.photoqt_configured ]; then
+            echo "First run - resetting PhotoQt configuration..."
+            $SERVER_PATH/$SERVER_NAME --reset-config --debug $PICTURE_DIR > /tmp/photoqt.log 2>&1 &
+            touch /tmp/.photoqt_configured
+        else
+            $SERVER_PATH/$SERVER_NAME $PICTURE_DIR > /tmp/photoqt.log 2>&1 &
+        fi
+        
+        # Check if it started successfully
+        sleep 3
+        if pgrep $SERVER_NAME > /dev/null; then
+            echo "OK"
+        else
+            echo "FAILED - check /tmp/photoqt.log"
+            tail -n 10 /tmp/photoqt.log
+        fi
+}
+
+stop() {
+        echo -n "Stopping $SERVER_NAME Service: "
+        killall $SERVER_NAME 2>/dev/null
+        sleep 1
+        # Force kill if still running
+        killall -9 $SERVER_NAME 2>/dev/null
+        echo "OK"
+}
+
+case "$1" in
+  start)
+        start
+        ;;
+  stop)
+        stop
+        ;;
+  restart|reload)
+        stop
+        sleep 2
+        start
+        ;;
+  status)
+        if pgrep $SERVER_NAME > /dev/null; then
+            echo "$SERVER_NAME is running"
+        else
+            echo "$SERVER_NAME is not running"
+        fi
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+esac
+
+exit $?

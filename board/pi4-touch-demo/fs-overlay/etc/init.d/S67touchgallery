@@ -1,0 +1,78 @@
+#!/bin/sh
+#
+# Start/stop Touch Gallery
+#
+SERVER_NAME=touch-gallery
+SERVER_PATH=/usr/bin/
+
+start() {
+        echo -n "Starting $SERVER_NAME: "
+        killall $SERVER_NAME 2>/dev/null
+        
+        # Qt5 environment for framebuffer - set these BEFORE starting the app
+        export QT_QPA_PLATFORM=linuxfb
+        export QT_QPA_FB_HIDECURSOR=1
+        export QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event0
+        export QT_QPA_FONTDIR=/usr/share/fonts/dejavu/
+        export XDG_RUNTIME_DIR=/tmp/runtime-root
+        
+        # Create runtime directory
+        mkdir -p $XDG_RUNTIME_DIR
+        chmod 700 $XDG_RUNTIME_DIR
+        
+        # Create Pictures directory
+        mkdir -p /Pictures
+        
+        # Change to Pictures directory
+        cd /Pictures
+        
+        # Start touch gallery with explicit environment
+        env QT_QPA_PLATFORM=linuxfb \
+            QT_QPA_FB_HIDECURSOR=1 \
+            QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event0 \
+            QT_QPA_FONTDIR=/usr/share/fonts/dejavu/ \
+            XDG_RUNTIME_DIR=/tmp/runtime-root \
+            $SERVER_PATH/$SERVER_NAME /Pictures > /tmp/touch-gallery.log 2>&1 &
+        
+        sleep 2
+        if pidof $SERVER_NAME > /dev/null; then
+            echo "OK"
+        else
+            echo "FAILED - check /tmp/touch-gallery.log"
+            tail -n 5 /tmp/touch-gallery.log
+        fi
+}
+
+stop() {
+        echo -n "Stopping $SERVER_NAME: "
+        killall $SERVER_NAME 2>/dev/null
+        sleep 1
+        killall -9 $SERVER_NAME 2>/dev/null
+        echo "OK"
+}
+
+case "$1" in
+  start)
+        start
+        ;;
+  stop)
+        stop
+        ;;
+  restart|reload)
+        stop
+        sleep 2
+        start
+        ;;
+  status)
+        if pidof $SERVER_NAME > /dev/null; then
+            echo "$SERVER_NAME is running"
+        else
+            echo "$SERVER_NAME is not running"
+        fi
+        ;;
+  *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+esac
+
+exit $?
