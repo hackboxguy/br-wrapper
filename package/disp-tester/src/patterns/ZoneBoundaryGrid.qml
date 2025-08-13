@@ -4,47 +4,58 @@ PatternBase {
     patternName: "zone-boundary-grid"
     backgroundColor: "black"
     
-    // Calculate spacing for 16x9 grid
-    property int actualSpacingX: parent.width / 16
-    property int actualSpacingY: parent.height / 9
+    // Perfect square zones aligned to 42x24 LED backlight
+    property int zoneSize: 60  // 60x60 pixel squares
+    property int gridWidth: 42 * zoneSize   // 2520 pixels
+    property int gridHeight: 24 * zoneSize  // 1440 pixels
+    property int offsetX: (parent.width - gridWidth) / 2  // Center horizontally
+    property int offsetY: (parent.height - gridHeight) / 2  // Center vertically
     
-    // Vertical lines (including right edge)
+    // Vertical lines (42 zones = 43 lines)
     Repeater {
-        model: 17  // 16 zones = 17 lines
+        model: 43
         Rectangle {
-            x: index < 16 ? index * actualSpacingX : parent.width - 2
-            y: 0
+            x: offsetX + (index * zoneSize)
+            y: offsetY
             width: 2
-            height: parent.height
+            height: gridHeight
             color: "white"
             opacity: 0.8
         }
     }
     
-    // Horizontal lines (including bottom edge)
+    // Horizontal lines (24 zones = 25 lines, including bottom edge)
     Repeater {
-        model: 10  // 9 zones = 10 lines
+        model: 25
         Rectangle {
-            x: 0
-            y: index < 9 ? index * actualSpacingY : parent.height - 2
-            width: parent.width
+            x: offsetX
+            y: offsetY + (index * zoneSize)
+            width: gridWidth
             height: 2
             color: "white"
             opacity: 0.8
+            
+            // Ensure the last line (index 24) is positioned correctly
+            Component.onCompleted: {
+                if (index === 24) {
+                    // Position the bottom line at the very bottom of the grid
+                    y = offsetY + gridHeight - 2
+                }
+            }
         }
     }
     
-    // Zone numbers
+    // Zone numbers (1008 zones, each exactly 60x60 pixels)
     Repeater {
-        model: 144  // 16x9 = 144 zones
+        model: 1008
         Rectangle {
-            property int zoneX: index % 16
-            property int zoneY: Math.floor(index / 16)
+            property int zoneX: index % 42
+            property int zoneY: Math.floor(index / 42)
             
-            x: zoneX * actualSpacingX + 2
-            y: zoneY * actualSpacingY + 2
-            width: actualSpacingX - 4
-            height: actualSpacingY - 4
+            x: offsetX + (zoneX * zoneSize) + 2
+            y: offsetY + (zoneY * zoneSize) + 2
+            width: zoneSize - 4
+            height: zoneSize - 4
             
             color: "transparent"
             
@@ -53,8 +64,8 @@ PatternBase {
                 anchors.centerIn: parent
                 text: index.toString()
                 color: "white"
-                font.pixelSize: Math.min(parent.width, parent.height) * 0.25
-                visible: parent.width > 40 && parent.height > 25  // Only show if zone is large enough
+                font.pixelSize: 12  // Fixed size for 60x60 zones
+                visible: true  // Always show numbers in 60x60 zones
             }
         }
     }

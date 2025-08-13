@@ -14,8 +14,8 @@ PatternController::PatternController(QObject *parent)
     , m_showCustomColor(false)
     , m_networkInterface(nullptr)
 {
-    // Initialize available patterns (added solid colors)
-    m_patterns << "grayscale-ramp" << "ansi-checker" << "white-text-black" 
+    // Initialize available patterns (added solid colors, removed white-text-black)
+    m_patterns << "grayscale-ramp" << "ansi-checker" << "white" << "black"
                << "red" << "green" << "blue" << "cyan" << "magenta" << "yellow"
                << "zone-boundary-grid" << "blooming-detection" << "cross-dimming";
     m_currentPattern = m_patterns[0];
@@ -44,10 +44,12 @@ void PatternController::nextPattern()
     m_currentPattern = m_patterns[m_currentIndex];
     
     // Handle solid color patterns
-    QStringList solidColors = {"red", "green", "blue", "cyan", "magenta", "yellow"};
+    QStringList solidColors = {"white", "black", "red", "green", "blue", "cyan", "magenta", "yellow"};
     if (solidColors.contains(m_currentPattern)) {
         QColor color;
-        if (m_currentPattern == "red") color = QColor(255, 0, 0);
+        if (m_currentPattern == "white") color = QColor(255, 255, 255);
+        else if (m_currentPattern == "black") color = QColor(0, 0, 0);
+        else if (m_currentPattern == "red") color = QColor(255, 0, 0);
         else if (m_currentPattern == "green") color = QColor(0, 255, 0);
         else if (m_currentPattern == "blue") color = QColor(0, 0, 255);
         else if (m_currentPattern == "cyan") color = QColor(0, 255, 255);
@@ -75,10 +77,12 @@ void PatternController::previousPattern()
     m_currentPattern = m_patterns[m_currentIndex];
     
     // Handle solid color patterns
-    QStringList solidColors = {"red", "green", "blue", "cyan", "magenta", "yellow"};
+    QStringList solidColors = {"white", "black", "red", "green", "blue", "cyan", "magenta", "yellow"};
     if (solidColors.contains(m_currentPattern)) {
         QColor color;
-        if (m_currentPattern == "red") color = QColor(255, 0, 0);
+        if (m_currentPattern == "white") color = QColor(255, 255, 255);
+        else if (m_currentPattern == "black") color = QColor(0, 0, 0);
+        else if (m_currentPattern == "red") color = QColor(255, 0, 0);
         else if (m_currentPattern == "green") color = QColor(0, 255, 0);
         else if (m_currentPattern == "blue") color = QColor(0, 0, 255);
         else if (m_currentPattern == "cyan") color = QColor(0, 255, 255);
@@ -264,10 +268,12 @@ void PatternController::updatePattern(const QString &pattern)
         m_currentIndex = m_patterns.indexOf(pattern);
         
         // Handle solid color patterns for network commands
-        QStringList solidColors = {"red", "green", "blue", "cyan", "magenta", "yellow"};
+        QStringList solidColors = {"white", "black", "red", "green", "blue", "cyan", "magenta", "yellow"};
         if (solidColors.contains(pattern)) {
             QColor color;
-            if (pattern == "red") color = QColor(255, 0, 0);
+            if (pattern == "white") color = QColor(255, 255, 255);
+            else if (pattern == "black") color = QColor(0, 0, 0);
+            else if (pattern == "red") color = QColor(255, 0, 0);
             else if (pattern == "green") color = QColor(0, 255, 0);
             else if (pattern == "blue") color = QColor(0, 0, 255);
             else if (pattern == "cyan") color = QColor(0, 255, 255);

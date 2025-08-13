@@ -48,8 +48,6 @@ Window {
                     return "qrc:/patterns/GrayscaleRamp.qml"
                 case "ansi-checker":
                     return "qrc:/patterns/AnsiChecker.qml"
-                case "white-text-black":
-                    return "qrc:/patterns/WhiteTextBlack.qml"
                 case "zone-boundary-grid":
                     return "qrc:/patterns/ZoneBoundaryGrid.qml"
                 case "blooming-detection":
@@ -146,7 +144,7 @@ Window {
             Text {
                 anchors.centerIn: parent
                 text: {
-                    var patterns = ["grayscale-ramp", "ansi-checker", "white-text-black", 
+                    var patterns = ["grayscale-ramp", "ansi-checker", "white", "black",
                                    "red", "green", "blue", "cyan", "magenta", "yellow",
                                    "zone-boundary-grid", "blooming-detection", "cross-dimming"];
                     var currentIndex = patterns.indexOf(patternController.currentPattern) + 1;
