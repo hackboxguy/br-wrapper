@@ -22,26 +22,39 @@ override LDFLAGS += $(QT_LIBS)
 HOST_DIR ?= $(shell dirname $(shell which $(CXX)))/../..
 MOC = $(HOST_DIR)/bin/moc
 
+# Source files
+SOURCES = main.cpp NetworkInterface.cpp
+HEADERS = NetworkInterface.h
+OBJECTS = main.o NetworkInterface.o
+MOC_FILES = main.moc NetworkInterface.moc
+
 .PHONY: clean install
 
 # Force Make to build the target by default
 .DEFAULT_GOAL := $(TARGET)
 
 # Build the target
-$(TARGET): main.o
-	$(CXX) main.o -o $(TARGET) $(LDFLAGS)
+$(TARGET): $(OBJECTS)
+	$(CXX) $(OBJECTS) -o $(TARGET) $(LDFLAGS)
 
 # Compile main.cpp (depends on MOC file being generated)
-main.o: main.cpp main.moc
+main.o: main.cpp main.moc NetworkInterface.h
 	$(CXX) $(CXXFLAGS) -c main.cpp -o main.o
 
-# Generate MOC file
+# Compile NetworkInterface.cpp (depends on MOC file being generated)
+NetworkInterface.o: NetworkInterface.cpp NetworkInterface.h NetworkInterface.moc
+	$(CXX) $(CXXFLAGS) -c NetworkInterface.cpp -o NetworkInterface.o
+
+# Generate MOC files
 main.moc: main.cpp
 	$(MOC) -I$(QT5_INCDIR) -I$(QT5_INCDIR)/QtCore -I$(QT5_INCDIR)/QtGui -I$(QT5_INCDIR)/QtWidgets main.cpp -o main.moc
 
+NetworkInterface.moc: NetworkInterface.h
+	$(MOC) -I$(QT5_INCDIR) -I$(QT5_INCDIR)/QtCore -I$(QT5_INCDIR)/QtGui -I$(QT5_INCDIR)/QtWidgets NetworkInterface.h -o NetworkInterface.moc
+
 # Clean targets
 clean:
-	rm -f main.o main.moc $(TARGET)
+	rm -f $(OBJECTS) $(MOC_FILES) $(TARGET)
 
 # Install
 install: $(TARGET)

@@ -20,6 +20,7 @@
 #include <QFile>
 #include <QPixmap>
 #include <QIcon>
+#include "NetworkInterface.h"
 
 struct ButtonConfig {
     QString id;
@@ -85,12 +86,14 @@ class TouchAppLauncher : public QMainWindow
     Q_OBJECT
 
 public:
-    TouchAppLauncher(const QString &configPath = QString(), QWidget *parent = nullptr)
-        : QMainWindow(parent), m_configPath(configPath)
+    TouchAppLauncher(const QString &configPath = QString(), int networkPort = 8081, QWidget *parent = nullptr)
+        : QMainWindow(parent), m_configPath(configPath), m_networkPort(networkPort), 
+          m_networkInterface(nullptr), m_runningProcess(nullptr), m_runningAppId("")
     {
         loadConfig();
         setupUI();
         validatePrograms();
+        setupNetworkInterface();
     }
 
 private slots:
@@ -126,13 +129,171 @@ private slots:
         // Launch program
         if (!config.program.isEmpty()) {
             QProcessEnvironment env = createTouchEnvironment();
-            launchApp(config.program, config.arguments, env, config.workingDirectory);
+            launchApp(config.program, config.arguments, env, config.workingDirectory, buttonId);
+        }
+    }
+
+    void handleNetworkCommand(const QString &command)
+    {
+        qDebug() << "Network command received:" << command;
+
+        QStringList parts = command.split(' ', Qt::SkipEmptyParts);
+        if (parts.isEmpty()) {
+            m_networkInterface->sendResponse("ERROR: Empty command");
+            return;
+        }
+
+        QString cmd = parts[0].toLower();
+
+        if (cmd == "list-apps") {
+            QString appList = listApps();
+            m_networkInterface->sendResponse(appList);
+        } else if (cmd == "start-app" && parts.size() >= 2) {
+            QString appId = parts[1];
+            bool result = startApp(appId);
+            if (result) {
+                m_networkInterface->sendResponse("OK");
+            }
+            // Error response is sent by startApp() function
+        } else if (cmd == "stop-app") {
+            bool result = stopApp();
+            if (result) {
+                m_networkInterface->sendResponse("OK");
+            } else {
+                m_networkInterface->sendResponse("ERROR: no-app-running");
+            }
+        } else if (cmd == "get-running-app") {
+            QString runningApp = getRunningApp();
+            m_networkInterface->sendResponse(runningApp);
+        } else {
+            m_networkInterface->sendResponse("ERROR: Unknown command");
         }
     }
 
 private:
     LauncherConfig m_config;
     QString m_configPath;
+    int m_networkPort;
+    NetworkInterface *m_networkInterface;
+    QProcess *m_runningProcess;
+    QString m_runningAppId;
+
+    void setupNetworkInterface()
+    {
+        m_networkInterface = new NetworkInterface(m_networkPort, this);
+        connect(m_networkInterface, &NetworkInterface::commandReceived,
+                this, &TouchAppLauncher::handleNetworkCommand);
+
+        if (m_networkInterface->startServer()) {
+            qDebug() << "Network interface started on port" << m_networkPort;
+        } else {
+            qWarning() << "Failed to start network interface on port" << m_networkPort;
+        }
+    }
+
+    QString listApps()
+    {
+        QStringList appIds;
+        for (const ButtonConfig &config : m_config.buttons) {
+            if (config.enabled) {
+                appIds << config.id;
+            }
+        }
+        return appIds.join(",");
+    }
+
+    bool startApp(const QString &appId)
+    {
+        // Check if an app is already running
+        if (m_runningProcess && m_runningProcess->state() == QProcess::Running) {
+            m_networkInterface->sendResponse("ERROR: app-already-running");
+            return false;
+        }
+
+        // Find the app configuration
+        ButtonConfig config;
+        bool found = false;
+        for (const ButtonConfig &btn : m_config.buttons) {
+            if (btn.id == appId && btn.enabled) {
+                config = btn;
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            m_networkInterface->sendResponse("ERROR: invalid-app-name");
+            return false;
+        }
+
+        // Handle special actions
+        if (config.action == "quit") {
+            m_networkInterface->sendResponse("OK");
+            QApplication::quit();
+            return true;
+        }
+
+        // Validate program exists before launching
+        if (config.program.isEmpty()) {
+            m_networkInterface->sendResponse("ERROR: app-has-no-program");
+            return false;
+        }
+
+        if (!QFile::exists(config.program)) {
+            m_networkInterface->sendResponse("ERROR: program-not-found");
+            return false;
+        }
+
+        // Send OK response immediately before launching
+        m_networkInterface->sendResponse("OK");
+
+        // Launch the app asynchronously
+        launchAppAsync(config.program, config.arguments, config.workingDirectory, appId);
+        return true;
+    }
+
+    QString getRunningApp()
+    {
+        if (m_runningProcess && m_runningProcess->state() == QProcess::Running) {
+            return m_runningAppId;
+        }
+        return "none";
+    }
+
+    bool stopApp()
+    {
+        // Check if an app is currently running
+        if (!m_runningProcess || m_runningProcess->state() != QProcess::Running) {
+            return false; // No app running
+        }
+
+        qDebug() << "Stopping app:" << m_runningAppId;
+
+        // First try graceful termination (SIGTERM)
+        m_runningProcess->terminate();
+
+        // Wait up to 3 seconds for graceful shutdown
+        if (m_runningProcess->waitForFinished(3000)) {
+            qDebug() << "App terminated gracefully:" << m_runningAppId;
+        } else {
+            // If app doesn't respond to SIGTERM, force kill it
+            qWarning() << "App didn't respond to SIGTERM, force killing:" << m_runningAppId;
+            m_runningProcess->kill();
+            
+            // Wait another 2 seconds for force kill to complete
+            if (!m_runningProcess->waitForFinished(2000)) {
+                qWarning() << "Failed to force kill app:" << m_runningAppId;
+                // Process cleanup will happen via finished() signal eventually
+            } else {
+                qDebug() << "App force killed:" << m_runningAppId;
+            }
+        }
+
+        // Note: Process cleanup and state reset happens automatically
+        // via the finished() signal handler we already connected in launchAppAsync()
+        
+        return true;
+    }
 
     void loadConfig()
     {
@@ -267,9 +428,8 @@ private:
             btn.hoverColor = btnObj["hover_color"].toString("#505050");
             btn.borderRadius = btnObj["border_radius"].toInt(15);
 
-            if (btn.enabled) {
-                m_config.buttons.append(btn);
-            }
+            // Add all buttons (including disabled ones) to config for network API
+            m_config.buttons.append(btn);
         }
     }
 
@@ -334,45 +494,117 @@ private:
         return env;
     }
 
-    void launchApp(const QString &program, const QStringList &args,
-                   const QProcessEnvironment &env, const QString &workingDir)
+    void launchAppAsync(const QString &program, const QStringList &args,
+                       const QString &workingDir, const QString &appId)
     {
+        // Create runtime directory if needed
+        QDir().mkpath("/tmp/runtime-root");
+
+        // Clean up any previous process
+        if (m_runningProcess) {
+            m_runningProcess->deleteLater();
+            m_runningProcess = nullptr;
+        }
+
+        // Create process environment
+        QProcessEnvironment env = createTouchEnvironment();
+
+        m_runningProcess = new QProcess(this);
+        m_runningProcess->setProcessEnvironment(env);
+        m_runningProcess->setWorkingDirectory(workingDir);
+
+        // Connect to process signals for async handling
+        connect(m_runningProcess, &QProcess::started,
+                [this, program, appId]() {
+                    m_runningAppId = appId;
+                    qDebug() << "App started successfully:" << program << "App ID:" << appId;
+                    // Hide launcher after successful start
+                    this->hide();
+                });
+
+        connect(m_runningProcess, &QProcess::errorOccurred,
+                [this, program, appId](QProcess::ProcessError error) {
+                    qWarning() << "Failed to start app:" << program << "App ID:" << appId << "Error:" << error;
+                    // Don't send network response here - connection already closed
+                    m_runningAppId = "";
+                    if (m_runningProcess) {
+                        m_runningProcess->deleteLater();
+                        m_runningProcess = nullptr;
+                    }
+                });
+
+        // Show launcher again when app exits
+        connect(m_runningProcess, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
+                [this, program, appId](int exitCode, QProcess::ExitStatus exitStatus) {
+                    qDebug() << "App finished:" << program << "App ID:" << appId << "Exit code:" << exitCode;
+                    this->show();
+                    m_runningAppId = "";
+                    if (m_runningProcess) {
+                        m_runningProcess->deleteLater();
+                        m_runningProcess = nullptr;
+                    }
+                });
+
+        // Start the process (non-blocking)
+        m_runningProcess->start(program, args);
+
+        qDebug() << "Process start initiated for:" << program << "with args:" << args << "App ID:" << appId;
+    }
+
+    bool launchApp(const QString &program, const QStringList &args,
+                   const QProcessEnvironment &env, const QString &workingDir, const QString &appId)
+    {
+        // This is the original synchronous version for button clicks
         // Check if program exists
         if (!QFile::exists(program)) {
             QMessageBox::warning(this, "Error",
                 QString("Program not found: %1").arg(program));
-            return;
+            return false;
         }
 
         // Create runtime directory if needed
         QDir().mkpath("/tmp/runtime-root");
 
-        QProcess *process = new QProcess(this);
-        process->setProcessEnvironment(env);
-        process->setWorkingDirectory(workingDir);
-
-        // Launch the program
-        process->start(program, args);
-
-        if (!process->waitForStarted(3000)) {
-            QMessageBox::warning(this, "Error",
-                QString("Failed to start: %1\nError: %2").arg(program, process->errorString()));
-            delete process;
-            return;
+        // Clean up any previous process
+        if (m_runningProcess) {
+            m_runningProcess->deleteLater();
+            m_runningProcess = nullptr;
         }
 
-        qDebug() << "Launched:" << program << "with args:" << args;
+        m_runningProcess = new QProcess(this);
+        m_runningProcess->setProcessEnvironment(env);
+        m_runningProcess->setWorkingDirectory(workingDir);
+
+        // Launch the program
+        m_runningProcess->start(program, args);
+
+        if (!m_runningProcess->waitForStarted(3000)) {
+            QString errorMsg = QString("Failed to start: %1\nError: %2").arg(program, m_runningProcess->errorString());
+            QMessageBox::warning(this, "Error", errorMsg);
+            m_runningProcess->deleteLater();
+            m_runningProcess = nullptr;
+            return false;
+        }
+
+        m_runningAppId = appId;
+        qDebug() << "Launched:" << program << "with args:" << args << "App ID:" << appId;
 
         // Hide launcher while app is running
         this->hide();
 
         // Show launcher again when app exits
-        connect(process, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-                [this, process, program](int exitCode, QProcess::ExitStatus exitStatus) {
-                    qDebug() << "App finished:" << program << "Exit code:" << exitCode;
+        connect(m_runningProcess, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
+                [this, program, appId](int exitCode, QProcess::ExitStatus exitStatus) {
+                    qDebug() << "App finished:" << program << "App ID:" << appId << "Exit code:" << exitCode;
                     this->show();
-                    process->deleteLater();
+                    m_runningAppId = "";
+                    if (m_runningProcess) {
+                        m_runningProcess->deleteLater();
+                        m_runningProcess = nullptr;
+                    }
                 });
+
+        return true;
     }
 
     void setupUI()
@@ -394,7 +626,7 @@ private:
             mainLayout->addWidget(titleWidget);
         }
 
-        // Create buttons layout
+        // Create buttons layout - only for enabled buttons in UI
         QLayout *buttonLayout = createButtonLayout();
         if (buttonLayout) {
             mainLayout->addLayout(buttonLayout);
@@ -463,25 +695,33 @@ private:
 
     QLayout* createButtonLayout()
     {
-        if (m_config.buttons.isEmpty()) {
+        // Filter for enabled buttons only for UI display
+        QList<ButtonConfig> enabledButtons;
+        for (const ButtonConfig &config : m_config.buttons) {
+            if (config.enabled) {
+                enabledButtons.append(config);
+            }
+        }
+
+        if (enabledButtons.isEmpty()) {
             return nullptr;
         }
 
         if (m_config.layout.type == "grid") {
-            return createGridLayout();
+            return createGridLayout(enabledButtons);
         } else if (m_config.layout.type == "horizontal") {
-            return createHorizontalLayout();
+            return createHorizontalLayout(enabledButtons);
         } else {
-            return createVerticalLayout();
+            return createVerticalLayout(enabledButtons);
         }
     }
 
-    QGridLayout* createGridLayout()
+    QGridLayout* createGridLayout(const QList<ButtonConfig> &buttons)
     {
         QGridLayout *gridLayout = new QGridLayout;
         gridLayout->setSpacing(m_config.layout.spacing);
 
-        for (const ButtonConfig &config : m_config.buttons) {
+        for (const ButtonConfig &config : buttons) {
             QPushButton *button = createButton(config);
             gridLayout->addWidget(button, config.row, config.column,
                                  config.rowSpan, config.columnSpan);
@@ -490,12 +730,12 @@ private:
         return gridLayout;
     }
 
-    QVBoxLayout* createVerticalLayout()
+    QVBoxLayout* createVerticalLayout(const QList<ButtonConfig> &buttons)
     {
         QVBoxLayout *vLayout = new QVBoxLayout;
         vLayout->setSpacing(m_config.layout.spacing);
 
-        for (const ButtonConfig &config : m_config.buttons) {
+        for (const ButtonConfig &config : buttons) {
             QPushButton *button = createButton(config);
             vLayout->addWidget(button);
         }
@@ -503,12 +743,12 @@ private:
         return vLayout;
     }
 
-    QHBoxLayout* createHorizontalLayout()
+    QHBoxLayout* createHorizontalLayout(const QList<ButtonConfig> &buttons)
     {
         QHBoxLayout *hLayout = new QHBoxLayout;
         hLayout->setSpacing(m_config.layout.spacing);
 
-        for (const ButtonConfig &config : m_config.buttons) {
+        for (const ButtonConfig &config : buttons) {
             QPushButton *button = createButton(config);
             hLayout->addWidget(button);
         }
@@ -598,6 +838,7 @@ int main(int argc, char *argv[])
 
     // Parse command line arguments
     QString configPath;
+    int networkPort = 8081; // Default port
     bool showHelp = false;
 
     for (int i = 1; i < argc; i++) {
@@ -611,6 +852,19 @@ int main(int argc, char *argv[])
                 i++; // Skip next argument
             } else {
                 qWarning() << "Error: --config requires a file path";
+                return 1;
+            }
+        } else if (arg == "-p" || arg == "--port") {
+            if (i + 1 < argc) {
+                bool ok;
+                networkPort = QString(argv[i + 1]).toInt(&ok);
+                if (!ok || networkPort < 1 || networkPort > 65535) {
+                    qWarning() << "Error: --port requires a valid port number (1-65535)";
+                    return 1;
+                }
+                i++; // Skip next argument
+            } else {
+                qWarning() << "Error: --port requires a port number";
                 return 1;
             }
         } else if (!arg.startsWith("-")) {
@@ -630,23 +884,31 @@ int main(int argc, char *argv[])
         qDebug() << "";
         qDebug() << "Options:";
         qDebug() << "  -c, --config FILE    Use specified JSON configuration file";
+        qDebug() << "  -p, --port PORT      Network interface port (default: 8081)";
         qDebug() << "  -h, --help           Show this help message";
         qDebug() << "";
         qDebug() << "Examples:";
-        qDebug() << " " << argv[0] << "                              # Use default config (/etc/launcher.json)";
+        qDebug() << " " << argv[0] << "                              # Use default config and port 8081";
+        qDebug() << " " << argv[0] << "--port 8090                   # Use port 8090";
         qDebug() << " " << argv[0] << "/tmp/my-launcher.json          # Use specific config file";
-        qDebug() << " " << argv[0] << "--config /tmp/my-launcher.json # Use specific config file";
+        qDebug() << " " << argv[0] << "--config /tmp/my-launcher.json --port 8090 # Use specific config and port";
         qDebug() << "";
         qDebug() << "Config file search order:";
         qDebug() << "  1. Command line argument";
         qDebug() << "  2. /etc/launcher.json";
         qDebug() << "  3. ./launcher.json (current directory)";
         qDebug() << "  4. Built-in defaults";
+        qDebug() << "";
+        qDebug() << "Network API Commands:";
+        qDebug() << "  list-apps                    # List all enabled applications";
+        qDebug() << "  start-app <app-id>          # Start specific application";
+        qDebug() << "  stop-app                    # Stop currently running application";
+        qDebug() << "  get-running-app             # Get currently running app or 'none'";
         return 0;
     }
 
     // Create and show launcher
-    TouchAppLauncher launcher(configPath);
+    TouchAppLauncher launcher(configPath, networkPort);
     launcher.showMaximized(); // Full screen for embedded device
 
     return app.exec();
