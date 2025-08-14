@@ -7,41 +7,41 @@ Window {
     width: Screen.width
     height: Screen.height
     title: "Display Pattern Tester"
-    
+
     // Force fullscreen
     visibility: Window.FullScreen
-    
+
     property bool uiVisible: true
-    
+
     // Pattern navigation functions
     function nextPattern() {
         patternController.nextPattern()
         showUITemporarily()
     }
-    
+
     function previousPattern() {
         patternController.previousPattern()
         showUITemporarily()
     }
-    
+
     function showUITemporarily() {
         uiVisible = true
         uiHideTimer.restart()
     }
-    
+
     // Custom color overlay (when RGB patch or solid color is active)
     Rectangle {
         anchors.fill: parent
         visible: patternController.showCustomColor
         color: patternController.customColor
     }
-    
+
     // Pattern display area
     Loader {
         id: patternLoader
         anchors.fill: parent
         visible: !patternController.showCustomColor
-        
+
         source: {
             switch(patternController.currentPattern) {
                 case "grayscale-ramp":
@@ -59,31 +59,31 @@ Window {
             }
         }
     }
-    
+
     // Touch navigation overlay
     Rectangle {
         anchors.fill: parent
         color: "transparent"
-        
+
         MouseArea {
             anchors.fill: parent
-            
+
             property real startX: 0
             property real startY: 0
             property bool hasMoved: false
-            
+
             onPressed: {
                 startX = mouse.x
                 startY = mouse.y
                 hasMoved = false
             }
-            
+
             onPositionChanged: {
                 if (Math.abs(mouse.x - startX) > 10 || Math.abs(mouse.y - startY) > 10) {
                     hasMoved = true
                 }
             }
-            
+
             onClicked: {
                 if (!hasMoved) {
                     // Touch areas for navigation
@@ -102,7 +102,7 @@ Window {
                     }
                 }
             }
-            
+
             onReleased: {
                 // Swipe navigation
                 if (hasMoved) {
@@ -121,14 +121,14 @@ Window {
             }
         }
     }
-    
+
     // UI Overlay
     Rectangle {
         id: uiOverlay
         anchors.fill: parent
         color: "transparent"
         visible: uiVisible
-        
+
         // Pattern counter (top-left)
         Rectangle {
             anchors.top: parent.top
@@ -140,7 +140,7 @@ Window {
             radius: 8
             border.color: "white"
             border.width: 1
-            
+
             Text {
                 anchors.centerIn: parent
                 text: {
@@ -156,7 +156,7 @@ Window {
                 font.bold: true
             }
         }
-        
+
         // Pattern name (top-center)
         Rectangle {
             anchors.top: parent.top
@@ -168,7 +168,7 @@ Window {
             radius: 8
             border.color: "white"
             border.width: 1
-            
+
             Text {
                 id: patternNameText
                 anchors.centerIn: parent
@@ -178,7 +178,7 @@ Window {
                 font.bold: true
             }
         }
-        
+
         // Exit button (top-right)
         Rectangle {
             anchors.top: parent.top
@@ -190,7 +190,7 @@ Window {
             radius: 8
             border.color: "white"
             border.width: 1
-            
+
             Text {
                 anchors.centerIn: parent
                 text: "EXIT"
@@ -198,13 +198,13 @@ Window {
                 font.pixelSize: 24
                 font.bold: true
             }
-            
+
             MouseArea {
                 anchors.fill: parent
                 onClicked: Qt.quit()
             }
         }
-        
+
         // Instructions (bottom-center)
         Rectangle {
             anchors.bottom: parent.bottom
@@ -216,7 +216,7 @@ Window {
             radius: 8
             border.color: "white"
             border.width: 1
-            
+
             Text {
                 id: instructionText
                 anchors.centerIn: parent
@@ -225,7 +225,7 @@ Window {
                 font.pixelSize: 18
             }
         }
-        
+
         // Resolution info (bottom-left)
         Rectangle {
             anchors.bottom: parent.bottom
@@ -237,7 +237,7 @@ Window {
             radius: 8
             border.color: "white"
             border.width: 1
-            
+
             Text {
                 id: resolutionText
                 anchors.centerIn: parent
@@ -246,29 +246,43 @@ Window {
                 font.pixelSize: 16
             }
         }
-        
-        // Network info (bottom-right)
-        Rectangle {
-            anchors.bottom: parent.bottom
-            anchors.right: parent.right
-            anchors.margins: 20
-            width: networkText.width + 20
-            height: 50
-            color: "#C0000000"
-            radius: 8
-            border.color: "white"
-            border.width: 1
-            
-            Text {
-                id: networkText
-                anchors.centerIn: parent
-                text: patternController.getNetworkInfo()
-                color: "white"
-                font.pixelSize: 16
+
+    }
+
+    // Network info (bottom-right) - Outside uiOverlay for independent visibility
+    Rectangle {
+        id: networkInfoRect
+        anchors.bottom: parent.bottom
+        anchors.right: parent.right
+        anchors.margins: 20
+        width: networkText.width + 20
+        height: 50
+        color: "#C0000000"
+        radius: 8
+        border.color: "white"
+        border.width: 1
+
+        // Visibility based on metadata status
+        visible: {
+            var status = patternController.metadataStatus;
+            if (status === "disable") {
+                return false;  // Always hidden
+            } else if (status === "enable") {
+                return true;   // Always visible
+            } else { // "autohide"
+                return uiVisible;  // Follow UI visibility
             }
         }
+
+        Text {
+            id: networkText
+            anchors.centerIn: parent
+            text: patternController.getNetworkInfo()
+            color: "white"
+            font.pixelSize: 16
+        }
     }
-    
+
     // Auto-hide timer
     Timer {
         id: uiHideTimer
@@ -276,7 +290,7 @@ Window {
         running: false
         onTriggered: uiVisible = false
     }
-    
+
     // Show UI initially
     Component.onCompleted: {
         showUITemporarily()

@@ -13,6 +13,7 @@ PatternController::PatternController(QObject *parent)
     , m_customColor(0, 0, 0)
     , m_showCustomColor(false)
     , m_networkInterface(nullptr)
+    , m_metadataStatus("autohide")  // Default to autohide behavior
 {
     // Initialize available patterns (added solid colors, removed white-text-black)
     m_patterns << "grayscale-ramp" << "ansi-checker" << "white" << "black"
@@ -33,7 +34,7 @@ bool PatternController::startNetworkInterface(int port)
     m_networkInterface = new NetworkInterface(port, this);
     connect(m_networkInterface, &NetworkInterface::commandReceived,
             this, &PatternController::handleNetworkCommand);
-    
+
     return m_networkInterface->startServer();
 }
 
@@ -42,7 +43,7 @@ void PatternController::nextPattern()
     // Move to next pattern
     m_currentIndex = (m_currentIndex + 1) % m_patterns.size();
     m_currentPattern = m_patterns[m_currentIndex];
-    
+
     // Handle solid color patterns
     QStringList solidColors = {"white", "black", "red", "green", "blue", "cyan", "magenta", "yellow"};
     if (solidColors.contains(m_currentPattern)) {
@@ -55,16 +56,16 @@ void PatternController::nextPattern()
         else if (m_currentPattern == "cyan") color = QColor(0, 255, 255);
         else if (m_currentPattern == "magenta") color = QColor(255, 0, 255);
         else if (m_currentPattern == "yellow") color = QColor(255, 255, 0);
-        
+
         m_customColor = color;
         m_showCustomColor = true;
-        
+
         qDebug() << "Touch: switched to solid color:" << m_currentPattern;
     } else {
         m_showCustomColor = false;
         qDebug() << "Touch: switched to pattern:" << m_currentPattern;
     }
-    
+
     emit currentPatternChanged();
     emit showCustomColorChanged();
     emit customColorChanged();
@@ -75,7 +76,7 @@ void PatternController::previousPattern()
     // Move to previous pattern
     m_currentIndex = m_currentIndex > 0 ? m_currentIndex - 1 : m_patterns.size() - 1;
     m_currentPattern = m_patterns[m_currentIndex];
-    
+
     // Handle solid color patterns
     QStringList solidColors = {"white", "black", "red", "green", "blue", "cyan", "magenta", "yellow"};
     if (solidColors.contains(m_currentPattern)) {
@@ -88,16 +89,16 @@ void PatternController::previousPattern()
         else if (m_currentPattern == "cyan") color = QColor(0, 255, 255);
         else if (m_currentPattern == "magenta") color = QColor(255, 0, 255);
         else if (m_currentPattern == "yellow") color = QColor(255, 255, 0);
-        
+
         m_customColor = color;
         m_showCustomColor = true;
-        
+
         qDebug() << "Touch: switched to solid color:" << m_currentPattern;
     } else {
         m_showCustomColor = false;
         qDebug() << "Touch: switched to pattern:" << m_currentPattern;
     }
-    
+
     emit currentPatternChanged();
     emit showCustomColorChanged();
     emit customColorChanged();
@@ -113,9 +114,9 @@ void PatternController::setCustomColor(int r, int g, int b)
     m_customColor = QColor(r, g, b);
     m_showCustomColor = true;
     m_currentPattern = QString("rgb-%1-%2-%3").arg(r).arg(g).arg(b);
-    
+
     qDebug() << "Custom color set:" << r << g << b;
-    
+
     emit customColorChanged();
     emit showCustomColorChanged();
     emit currentPatternChanged();
@@ -140,22 +141,22 @@ QString PatternController::getNetworkInfo()
 {
     // Try to get the actual IP address of the machine
     QString ipAddress = "127.0.0.1"; // fallback
-    
+
     // Read network interfaces to find non-loopback IP
     QFile netFile("/proc/net/route");
     if (netFile.open(QIODevice::ReadOnly)) {
         QTextStream stream(&netFile);
         QString line;
-        
+
         // Skip header line
         stream.readLine();
-        
+
         // Look for default route (destination 00000000)
         while (stream.readLineInto(&line)) {
             QStringList parts = line.split('\t');
             if (parts.size() >= 2 && parts[1] == "00000000") {
                 QString interface = parts[0];
-                
+
                 // Found default interface, now get its IP
                 QFile ifaceFile(QString("/sys/class/net/%1/address").arg(interface));
                 if (ifaceFile.exists()) {
@@ -163,7 +164,7 @@ QString PatternController::getNetworkInfo()
                     QProcess process;
                     process.start("ip", QStringList() << "addr" << "show" << interface);
                     process.waitForFinished(1000);
-                    
+
                     QString output = process.readAllStandardOutput();
                     QRegExp ipRegex("inet (\\d+\\.\\d+\\.\\d+\\.\\d+)");
                     if (ipRegex.indexIn(output) != -1) {
@@ -179,21 +180,33 @@ QString PatternController::getNetworkInfo()
         }
         netFile.close();
     }
-    
+
     // Get port from network interface
     int port = 8080; // default
     if (m_networkInterface) {
         // We could store the port in NetworkInterface class, but for now use default
         port = 8080;
     }
-    
+
     return QString("TCP:%1:%2").arg(ipAddress).arg(port);
+}
+
+void PatternController::setMetadataStatus(const QString &status)
+{
+    QString newStatus = status.toLower();
+    if (newStatus == "autohide" || newStatus == "enable" || newStatus == "disable") {
+        if (m_metadataStatus != newStatus) {
+            m_metadataStatus = newStatus;
+            emit metadataStatusChanged();
+            qDebug() << "Metadata status changed to:" << m_metadataStatus;
+        }
+    }
 }
 
 void PatternController::handleNetworkCommand(const QString &command)
 {
     qDebug() << "Network command received:" << command;
-    
+
     QStringList parts = command.split(' ');
     if (parts.isEmpty()) {
         m_networkInterface->sendResponse("ERROR: Empty command");
@@ -201,17 +214,17 @@ void PatternController::handleNetworkCommand(const QString &command)
     }
 
     QString cmd = parts[0].toLower();
-    
+
     if (cmd == "pattern" && parts.size() >= 2) {
         QString pattern = parts[1].toLower();
-        
+
         if (pattern == "rgb" && parts.size() >= 5) {
             bool rOk, gOk, bOk;
             int r = parts[2].toInt(&rOk);
             int g = parts[3].toInt(&gOk);
             int b = parts[4].toInt(&bOk);
-            
-            if (rOk && gOk && bOk && r >= 0 && r <= 255 && 
+
+            if (rOk && gOk && bOk && r >= 0 && r <= 255 &&
                 g >= 0 && g <= 255 && b >= 0 && b <= 255) {
                 setCustomColor(r, g, b);
                 m_networkInterface->sendResponse("OK");
@@ -234,6 +247,16 @@ void PatternController::handleNetworkCommand(const QString &command)
             }
         } else {
             m_networkInterface->sendResponse("ERROR: Unknown pattern");
+        }
+    } else if (cmd == "get-metadata-status") {
+        m_networkInterface->sendResponse(m_metadataStatus);
+    } else if (cmd == "set-metadata-status" && parts.size() >= 2) {
+        QString status = parts[1].toLower();
+        if (status == "autohide" || status == "enable" || status == "disable") {
+            setMetadataStatus(status);
+            m_networkInterface->sendResponse("OK");
+        } else {
+            m_networkInterface->sendResponse("ERROR: Invalid status (use: autohide, enable, disable)");
         }
     } else if (cmd == "get-resolution") {
         m_networkInterface->sendResponse(getResolution());
@@ -266,7 +289,7 @@ void PatternController::updatePattern(const QString &pattern)
     if (m_patterns.contains(pattern)) {
         m_currentPattern = pattern;
         m_currentIndex = m_patterns.indexOf(pattern);
-        
+
         // Handle solid color patterns for network commands
         QStringList solidColors = {"white", "black", "red", "green", "blue", "cyan", "magenta", "yellow"};
         if (solidColors.contains(pattern)) {
@@ -279,16 +302,16 @@ void PatternController::updatePattern(const QString &pattern)
             else if (pattern == "cyan") color = QColor(0, 255, 255);
             else if (pattern == "magenta") color = QColor(255, 0, 255);
             else if (pattern == "yellow") color = QColor(255, 255, 0);
-            
+
             m_customColor = color;
             m_showCustomColor = true;
-            
+
             qDebug() << "Network: switched to solid color:" << pattern;
         } else {
             m_showCustomColor = false;
             qDebug() << "Network: switched to pattern:" << pattern;
         }
-        
+
         // Note: Network commands do NOT trigger UI visibility
         // Only emit pattern/color changes, not UI changes
         emit currentPatternChanged();
@@ -300,9 +323,9 @@ void PatternController::updatePattern(const QString &pattern)
 bool PatternController::setPatternParameter(const QString &pattern, const QString &param, const QStringList &values)
 {
     if (values.isEmpty()) return false;
-    
+
     bool changed = false;
-    
+
     if (pattern == "moving-ball") {
         if (param == "size" && !values[0].isEmpty()) {
             bool ok;
@@ -389,12 +412,12 @@ bool PatternController::setPatternParameter(const QString &pattern, const QStrin
             }
         }
     }
-    
+
     if (changed) {
         emit patternParamsChanged();
         qDebug() << "Parameter updated:" << pattern << param << values[0];
     }
-    
+
     return changed;
 }
 
