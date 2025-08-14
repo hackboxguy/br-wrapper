@@ -72,3 +72,16 @@ set-metadata-color 255 128 64
 set-metadata-color 0 255 0
 get-metadata-color          # Returns RGB values (e.g., "255 128 64")
 
+
+
+# Disable user interaction for automated testing
+echo "set-user-interaction disable" | nc -q 0 192.168.1.95 8080
+
+# Change patterns via network (should work)
+echo "pattern red" | nc -q 0 192.168.1.95 8080
+
+# Check current state
+echo "get-user-interaction" | nc -q 0 192.168.1.95 8080
+
+# Re-enable user interaction
+echo "set-user-interaction enable" | nc -q 0 192.168.1.95 8080
