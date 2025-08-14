@@ -255,8 +255,8 @@ Window {
         anchors.bottom: parent.bottom
         anchors.right: parent.right
         anchors.margins: 20
-        width: networkText.width + 20
-        height: 50
+        width: networkText.contentWidth + 20
+        height: networkText.contentHeight + 20
         color: "#C0000000"
         radius: 8
         border.color: "white"
@@ -277,9 +277,14 @@ Window {
         Text {
             id: networkText
             anchors.centerIn: parent
-            text: patternController.getNetworkInfo()
+            text: patternController.networkInfo
             color: "white"
             font.pixelSize: 16
+
+            // Enable multiline text support
+            wrapMode: Text.NoWrap
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
         }
     }
 

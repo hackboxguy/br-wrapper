@@ -17,6 +17,7 @@ class PatternController : public QObject
     Q_PROPERTY(bool showCustomColor READ showCustomColor NOTIFY showCustomColorChanged)
     Q_PROPERTY(QVariantMap patternParams READ patternParams NOTIFY patternParamsChanged)
     Q_PROPERTY(QString metadataStatus READ metadataStatus NOTIFY metadataStatusChanged)
+    Q_PROPERTY(QString networkInfo READ getNetworkInfo NOTIFY networkInfoChanged)
 
 public:
     explicit PatternController(QObject *parent = nullptr);
@@ -45,6 +46,8 @@ signals:
     void showCustomColorChanged();
     void patternParamsChanged();
     void metadataStatusChanged();
+    void metadataTextChanged();
+    void networkInfoChanged();
 
 private slots:
     void handleNetworkCommand(const QString &command);
@@ -60,6 +63,7 @@ private:
 
     // Metadata management
     QString m_metadataStatus;  // "autohide", "enable", "disable"
+    QString m_metadataText;    // Custom metadata text (empty = use default IP:port)
 
     void updatePattern(const QString &pattern);
     bool setPatternParameter(const QString &pattern, const QString &param, const QStringList &values);
@@ -68,6 +72,9 @@ private:
 
     // Metadata methods
     void setMetadataStatus(const QString &status);
+    void setMetadataText(const QString &text);
+    QString getMetadataText() const;
+    void clearMetadataText();
 };
 
 #endif // PATTERNCONTROLLER_H

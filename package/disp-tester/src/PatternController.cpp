@@ -14,6 +14,7 @@ PatternController::PatternController(QObject *parent)
     , m_showCustomColor(false)
     , m_networkInterface(nullptr)
     , m_metadataStatus("autohide")  // Default to autohide behavior
+    , m_metadataText("")           // Empty = use default IP:port display
 {
     // Initialize available patterns (added solid colors, removed white-text-black)
     m_patterns << "grayscale-ramp" << "ansi-checker" << "white" << "black"
@@ -139,6 +140,12 @@ QString PatternController::listPatterns()
 
 QString PatternController::getNetworkInfo()
 {
+    // Return custom metadata text if set
+    if (!m_metadataText.isEmpty()) {
+        return m_metadataText;
+    }
+
+    // Otherwise return default IP:port information
     // Try to get the actual IP address of the machine
     QString ipAddress = "127.0.0.1"; // fallback
 
@@ -203,6 +210,31 @@ void PatternController::setMetadataStatus(const QString &status)
     }
 }
 
+void PatternController::setMetadataText(const QString &text)
+{
+    if (m_metadataText != text) {
+        m_metadataText = text;
+        emit metadataTextChanged();  // Notify QML to update display
+        emit networkInfoChanged();   // Notify that network info display should update
+        qDebug() << "Metadata text changed to:" << m_metadataText;
+    }
+}
+
+QString PatternController::getMetadataText() const
+{
+    return m_metadataText;
+}
+
+void PatternController::clearMetadataText()
+{
+    if (!m_metadataText.isEmpty()) {
+        m_metadataText.clear();
+        emit metadataTextChanged();  // Notify QML to update display
+        emit networkInfoChanged();   // Notify that network info display should update
+        qDebug() << "Metadata text cleared - reverting to default IP:port display";
+    }
+}
+
 void PatternController::handleNetworkCommand(const QString &command)
 {
     qDebug() << "Network command received:" << command;
@@ -258,6 +290,29 @@ void PatternController::handleNetworkCommand(const QString &command)
         } else {
             m_networkInterface->sendResponse("ERROR: Invalid status (use: autohide, enable, disable)");
         }
+    } else if (cmd == "set-metadata-text" && parts.size() >= 2) {
+        // Join all parts from index 1 onwards to handle spaces in text
+        QStringList textParts = parts.mid(1);
+        QString text = textParts.join(" ");
+
+        // Replace literal \n with actual newlines
+        text = text.replace("\\n", "\n");
+
+        setMetadataText(text);
+        m_networkInterface->sendResponse("OK");
+    } else if (cmd == "get-metadata-text") {
+        QString text = getMetadataText();
+        if (text.isEmpty()) {
+            m_networkInterface->sendResponse(""); // Empty response for default IP:port mode
+        } else {
+            // Replace actual newlines with literal \n for transmission
+            QString response = text;
+            response = response.replace("\n", "\\n");
+            m_networkInterface->sendResponse(response);
+        }
+    } else if (cmd == "clear-metadata-text") {
+        clearMetadataText();
+        m_networkInterface->sendResponse("OK");
     } else if (cmd == "get-resolution") {
         m_networkInterface->sendResponse(getResolution());
     } else if (cmd == "get-pattern") {
