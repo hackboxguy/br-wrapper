@@ -37,6 +37,11 @@ AUTO_USB_RESET="${AUTO_USB_RESET:-yes}"
 FORMAT="${FORMAT:-csv}"
 COMPACT="${COMPACT:-no}"
 
+# disp-tester integration options
+PATTERN_SOURCE="${PATTERN_SOURCE:-mplayclt}"
+DISP_TESTER_HOST="${DISP_TESTER_HOST:-127.0.0.1}"
+DISP_TESTER_PORT="${DISP_TESTER_PORT:-8080}"
+
 # Hardware identifiers for i1Display Pro
 I1_VENDOR_ID="0765"
 I1_PRODUCT_ID="5020"
@@ -69,14 +74,19 @@ OUTPUT FORMAT OPTIONS:
     --compact=yes/no       Compact JSON output - one line per measurement (default: no)
                           Only applies when --format=json
 
+PATTERN SOURCE OPTIONS:
+    --pattern-source=TYPE  Pattern display method: mplayclt or disp-tester (default: mplayclt)
+    --disp-tester-host=IP  disp-tester daemon host IP (default: 127.0.0.1)
+    --disp-tester-port=N   disp-tester daemon port (default: 8080)
+
 PATTERN FILES (use 'none' to skip):
-    --wfile=FILE           White pattern file
-    --rfile=FILE           Red pattern file
-    --gfile=FILE           Green pattern file
-    --bfile=FILE           Blue pattern file
-    --cfile=FILE           Cyan pattern file
-    --mfile=FILE           Magenta pattern file
-    --yfile=FILE           Yellow pattern file
+    --wfile=FILE           White pattern file (mplayclt) or any value to enable (disp-tester)
+    --rfile=FILE           Red pattern file (mplayclt) or any value to enable (disp-tester)
+    --gfile=FILE           Green pattern file (mplayclt) or any value to enable (disp-tester)
+    --bfile=FILE           Blue pattern file (mplayclt) or any value to enable (disp-tester)
+    --cfile=FILE           Cyan pattern file (mplayclt) or any value to enable (disp-tester)
+    --mfile=FILE           Magenta pattern file (mplayclt) or any value to enable (disp-tester)
+    --yfile=FILE           Yellow pattern file (mplayclt) or any value to enable (disp-tester)
     --startupimg=FILE      Initial pattern to display
 
 HARDWARE OPTIONS:
@@ -104,6 +114,9 @@ EXAMPLES:
 
     # Basic white measurement with JSON output
     $0 --wfile=white.png --measureonly=yes --format=json
+
+    # disp-tester based measurement
+    $0 --pattern-source=disp-tester --wfile=enable --rfile=enable --gfile=enable --format=json
 
     # Full RGB measurement with CSV output (traditional)
     $0 --wfile=white.png --rfile=red.png --gfile=green.png --bfile=blue.png --loop=3 --format=csv
@@ -261,6 +274,78 @@ $JSON_MEASUREMENTS
 }
 EOF
         fi
+    fi
+}
+
+# Color mapping for disp-tester
+get_disp_tester_color() {
+    case "$1" in
+        "W") echo "white" ;;
+        "R") echo "red" ;;
+        "G") echo "green" ;;
+        "B") echo "blue" ;;
+        "C") echo "cyan" ;;
+        "M") echo "magenta" ;;
+        "Y") echo "yellow" ;;
+        *) echo "unknown" ;;
+    esac
+}
+
+# Send command to disp-tester daemon
+send_disp_tester_command() {
+    local command="$1"
+    local response
+
+    log_debug "Sending disp-tester command: $command"
+
+    # Send command with 1 second timeout
+    response=$(echo "$command" | nc -q 1 "$DISP_TESTER_HOST" "$DISP_TESTER_PORT" 2>/dev/null)
+    local nc_exit_code=$?
+
+    if [ $nc_exit_code -ne 0 ]; then
+        log_error "Failed to connect to disp-tester at ${DISP_TESTER_HOST}:${DISP_TESTER_PORT}"
+        log_error "Ensure disp-tester daemon is running and accessible"
+        exit 1
+    fi
+
+    echo "$response"
+}
+
+# Display pattern using disp-tester
+display_pattern_disp_tester() {
+    local color_name="$1"
+
+    log_debug "Displaying pattern via disp-tester: $color_name"
+
+    # Send pattern command
+    send_disp_tester_command "pattern $color_name" >/dev/null
+
+    # Wait for pattern to stabilize
+    sleep "$MEASUREMENT_DELAY"
+
+    # Verify pattern is displayed correctly
+    local current_pattern=$(send_disp_tester_command "get-pattern")
+    current_pattern=$(echo "$current_pattern" | tr -d '\r\n' | tr -d ' ')
+
+    if [ "$current_pattern" != "$color_name" ]; then
+        log_error "Pattern verification failed: expected '$color_name', got '$current_pattern'"
+        exit 1
+    fi
+
+    log_debug "Pattern verified: $color_name"
+    return 0
+}
+
+# Display measurement metadata on screen
+display_measurement_metadata() {
+    local x_val="$1"
+    local y_val="$2"
+    local z_val="$3"
+
+    if [ "$PATTERN_SOURCE" = "disp-tester" ]; then
+        local metadata_text="Measurement in Progress\\nX:${x_val}\\nY:${y_val}\\nZ:${z_val}"
+        log_debug "Displaying measurement metadata: X:$x_val Y:$y_val Z:$z_val"
+        send_disp_tester_command "set-metadata-text $metadata_text" >/dev/null
     fi
 }
 
@@ -447,26 +532,41 @@ measure_sensor_only() {
     fi
 }
 
-# Display pattern using mplayclt or log message
+# Display pattern using mplayclt or disp-tester
 display_pattern() {
     local pattern_file="$1"
-    local mplayclt_path="$2"
+    local color_prefix="$2"
+    local mplayclt_path="$3"
 
-    if [ "$pattern_file" = "none" ] || [ ! -f "$pattern_file" ]; then
-        return 0
-    fi
-
-    if [ -x "$mplayclt_path" ]; then
-        log_debug "Displaying pattern: $pattern_file"
-        if "$mplayclt_path" --showimg=none --showimg="$pattern_file" >/dev/null 2>&1; then
-            return 0
-        else
-            log_error "Failed to display pattern with mplayclt: $pattern_file"
+    if [ "$PATTERN_SOURCE" = "disp-tester" ]; then
+        # Use disp-tester for pattern display
+        local color_name=$(get_disp_tester_color "$color_prefix")
+        if [ "$color_name" = "unknown" ]; then
+            log_error "Unknown color prefix for disp-tester: $color_prefix"
             return 1
         fi
+        display_pattern_disp_tester "$color_name"
+        return $?
     else
-        log_info "Pattern: $(basename "$pattern_file") (mplayclt not available)"
-        return 0
+        # Use mplayclt for pattern display (original behavior)
+        if [ "$pattern_file" = "none" ] || [ ! -f "$pattern_file" ]; then
+            return 0
+        fi
+
+        if [ -x "$mplayclt_path" ]; then
+            log_debug "Displaying pattern: $pattern_file"
+            if "$mplayclt_path" --showimg=none --showimg="$pattern_file" >/dev/null 2>&1; then
+                # Wait for pattern to stabilize (only for mplayclt)
+                sleep "$MEASUREMENT_DELAY"
+                return 0
+            else
+                log_error "Failed to display pattern with mplayclt: $pattern_file"
+                return 1
+            fi
+        else
+            log_info "Pattern: $(basename "$pattern_file") (mplayclt not available)"
+            return 0
+        fi
     fi
 }
 
@@ -515,11 +615,13 @@ measure_color() {
 
     # Display pattern with error checking
     if [ "$SENSORONLY" != "yes" ]; then
-        if ! display_pattern "$pattern_file" "$mplayclt_path"; then
+        if ! display_pattern "$pattern_file" "$color_prefix" "$mplayclt_path"; then
             log_error "Failed to display pattern for $color_prefix"
+            return 1
         fi
-        # Wait for pattern to stabilize
-        sleep "$MEASUREMENT_DELAY"
+
+        # For mplayclt, measurement delay is handled in display_pattern
+        # For disp-tester, delay and verification are handled in display_pattern_disp_tester
     fi
 
     # Get timestamp
@@ -584,6 +686,10 @@ measure_color() {
         local y_chr=$(echo "$measurement" | awk '{print $6}')
 
         output_measurement "$timestamp" "$temp" "$color_prefix" "$x_val" "$y_val" "$z_val" "$yc_val" "$x_chr" "$y_chr" "$voltage" "$current" "$br_level" "no"
+
+        # Display measurement metadata on disp-tester if successful
+        display_measurement_metadata "$x_val" "$y_val" "$z_val"
+
         return 0
     else
         log_error "All measurement attempts failed for $color_prefix"
@@ -635,6 +741,9 @@ parse_arguments() {
             --usb-reset=*) AUTO_USB_RESET="${arg#*=}"; noargs="no" ;;
             --format=*) FORMAT="${arg#*=}"; noargs="no" ;;
             --compact=*) COMPACT="${arg#*=}"; noargs="no" ;;
+            --pattern-source=*) PATTERN_SOURCE="${arg#*=}"; noargs="no" ;;
+            --disp-tester-host=*) DISP_TESTER_HOST="${arg#*=}"; noargs="no" ;;
+            --disp-tester-port=*) DISP_TESTER_PORT="${arg#*=}"; noargs="no" ;;
             --help|-h) echo "$USAGE"; exit 0 ;;
             *) log_error "Unknown option: $arg"; echo "$USAGE"; exit 1 ;;
         esac
@@ -655,6 +764,12 @@ parse_arguments() {
     case "$COMPACT" in
         yes|no) ;;
         *) log_error "Invalid compact option: $COMPACT (must be 'yes' or 'no')"; exit 1 ;;
+    esac
+
+    # Validate pattern source option
+    case "$PATTERN_SOURCE" in
+        mplayclt|disp-tester) ;;
+        *) log_error "Invalid pattern source: $PATTERN_SOURCE (must be 'mplayclt' or 'disp-tester')"; exit 1 ;;
     esac
 }
 
@@ -678,35 +793,44 @@ setup_environment() {
         return 0
     fi
 
-    # Setup pattern file paths (only when needed)
-    local wfilepath="${PATTERNPATH}/${WFILE}"
-    local rfilepath="${PATTERNPATH}/${RFILE}"
-    local gfilepath="${PATTERNPATH}/${GFILE}"
-    local bfilepath="${PATTERNPATH}/${BFILE}"
-    local cfilepath="${PATTERNPATH}/${CFILE}"
-    local mfilepath="${PATTERNPATH}/${MFILE}"
-    local yfilepath="${PATTERNPATH}/${YFILE}"
+    # Setup pattern file paths based on pattern source
+    if [ "$PATTERN_SOURCE" = "disp-tester" ]; then
+        # For disp-tester, pattern files are just enable/disable flags
+        # We don't need to validate actual files, just check if they're not "none"
+        WFILEPATH="$WFILE"
+        RFILEPATH="$RFILE"
+        GFILEPATH="$GFILE"
+        BFILEPATH="$BFILE"
+        CFILEPATH="$CFILE"
+        MFILEPATH="$MFILE"
+        YFILEPATH="$YFILE"
+    else
+        # For mplayclt, validate actual pattern files
+        local wfilepath="${PATTERNPATH}/${WFILE}"
+        local rfilepath="${PATTERNPATH}/${RFILE}"
+        local gfilepath="${PATTERNPATH}/${GFILE}"
+        local bfilepath="${PATTERNPATH}/${BFILE}"
+        local cfilepath="${PATTERNPATH}/${CFILE}"
+        local mfilepath="${PATTERNPATH}/${MFILE}"
+        local yfilepath="${PATTERNPATH}/${YFILE}"
 
-    # Validate pattern files
-    validate_file "$wfilepath" "White pattern" || wfilepath="none"
-    validate_file "$rfilepath" "Red pattern" || rfilepath="none"
-    validate_file "$gfilepath" "Green pattern" || gfilepath="none"
-    validate_file "$bfilepath" "Blue pattern" || bfilepath="none"
-    validate_file "$cfilepath" "Cyan pattern" || cfilepath="none"
-    validate_file "$mfilepath" "Magenta pattern" || mfilepath="none"
-    validate_file "$yfilepath" "Yellow pattern" || yfilepath="none"
+        # Validate pattern files
+        validate_file "$wfilepath" "White pattern" || wfilepath="none"
+        validate_file "$rfilepath" "Red pattern" || rfilepath="none"
+        validate_file "$gfilepath" "Green pattern" || gfilepath="none"
+        validate_file "$bfilepath" "Blue pattern" || bfilepath="none"
+        validate_file "$cfilepath" "Cyan pattern" || cfilepath="none"
+        validate_file "$mfilepath" "Magenta pattern" || mfilepath="none"
+        validate_file "$yfilepath" "Yellow pattern" || yfilepath="none"
 
-    # Export paths for use in measurement function
-    TEMPEREDPATH="$temperedpath"
-    POWERPATH="$powerpath"
-    MPLAYCLT="$mplayclt"
-    WFILEPATH="$wfilepath"
-    RFILEPATH="$rfilepath"
-    GFILEPATH="$gfilepath"
-    BFILEPATH="$bfilepath"
-    CFILEPATH="$cfilepath"
-    MFILEPATH="$mfilepath"
-    YFILEPATH="$yfilepath"
+        WFILEPATH="$wfilepath"
+        RFILEPATH="$rfilepath"
+        GFILEPATH="$gfilepath"
+        BFILEPATH="$bfilepath"
+        CFILEPATH="$cfilepath"
+        MFILEPATH="$mfilepath"
+        YFILEPATH="$yfilepath"
+    fi
 }
 
 # Main execution starts here
@@ -772,7 +896,12 @@ main() {
 
     # Initialize display if needed
     if [ "$MEASUREONLY" = "no" ] && [ "$STARTUPIMG" != "none" ]; then
-        display_pattern "$WFILEPATH" "$MPLAYCLT"
+        if [ "$PATTERN_SOURCE" = "disp-tester" ]; then
+            # For disp-tester, show white pattern as startup
+            display_pattern_disp_tester "white"
+        else
+            display_pattern "$WFILEPATH" "W" "$MPLAYCLT"
+        fi
         sleep 2
     fi
 
@@ -794,7 +923,17 @@ main() {
             local color_prefix="${color_config%%:*}"
             local file_path="${color_config#*:}"
 
-            if [ "$file_path" != "none" ]; then
+            # Check if this color should be measured
+            local should_measure="no"
+            if [ "$PATTERN_SOURCE" = "disp-tester" ]; then
+                # For disp-tester, measure if the pattern file argument is not "none"
+                [ "$file_path" != "none" ] && should_measure="yes"
+            else
+                # For mplayclt, measure if the file exists
+                [ "$file_path" != "none" ] && [ -f "$file_path" ] && should_measure="yes"
+            fi
+
+            if [ "$should_measure" = "yes" ]; then
                 total_measurements=$((total_measurements + 1))
 
                 if ! measure_color "$file_path" "$color_prefix" "$TEMPEREDPATH" "$MPLAYCLT" "$POWERPATH" "$BRLEVEL"; then
@@ -819,8 +958,14 @@ main() {
     json_session_output
 
     # Cleanup display
-    if [ "$MEASUREONLY" = "no" ] && [ -x "$MPLAYCLT" ]; then
-        "$MPLAYCLT" --showimg=none >/dev/null 2>&1
+    if [ "$MEASUREONLY" = "no" ]; then
+        if [ "$PATTERN_SOURCE" = "disp-tester" ]; then
+            # Clear metadata and show black pattern
+            send_disp_tester_command "set-metadata-text " >/dev/null 2>&1
+            send_disp_tester_command "pattern black" >/dev/null 2>&1
+        elif [ -x "$MPLAYCLT" ]; then
+            "$MPLAYCLT" --showimg=none >/dev/null 2>&1
+        fi
     fi
 
     # Report summary
