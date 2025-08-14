@@ -18,6 +18,9 @@ class PatternController : public QObject
     Q_PROPERTY(QVariantMap patternParams READ patternParams NOTIFY patternParamsChanged)
     Q_PROPERTY(QString metadataStatus READ metadataStatus NOTIFY metadataStatusChanged)
     Q_PROPERTY(QString networkInfo READ getNetworkInfo NOTIFY networkInfoChanged)
+    Q_PROPERTY(QString metadataAlign READ getMetadataAlign NOTIFY metadataAlignChanged)
+    Q_PROPERTY(int metadataFontSize READ getMetadataFontSize NOTIFY metadataFontSizeChanged)
+    Q_PROPERTY(QColor metadataColor READ getMetadataColor NOTIFY metadataColorChanged)
 
 public:
     explicit PatternController(QObject *parent = nullptr);
@@ -39,6 +42,9 @@ public slots:
     QString getResolution();
     QString listPatterns();
     QString getNetworkInfo();
+    QString getMetadataAlign() const { return m_metadataAlign; }
+    int getMetadataFontSize() const { return m_metadataFontSize; }
+    QColor getMetadataColor() const { return m_metadataColor; }
 
 signals:
     void currentPatternChanged();
@@ -48,6 +54,9 @@ signals:
     void metadataStatusChanged();
     void metadataTextChanged();
     void networkInfoChanged();
+    void metadataAlignChanged();
+    void metadataFontSizeChanged();
+    void metadataColorChanged();
 
 private slots:
     void handleNetworkCommand(const QString &command);
@@ -64,6 +73,9 @@ private:
     // Metadata management
     QString m_metadataStatus;  // "autohide", "enable", "disable"
     QString m_metadataText;    // Custom metadata text (empty = use default IP:port)
+    QString m_metadataAlign;   // "left", "center", "right"
+    int m_metadataFontSize;    // Font size (8-48)
+    QColor m_metadataColor;    // Text color
 
     void updatePattern(const QString &pattern);
     bool setPatternParameter(const QString &pattern, const QString &param, const QStringList &values);
@@ -75,6 +87,11 @@ private:
     void setMetadataText(const QString &text);
     QString getMetadataText() const;
     void clearMetadataText();
+    void setMetadataAlign(const QString &align);
+    void setMetadataFontSize(int size);
+    void setMetadataColor(const QColor &color);
+    void setMetadataColor(int r, int g, int b);
+    void setMetadataColorByName(const QString &colorName);
 };
 
 #endif // PATTERNCONTROLLER_H

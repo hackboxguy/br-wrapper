@@ -278,12 +278,17 @@ Window {
             id: networkText
             anchors.centerIn: parent
             text: patternController.networkInfo
-            color: "white"
-            font.pixelSize: 16
+            color: patternController.metadataColor
+            font.pixelSize: patternController.metadataFontSize
 
             // Enable multiline text support
             wrapMode: Text.NoWrap
-            horizontalAlignment: Text.AlignHCenter
+            horizontalAlignment: {
+                var align = patternController.metadataAlign;
+                if (align === "left") return Text.AlignLeft;
+                else if (align === "right") return Text.AlignRight;
+                else return Text.AlignHCenter; // center (default)
+            }
             verticalAlignment: Text.AlignVCenter
         }
     }

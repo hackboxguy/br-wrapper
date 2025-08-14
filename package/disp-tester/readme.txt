@@ -31,3 +31,44 @@ get-resolution              # Returns: 2560x1440
 get-pattern                 # Returns current pattern name (e.g., "red")
 list-patterns               # Returns: grayscale-ramp,ansi-checker,white-text-black,red,gr
 
+
+
+# Check current status (should return "autohide")
+echo "get-metadata-status" | nc -q 0 192.168.1.95 8080
+# Hide the network info completely
+echo "set-metadata-status disable" | nc -q 0 192.168.1.95 8080
+# Make it always visible
+echo "set-metadata-status enable" | nc -q 0 192.168.1.95 8080
+# Return to default auto-hide behavior
+echo "set-metadata-status autohide" | nc -q 0 192.168.1.95 8080
+
+# Set single line text
+echo "set-metadata-text X:443.666" | nc -q 0 192.168.1.92 8080
+# Set multiline text with measurements
+echo "set-metadata-text X:443.666311\nY:208.683593\nZ:5.623419" | nc -q 0 192.168.1.92 8080
+# Get current metadata text
+echo "get-metadata-text" | nc -q 0 192.168.1.92 8080
+# Clear back to default IP:port
+echo "clear-metadata-text" | nc -q 0 192.168.1.92 8080
+# Test with spaces in text
+echo "set-metadata-text Temp: 25.3°C\nHumidity: 65%" | nc -q 0 192.168.1.92 8080
+
+set-metadata-align left     # Left-align text
+set-metadata-align center   # Center-align text (default)
+set-metadata-align right    # Right-align text
+get-metadata-align          # Returns current alignment
+
+set-metadata-fontsize 24    # Set font size (8-48 range)
+set-metadata-fontsize 12    # Smaller text
+get-metadata-fontsize       # Returns current font size
+
+# Named colors
+set-metadata-color red
+set-metadata-color blue
+set-metadata-color yellow
+
+# RGB values  
+set-metadata-color 255 128 64
+set-metadata-color 0 255 0
+get-metadata-color          # Returns RGB values (e.g., "255 128 64")
+

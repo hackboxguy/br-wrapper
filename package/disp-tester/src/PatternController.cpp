@@ -15,6 +15,9 @@ PatternController::PatternController(QObject *parent)
     , m_networkInterface(nullptr)
     , m_metadataStatus("autohide")  // Default to autohide behavior
     , m_metadataText("")           // Empty = use default IP:port display
+    , m_metadataAlign("center")    // Default center alignment
+    , m_metadataFontSize(16)       // Default font size
+    , m_metadataColor(255, 255, 255) // Default white color
 {
     // Initialize available patterns (added solid colors, removed white-text-black)
     m_patterns << "grayscale-ramp" << "ansi-checker" << "white" << "black"
@@ -235,6 +238,69 @@ void PatternController::clearMetadataText()
     }
 }
 
+void PatternController::setMetadataAlign(const QString &align)
+{
+    QString newAlign = align.toLower();
+    if (newAlign == "left" || newAlign == "center" || newAlign == "right") {
+        if (m_metadataAlign != newAlign) {
+            m_metadataAlign = newAlign;
+            emit metadataAlignChanged();
+            qDebug() << "Metadata alignment changed to:" << m_metadataAlign;
+        }
+    }
+}
+
+void PatternController::setMetadataFontSize(int size)
+{
+    if (size >= 8 && size <= 48) {
+        if (m_metadataFontSize != size) {
+            m_metadataFontSize = size;
+            emit metadataFontSizeChanged();
+            qDebug() << "Metadata font size changed to:" << m_metadataFontSize;
+        }
+    }
+}
+
+void PatternController::setMetadataColor(const QColor &color)
+{
+    if (m_metadataColor != color) {
+        m_metadataColor = color;
+        emit metadataColorChanged();
+        qDebug() << "Metadata color changed to:" << m_metadataColor.name();
+    }
+}
+
+void PatternController::setMetadataColor(int r, int g, int b)
+{
+    if (r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255) {
+        QColor newColor(r, g, b);
+        setMetadataColor(newColor);
+    }
+}
+
+void PatternController::setMetadataColorByName(const QString &colorName)
+{
+    QString name = colorName.toLower();
+    QColor color;
+
+    if (name == "white") color = QColor(255, 255, 255);
+    else if (name == "black") color = QColor(0, 0, 0);
+    else if (name == "red") color = QColor(255, 0, 0);
+    else if (name == "green") color = QColor(0, 255, 0);
+    else if (name == "blue") color = QColor(0, 0, 255);
+    else if (name == "cyan") color = QColor(0, 255, 255);
+    else if (name == "magenta") color = QColor(255, 0, 255);
+    else if (name == "yellow") color = QColor(255, 255, 0);
+    else if (name == "orange") color = QColor(255, 165, 0);
+    else if (name == "purple") color = QColor(128, 0, 128);
+    else if (name == "gray" || name == "grey") color = QColor(128, 128, 128);
+    else {
+        return; // Invalid color name
+    }
+
+    setMetadataColor(color);
+}
+
 void PatternController::handleNetworkCommand(const QString &command)
 {
     qDebug() << "Network command received:" << command;
@@ -313,6 +379,61 @@ void PatternController::handleNetworkCommand(const QString &command)
     } else if (cmd == "clear-metadata-text") {
         clearMetadataText();
         m_networkInterface->sendResponse("OK");
+    } else if (cmd == "set-metadata-align" && parts.size() >= 2) {
+        QString align = parts[1].toLower();
+        if (align == "left" || align == "center" || align == "right") {
+            setMetadataAlign(align);
+            m_networkInterface->sendResponse("OK");
+        } else {
+            m_networkInterface->sendResponse("ERROR: Invalid alignment (use: left, center, right)");
+        }
+    } else if (cmd == "get-metadata-align") {
+        m_networkInterface->sendResponse(m_metadataAlign);
+    } else if (cmd == "set-metadata-fontsize" && parts.size() >= 2) {
+        bool ok;
+        int size = parts[1].toInt(&ok);
+        if (ok && size >= 8 && size <= 48) {
+            setMetadataFontSize(size);
+            m_networkInterface->sendResponse("OK");
+        } else {
+            m_networkInterface->sendResponse("ERROR: Invalid font size (use: 8-48)");
+        }
+    } else if (cmd == "get-metadata-fontsize") {
+        m_networkInterface->sendResponse(QString::number(m_metadataFontSize));
+    } else if (cmd == "set-metadata-color") {
+        if (parts.size() >= 4) {
+            // RGB format: set-metadata-color 255 128 64
+            bool rOk, gOk, bOk;
+            int r = parts[1].toInt(&rOk);
+            int g = parts[2].toInt(&gOk);
+            int b = parts[3].toInt(&bOk);
+
+            if (rOk && gOk && bOk && r >= 0 && r <= 255 &&
+                g >= 0 && g <= 255 && b >= 0 && b <= 255) {
+                setMetadataColor(r, g, b);
+                m_networkInterface->sendResponse("OK");
+            } else {
+                m_networkInterface->sendResponse("ERROR: Invalid RGB values (use: 0-255)");
+            }
+        } else if (parts.size() >= 2) {
+            // Named color format: set-metadata-color red
+            QString colorName = parts[1].toLower();
+            QColor originalColor = m_metadataColor;
+            setMetadataColorByName(colorName);
+
+            if (m_metadataColor != originalColor) {
+                m_networkInterface->sendResponse("OK");
+            } else {
+                m_networkInterface->sendResponse("ERROR: Invalid color name (use: white, red, green, blue, cyan, magenta, yellow, orange, purple, gray, black)");
+            }
+        } else {
+            m_networkInterface->sendResponse("ERROR: Invalid color format (use: 'colorname' or 'R G B')");
+        }
+    } else if (cmd == "get-metadata-color") {
+        m_networkInterface->sendResponse(QString("%1 %2 %3")
+            .arg(m_metadataColor.red())
+            .arg(m_metadataColor.green())
+            .arg(m_metadataColor.blue()));
     } else if (cmd == "get-resolution") {
         m_networkInterface->sendResponse(getResolution());
     } else if (cmd == "get-pattern") {
