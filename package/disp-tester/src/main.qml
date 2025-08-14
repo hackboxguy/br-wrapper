@@ -67,6 +67,7 @@ Window {
 
         MouseArea {
             anchors.fill: parent
+            enabled: patternController.userInteractionEnabled  // Disable touch when user interaction is disabled
 
             property real startX: 0
             property real startY: 0
@@ -127,7 +128,7 @@ Window {
         id: uiOverlay
         anchors.fill: parent
         color: "transparent"
-        visible: uiVisible
+        visible: uiVisible && patternController.userInteractionEnabled  // Hide UI when user interaction is disabled
 
         // Pattern counter (top-left)
         Rectangle {
@@ -298,11 +299,17 @@ Window {
         id: uiHideTimer
         interval: 4000
         running: false
-        onTriggered: uiVisible = false
+        onTriggered: {
+            if (patternController.userInteractionEnabled) {
+                uiVisible = false  // Only auto-hide if user interaction is enabled
+            }
+        }
     }
 
     // Show UI initially
     Component.onCompleted: {
-        showUITemporarily()
+        if (patternController.userInteractionEnabled) {
+            showUITemporarily()
+        }
     }
 }

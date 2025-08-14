@@ -18,6 +18,7 @@ PatternController::PatternController(QObject *parent)
     , m_metadataAlign("center")    // Default center alignment
     , m_metadataFontSize(16)       // Default font size
     , m_metadataColor(255, 255, 255) // Default white color
+    , m_userInteractionEnabled(true) // Default user interaction enabled
 {
     // Initialize available patterns (added solid colors, removed white-text-black)
     m_patterns << "grayscale-ramp" << "ansi-checker" << "white" << "black"
@@ -301,6 +302,15 @@ void PatternController::setMetadataColorByName(const QString &colorName)
     setMetadataColor(color);
 }
 
+void PatternController::setUserInteractionEnabled(bool enabled)
+{
+    if (m_userInteractionEnabled != enabled) {
+        m_userInteractionEnabled = enabled;
+        emit userInteractionEnabledChanged();
+        qDebug() << "User interaction" << (enabled ? "enabled" : "disabled");
+    }
+}
+
 void PatternController::handleNetworkCommand(const QString &command)
 {
     qDebug() << "Network command received:" << command;
@@ -434,6 +444,16 @@ void PatternController::handleNetworkCommand(const QString &command)
             .arg(m_metadataColor.red())
             .arg(m_metadataColor.green())
             .arg(m_metadataColor.blue()));
+    } else if (cmd == "set-user-interaction" && parts.size() >= 2) {
+        QString state = parts[1].toLower();
+        if (state == "enable" || state == "disable") {
+            setUserInteractionEnabled(state == "enable");
+            m_networkInterface->sendResponse("OK");
+        } else {
+            m_networkInterface->sendResponse("ERROR: Invalid state (use: enable, disable)");
+        }
+    } else if (cmd == "get-user-interaction") {
+        m_networkInterface->sendResponse(m_userInteractionEnabled ? "enable" : "disable");
     } else if (cmd == "get-resolution") {
         m_networkInterface->sendResponse(getResolution());
     } else if (cmd == "get-pattern") {

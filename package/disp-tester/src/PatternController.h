@@ -21,6 +21,7 @@ class PatternController : public QObject
     Q_PROPERTY(QString metadataAlign READ getMetadataAlign NOTIFY metadataAlignChanged)
     Q_PROPERTY(int metadataFontSize READ getMetadataFontSize NOTIFY metadataFontSizeChanged)
     Q_PROPERTY(QColor metadataColor READ getMetadataColor NOTIFY metadataColorChanged)
+    Q_PROPERTY(bool userInteractionEnabled READ getUserInteractionEnabled NOTIFY userInteractionEnabledChanged)
 
 public:
     explicit PatternController(QObject *parent = nullptr);
@@ -45,6 +46,7 @@ public slots:
     QString getMetadataAlign() const { return m_metadataAlign; }
     int getMetadataFontSize() const { return m_metadataFontSize; }
     QColor getMetadataColor() const { return m_metadataColor; }
+    bool getUserInteractionEnabled() const { return m_userInteractionEnabled; }
 
 signals:
     void currentPatternChanged();
@@ -57,6 +59,7 @@ signals:
     void metadataAlignChanged();
     void metadataFontSizeChanged();
     void metadataColorChanged();
+    void userInteractionEnabledChanged();
 
 private slots:
     void handleNetworkCommand(const QString &command);
@@ -76,6 +79,7 @@ private:
     QString m_metadataAlign;   // "left", "center", "right"
     int m_metadataFontSize;    // Font size (8-48)
     QColor m_metadataColor;    // Text color
+    bool m_userInteractionEnabled; // Enable/disable user touch interaction
 
     void updatePattern(const QString &pattern);
     bool setPatternParameter(const QString &pattern, const QString &param, const QStringList &values);
@@ -92,6 +96,7 @@ private:
     void setMetadataColor(const QColor &color);
     void setMetadataColor(int r, int g, int b);
     void setMetadataColorByName(const QString &colorName);
+    void setUserInteractionEnabled(bool enabled);
 };
 
 #endif // PATTERNCONTROLLER_H
