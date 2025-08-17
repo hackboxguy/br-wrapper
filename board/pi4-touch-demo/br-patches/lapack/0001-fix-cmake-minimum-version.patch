@@ -1,0 +1,10 @@
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1,1 +1,1 @@
+-cmake_minimum_required(VERSION 3.2)
++cmake_minimum_required(VERSION 3.5)
+--- a/INSTALL/CMakeLists.txt
++++ b/INSTALL/CMakeLists.txt
+@@ -1,1 +1,1 @@
+-cmake_minimum_required(VERSION 3.2)
++cmake_minimum_required(VERSION 3.5)
