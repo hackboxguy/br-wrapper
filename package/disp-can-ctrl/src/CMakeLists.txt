@@ -20,37 +20,48 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O2 -DNDEBUG")
 # Check for required system libraries
 find_package(Threads REQUIRED)
 
-# Source files
-set(SOURCES
-    disp-can-ctrl.cpp
-)
-
-# Executable target
-add_executable(${PROJECT_NAME} ${SOURCES})
-
-# Link libraries
-target_link_libraries(${PROJECT_NAME} 
+# Server executable (daemon)
+add_executable(disp-can-ctrl disp-can-ctrl.cpp)
+target_link_libraries(disp-can-ctrl 
     PRIVATE 
     Threads::Threads
 )
 
-# Include directories (if needed in future)
-target_include_directories(${PROJECT_NAME} 
+# Client executable
+add_executable(disp-can-client disp-can-client.cpp)
+target_link_libraries(disp-can-client 
+    PRIVATE 
+    Threads::Threads
+)
+
+# Include directories
+target_include_directories(disp-can-ctrl 
     PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-# Installation rules
-install(TARGETS ${COMPONENT_NAME} 
-    RUNTIME DESTINATION sbin  # Will install to ${CMAKE_INSTALL_PREFIX}/sbin = /usr/sbin
+target_include_directories(disp-can-client 
+    PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# Installation rules for daemon
+install(TARGETS disp-can-ctrl 
+    RUNTIME DESTINATION sbin
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
-# Install startup script for Buildroot/embedded systems (absolute path to avoid CMAKE_INSTALL_PREFIX)
-install(FILES S99DispCanCtrl
-    DESTINATION /etc/init.d
+# Installation rules for client
+install(TARGETS disp-can-client 
+    RUNTIME DESTINATION sbin
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
+
+# Install startup script (commented out - handled by Buildroot)
+# install(FILES S99DispCanCtrl
+#     DESTINATION /etc/init.d
+#     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+# )
 
 # Install documentation
 install(FILES readme.txt
@@ -86,16 +97,16 @@ if(NOT CMAKE_CROSSCOMPILING)
     )
 endif()
 
-# Packaging support (for creating tarballs, etc.)
+# Packaging support
 include(CPack)
 set(CPACK_PACKAGE_NAME ${COMPONENT_NAME})
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Display CAN Control daemon")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Display CAN Control daemon with client utility")
 set(CPACK_PACKAGE_VENDOR "Your Company")
 set(CPACK_PACKAGE_CONTACT "your-email@example.com")
 
 #=============================================================================
-# Build Instructions (kept as comments for reference)
+# Build Instructions
 #=============================================================================
 # For cross-compiling with Buildroot:
 # cmake -H. -Bbuild -DCMAKE_TOOLCHAIN_FILE=/path/to/buildroot/toolchain.cmake
@@ -109,8 +120,6 @@ set(CPACK_PACKAGE_CONTACT "your-email@example.com")
 # For cleaning:
 # rm -rf build
 #
-# For verbose build:
-# cmake --build build --verbose
-#
-# For parallel build:
-# cmake --build build -- -j$(nproc)
+# Build both daemon and client:
+# cmake --build build --target disp-can-ctrl
+# cmake --build build --target disp-can-client
