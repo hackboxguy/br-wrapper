@@ -21,7 +21,7 @@ PatternController::PatternController(QObject *parent)
     , m_userInteractionEnabled(true) // Default user interaction enabled
 {
     // Initialize available patterns (added solid colors, removed white-text-black)
-    m_patterns << "grayscale-ramp" << "ansi-checker" << "white" << "black"
+    m_patterns << "grayscale-ramp" << "ansi-checker" << "smpte-bars" << "white" << "black"
                << "red" << "green" << "blue" << "cyan" << "magenta" << "yellow"
                << "zone-boundary-grid" << "blooming-detection" << "cross-dimming";
     m_currentPattern = m_patterns[0];
