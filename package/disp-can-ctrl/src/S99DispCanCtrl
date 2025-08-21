@@ -1,0 +1,156 @@
+#!/bin/sh
+#
+# Start/Stop disp-can-ctrl daemon
+#
+
+SERVER_NAME=disp-can-ctrl
+SERVER_PATH=/usr/sbin
+CAN_NODE=can0
+PIDFILE=/var/run/${SERVER_NAME}.pid
+LOGFILE=/var/log/${SERVER_NAME}.log
+
+# Configuration - modify these as needed
+CAN_BITRATE=500000
+PATTERN_BACKEND=127.0.0.1:8080
+TCP_PORT=8085
+
+start() {
+    echo -n "Starting $SERVER_NAME: "
+    
+    # Clean up any existing processes
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "already running (PID $PID)"
+            return 0
+        else
+            rm -f "$PIDFILE"
+        fi
+    fi
+    
+    # Kill any orphaned processes
+    killall "$SERVER_NAME" 2>/dev/null
+    sleep 1
+    
+    # Configure CAN interface
+    ip link set "$CAN_NODE" down 2>/dev/null
+    if ! ip link set "$CAN_NODE" up type can bitrate "$CAN_BITRATE" 2>/dev/null; then
+        echo "FAILED (CAN interface configuration)"
+        return 1
+    fi
+    
+    # Verify CAN interface is available and UP
+    if ! ip link show "$CAN_NODE" | grep -q "UP"; then
+        echo "FAILED (CAN device $CAN_NODE not UP)"
+        return 1
+    fi
+    
+    # Start the daemon
+    "$SERVER_PATH/$SERVER_NAME" \
+        --node="$CAN_NODE" \
+        --pattern_backend="$PATTERN_BACKEND" \
+        --port="$TCP_PORT" \
+        >>"$LOGFILE" 2>&1 &
+    
+    DAEMON_PID=$!
+    if [ $? -ne 0 ]; then
+        echo "FAILED (daemon start error)"
+        return 1
+    fi
+    
+    echo "$DAEMON_PID" > "$PIDFILE"
+    
+    # Wait and verify daemon started successfully
+    sleep 2
+    if kill -0 "$DAEMON_PID" 2>/dev/null; then
+        echo "OK (PID $DAEMON_PID)"
+        return 0
+    else
+        echo "FAILED (daemon died)"
+        rm -f "$PIDFILE"
+        return 1
+    fi
+}
+
+stop() {
+    echo -n "Stopping $SERVER_NAME: "
+    
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            # Try graceful shutdown first
+            kill -TERM "$PID" 2>/dev/null
+            
+            # Wait up to 5 seconds for graceful shutdown
+            for i in 1 2 3 4 5; do
+                if ! kill -0 "$PID" 2>/dev/null; then
+                    break
+                fi
+                sleep 1
+            done
+            
+            # Force kill if still running
+            if kill -0 "$PID" 2>/dev/null; then
+                kill -KILL "$PID" 2>/dev/null
+                sleep 1
+            fi
+        fi
+        rm -f "$PIDFILE"
+    fi
+    
+    # Cleanup any remaining processes
+    killall "$SERVER_NAME" 2>/dev/null
+    sleep 1
+    killall -KILL "$SERVER_NAME" 2>/dev/null
+    
+    # Optionally bring down CAN interface
+    # ip link set "$CAN_NODE" down 2>/dev/null
+    
+    echo "OK"
+    return 0
+}
+
+status() {
+    if [ -f "$PIDFILE" ]; then
+        PID=$(cat "$PIDFILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            echo "$SERVER_NAME is running (PID $PID)"
+            return 0
+        else
+            echo "$SERVER_NAME is not running (stale PID file)"
+            rm -f "$PIDFILE"
+            return 1
+        fi
+    else
+        if pidof "$SERVER_NAME" >/dev/null; then
+            echo "$SERVER_NAME is running (no PID file)"
+            return 0
+        else
+            echo "$SERVER_NAME is not running"
+            return 1
+        fi
+    fi
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        stop
+        sleep 2
+        start
+        ;;
+    status)
+        status
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|reload|status}"
+        exit 1
+        ;;
+esac
+
+exit $?
