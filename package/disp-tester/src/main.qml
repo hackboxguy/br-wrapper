@@ -48,7 +48,7 @@ Window {
                     return "qrc:/patterns/GrayscaleRamp.qml"
                 case "ansi-checker":
                     return "qrc:/patterns/AnsiChecker.qml"
-                case "smpte-bars":
+                case "colorbar":
                     return "qrc:/patterns/SmpteBars.qml"
                 case "zone-boundary-grid":
                     return "qrc:/patterns/ZoneBoundaryGrid.qml"
@@ -147,7 +147,7 @@ Window {
             Text {
                 anchors.centerIn: parent
                 text: {
-                    var patterns = ["grayscale-ramp", "ansi-checker", "smpte-bars","white", "black",
+                    var patterns = ["grayscale-ramp", "ansi-checker", "colorbar","white", "black",
                                    "red", "green", "blue", "cyan", "magenta", "yellow",
                                    "zone-boundary-grid", "blooming-detection", "cross-dimming"];
                     var currentIndex = patterns.indexOf(patternController.currentPattern) + 1;

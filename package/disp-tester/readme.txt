@@ -5,6 +5,7 @@ e.g echo "pattern ansi-checker" | nc -q 0 192.168.1.95 8080  (-q 0 is 0sec wait 
 # Basic patterns
 pattern grayscale-ramp      # 16-step grayscale gradient
 pattern ansi-checker        # Black/white checkerboard
+pattern colorbar            # smpte-bars
 
 # Solid color patterns  
 pattern white               # Full white screen (255,255,255)

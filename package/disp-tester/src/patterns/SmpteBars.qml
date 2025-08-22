@@ -1,7 +1,7 @@
 import QtQuick 2.12
 
 PatternBase {
-    patternName: "smpte-bars"
+    patternName: "colorbar"
 
     // Main SMPTE color bars pattern
     Column {
