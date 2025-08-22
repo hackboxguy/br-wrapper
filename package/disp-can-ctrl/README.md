@@ -547,12 +547,6 @@ sudo make install
 
 ---
 
-## License
-
-This software is proprietary. All rights reserved.
-
----
-
 ## Support
 
 For technical support and questions:
