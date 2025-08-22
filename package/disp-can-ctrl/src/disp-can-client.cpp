@@ -52,11 +52,12 @@ void printHelp(const std::string& program) {
               << "  --debug                Show detailed debug info\n"
               << "  --help                 Show this help\n"
               << "\nSupported commands:\n"
-              << "  set-pattern            Set display pattern (values: red, green, blue, colorbar, home)\n"
+              << "  set-pattern            Set display pattern (values: black, white, red, green, blue, colorbar, grayscale-ramp, ansi-checker, home)\n"
               << "  get-hwpartnum          Get hardware part number\n"
               << "  set-hwpartnum          Set hardware part number (max 16 ASCII chars)\n"
               << "\nExamples:\n"
-              << "  " << program << " --node=can0 --command=set-pattern --value=red\n"
+              << "  " << program << " --node=can0 --command=set-pattern --value=black\n"
+              << "  " << program << " --node=can0 --command=set-pattern --value=white\n"
               << "  " << program << " --node=can0 --command=get-hwpartnum --verbose\n"
               << "  " << program << " --node=can0 --command=set-hwpartnum --value=\"TEST123456\"\n";
 }
@@ -195,7 +196,11 @@ int handleSetPattern(int sockfd, const Config& config) {
     uint8_t cmd_data[8] = {0x04, 0x2E, 0xFD, 0x38, 0x00, 0x00, 0x00, 0x00};
 
     // Map pattern value to command byte
-    if (config.value == "red") {
+    if (config.value == "black") {
+        cmd_data[4] = 0x01;
+    } else if (config.value == "white") {
+        cmd_data[4] = 0x02;
+    } else if (config.value == "red") {
         cmd_data[4] = 0x03;
     } else if (config.value == "green") {
         cmd_data[4] = 0x04;
@@ -203,10 +208,14 @@ int handleSetPattern(int sockfd, const Config& config) {
         cmd_data[4] = 0x05;
     } else if (config.value == "colorbar") {
         cmd_data[4] = 0x06;
+    } else if (config.value == "grayscale-ramp") {
+        cmd_data[4] = 0x07;
+    } else if (config.value == "ansi-checker") {
+        cmd_data[4] = 0x08;
     } else if (config.value == "home") {
         cmd_data[0] = 0x04; cmd_data[1] = 0x2E; cmd_data[2] = 0xFD; cmd_data[3] = 0xC0; cmd_data[4] = 0x01;
     } else {
-        std::cerr << "Error: Invalid pattern value. Supported: red, green, blue, colorbar, home" << std::endl;
+        std::cerr << "Error: Invalid pattern value. Supported: black, white, red, green, blue, colorbar, grayscale-ramp, ansi-checker, home" << std::endl;
         return 2; // Invalid command
     }
 
@@ -551,9 +560,10 @@ bool validateCommand(const Config& config) {
             std::cerr << "Error: set-pattern requires --value" << std::endl;
             return false;
         }
-        if (config.value != "red" && config.value != "green" && config.value != "blue" &&
-            config.value != "colorbar" && config.value != "home") {
-            std::cerr << "Error: Invalid pattern value. Supported: red, green, blue, colorbar, home" << std::endl;
+        if (config.value != "black" && config.value != "white" && config.value != "red" &&
+            config.value != "green" && config.value != "blue" && config.value != "colorbar" &&
+            config.value != "grayscale-ramp" && config.value != "ansi-checker" && config.value != "home") {
+            std::cerr << "Error: Invalid pattern value. Supported: black, white, red, green, blue, colorbar, grayscale-ramp, ansi-checker, home" << std::endl;
             return false;
         }
     }

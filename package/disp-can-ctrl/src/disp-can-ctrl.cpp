@@ -77,28 +77,28 @@ void handle_signal(int signal) {
 std::string send_pattern_command(const std::string& pattern_cmd) {
     int sockfd;
     struct sockaddr_in server_addr;
-    
+
     std::cout << "DEBUG: Attempting to connect to pattern backend: " << pattern_backend_ip << ":" << pattern_backend_port << std::endl;
-    
+
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         std::cout << "DEBUG: Socket creation failed" << std::endl;
         return "Comm-Error";
     }
-    
+
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = inet_addr(pattern_backend_ip.c_str());
     server_addr.sin_port = htons(pattern_backend_port);
-    
+
     if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
         std::cout << "DEBUG: Connection failed to " << pattern_backend_ip << ":" << pattern_backend_port << std::endl;
         perror("DEBUG: Connect error");
         close(sockfd);
         return "Comm-Error";
     }
-    
+
     std::string full_cmd = "pattern " + pattern_cmd + "\n";
     std::cout << "DEBUG: Sending command: '" << pattern_cmd << "'" << std::endl;
-    
+
     ssize_t bytes_written = write(sockfd, full_cmd.c_str(), full_cmd.length());
     if (bytes_written < 0) {
         std::cout << "DEBUG: Write failed" << std::endl;
@@ -106,12 +106,12 @@ std::string send_pattern_command(const std::string& pattern_cmd) {
         close(sockfd);
         return "Comm-Error";
     }
-    
+
     std::cout << "DEBUG: Successfully sent " << bytes_written << " bytes to pattern backend" << std::endl;
-    
+
     // Add a small delay to ensure data is transmitted
     usleep(10000);  // 10ms delay
-    
+
     close(sockfd);
     return "OK";
 }
@@ -120,12 +120,12 @@ std::string send_pattern_command(const std::string& pattern_cmd) {
 // Update current pattern and send to pattern-daemon
 std::string set_pattern(const std::string& pattern) {
     std::string daemon_pattern = pattern;
-    
+
     // Map "home" to "none" for pattern-daemon
     if (pattern == "home") {
         daemon_pattern = "none";
     }
-    
+
     std::string result = send_pattern_command(daemon_pattern);
     if (result == "OK") {
         std::lock_guard<std::mutex> lock(state_mutex);
@@ -147,7 +147,7 @@ std::string set_hwpartnum(const std::string& partnum) {
     if (partnum.length() > 16) {
         return "Error";
     }
-    
+
     std::lock_guard<std::mutex> lock(state_mutex);
     memset(hwpartnum, 0, sizeof(hwpartnum));
     strncpy(hwpartnum, partnum.c_str(), 16);
@@ -168,9 +168,9 @@ bool send_can_frame(int sockfd, canid_t id, const uint8_t* data, uint8_t dlc) {
     frame.can_id = id;
     frame.can_dlc = dlc;
     memcpy(frame.data, data, dlc);
-    
+
     bool result = write(sockfd, &frame, sizeof(struct can_frame)) == sizeof(struct can_frame);
-    
+
     // Debug output for sent frames
     if (result) {
         printf("TX [%03X]: ", id);
@@ -180,7 +180,7 @@ bool send_can_frame(int sockfd, canid_t id, const uint8_t* data, uint8_t dlc) {
     } else {
         printf("ERROR: Failed to send CAN frame [%03X]\n", id);
     }
-    
+
     return result;
 }
 
@@ -227,7 +227,7 @@ bool send_flow_control(int sockfd, canid_t id, uint8_t flow_status) {
 void process_can_command(int sockfd, const struct can_frame& req_frame) {
     struct can_frame resp_frame;
     uint8_t response_data[8] = {0};
-    
+
     // Standard single-frame commands
     if (req_frame.can_dlc >= 4 && req_frame.data[0] == 0x04) {
         // Single frame commands (length 4)
@@ -235,13 +235,17 @@ void process_can_command(int sockfd, const struct can_frame& req_frame) {
             // Pattern commands
             std::string pattern;
             switch (req_frame.data[4]) {
+                case 0x01: pattern = "black"; break;
+                case 0x02: pattern = "white"; break;
                 case 0x03: pattern = "red"; break;
                 case 0x04: pattern = "green"; break;
                 case 0x05: pattern = "blue"; break;
                 case 0x06: pattern = "colorbar"; break;
+                case 0x07: pattern = "grayscale-ramp"; break;
+                case 0x08: pattern = "ansi-checker"; break;
                 default: return; // Invalid command
             }
-            
+
             if (set_pattern(pattern) == "OK") {
                 // Send positive response: 03 6E FD 38 11 00 00 00
                 response_data[0] = 0x03;
@@ -274,20 +278,20 @@ void process_can_command(int sockfd, const struct can_frame& req_frame) {
         }
     }
     // Get HWPartNum command (single frame request)
-    else if (req_frame.can_dlc >= 4 && req_frame.data[0] == 0x03 && 
+    else if (req_frame.can_dlc >= 4 && req_frame.data[0] == 0x03 &&
              req_frame.data[1] == 0x22 && req_frame.data[2] == 0xFD && req_frame.data[3] == 0xBD) {
-        
+
         std::string partnum = get_hwpartnum();
         uint8_t partnum_bytes[16];
         memset(partnum_bytes, 0, sizeof(partnum_bytes));
         memcpy(partnum_bytes, partnum.c_str(), std::min((size_t)16, partnum.length()));
-        
+
         // Send multi-frame response
         std::lock_guard<std::mutex> lock(isotp_mutex);
         isotp.sending = true;
         isotp.response_id = 0x70B;
         isotp.sequence_number = 1;
-        
+
         // Prepare full response: 10 13 62 FD BD + 16 bytes of part number
         isotp.tx_buffer.clear();
         isotp.tx_buffer.push_back(0x62);
@@ -296,9 +300,9 @@ void process_can_command(int sockfd, const struct can_frame& req_frame) {
         for (int i = 0; i < 16; i++) {
             isotp.tx_buffer.push_back(partnum_bytes[i]);
         }
-        
+
         // Send first frame: 10 13 62 FD BD + first 3 bytes of part number
-        uint8_t first_frame[8] = {0x10, 0x13, 0x62, 0xFD, 0xBD, 
+        uint8_t first_frame[8] = {0x10, 0x13, 0x62, 0xFD, 0xBD,
                                   partnum_bytes[0], partnum_bytes[1], partnum_bytes[2]};
         send_can_frame(sockfd, 0x70B, first_frame, 8);
     }
@@ -306,9 +310,9 @@ void process_can_command(int sockfd, const struct can_frame& req_frame) {
     else if (req_frame.data[0] == 0x10) {
         // First frame of multi-frame message
         uint8_t total_length = req_frame.data[1];
-        if (total_length == 0x13 && req_frame.data[2] == 0x2E && 
+        if (total_length == 0x13 && req_frame.data[2] == 0x2E &&
             req_frame.data[3] == 0xFD && req_frame.data[4] == 0xBD) {
-            
+
             std::lock_guard<std::mutex> lock(isotp_mutex);
             isotp.receiving = true;
             isotp.total_length = total_length;
@@ -316,17 +320,17 @@ void process_can_command(int sockfd, const struct can_frame& req_frame) {
             isotp.request_id = req_frame.can_id;
             isotp.response_id = 0x70B;
             isotp.rx_buffer.clear();
-            
+
             // Store service ID and parameter ID
             isotp.rx_buffer.push_back(req_frame.data[2]);  // 0x2E
             isotp.rx_buffer.push_back(req_frame.data[3]);  // 0xFD
             isotp.rx_buffer.push_back(req_frame.data[4]);  // 0xBD
-            
+
             // Store first 3 bytes of part number
             for (int i = 5; i < 8; i++) {
                 isotp.rx_buffer.push_back(req_frame.data[i]);
             }
-            
+
             // Send flow control: Continue to Send
             send_flow_control(sockfd, 0x70B, 0x00);
         }
@@ -341,10 +345,10 @@ void process_can_command(int sockfd, const struct can_frame& req_frame) {
                 for (int i = 1; i < 8 && isotp.rx_buffer.size() < isotp.total_length; i++) {
                     isotp.rx_buffer.push_back(req_frame.data[i]);
                 }
-                
+
                 isotp.sequence_number++;
                 if (isotp.sequence_number > 0x0F) isotp.sequence_number = 0;
-                
+
                 // Check if we received all data
                 if (isotp.rx_buffer.size() >= isotp.total_length) {
                     // Extract part number (skip service bytes)
@@ -355,14 +359,14 @@ void process_can_command(int sockfd, const struct can_frame& req_frame) {
                                 new_partnum += (char)isotp.rx_buffer[i];
                             }
                         }
-                        
+
                         if (set_hwpartnum(new_partnum) == "OK") {
                             // Send positive response: 03 6E FD BD 00 00 00 00
                             uint8_t pos_resp[8] = {0x03, 0x6E, 0xFD, 0xBD, 0x00, 0x00, 0x00, 0x00};
                             send_can_frame(sockfd, 0x70B, pos_resp, 8);
                         }
                     }
-                    
+
                     isotp.receiving = false;
                     isotp.rx_buffer.clear();
                 }
@@ -375,27 +379,27 @@ void process_can_command(int sockfd, const struct can_frame& req_frame) {
         if (isotp.sending) {
             // Send consecutive frames
             size_t bytes_sent = 6; // Already sent in first frame (excluding length bytes)
-            
+
             while (bytes_sent < isotp.tx_buffer.size()) {
                 size_t remaining = isotp.tx_buffer.size() - bytes_sent;
                 size_t to_send = std::min((size_t)7, remaining);
-                
+
                 uint8_t cons_frame[8] = {0};
                 cons_frame[0] = 0x20 | (isotp.sequence_number & 0x0F);
-                
+
                 for (size_t i = 0; i < to_send; i++) {
                     cons_frame[i + 1] = isotp.tx_buffer[bytes_sent + i];
                 }
-                
+
                 send_can_frame(sockfd, isotp.response_id, cons_frame, 8);
-                
+
                 bytes_sent += to_send;
                 isotp.sequence_number++;
                 if (isotp.sequence_number > 0x0F) isotp.sequence_number = 0;
-                
+
                 usleep(10000); // 10ms delay between frames
             }
-            
+
             isotp.sending = false;
             isotp.tx_buffer.clear();
         }
@@ -412,11 +416,11 @@ void socket_listener() {
         perror("Socket creation failed");
         return;
     }
-    
+
     // Enable socket reuse
     int opt = 1;
     setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-    
+
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(tcp_port);
@@ -434,12 +438,12 @@ void socket_listener() {
     }
 
     std::cout << "Socket listener started on port " << tcp_port << ".\n";
-    
+
     while (running) {
         int new_socket;
         struct sockaddr_in client_addr;
         socklen_t addr_len = sizeof(client_addr);
-        
+
         fd_set read_fds;
         FD_ZERO(&read_fds);
         FD_SET(sockfd, &read_fds);
@@ -456,7 +460,7 @@ void socket_listener() {
 
         if (FD_ISSET(sockfd, &read_fds)) {
             if ((new_socket = accept(sockfd, (struct sockaddr*)&client_addr, &addr_len)) < 0) {
-                if (running) 
+                if (running)
                     perror("Socket accept failed");
                 break;
             }
@@ -465,19 +469,20 @@ void socket_listener() {
             ssize_t bytes_read = read(new_socket, buffer, 1023);
             if (bytes_read > 0) {
                 buffer[bytes_read] = '\0';
-                
+
                 std::string cmd, cmdArg;
                 std::string buf(buffer);
                 stringstream msgstream(buf);
                 msgstream >> cmd;
                 msgstream >> cmdArg;
                 transform(cmd.begin(), cmd.end(), cmd.begin(), ::tolower);
-                
+
                 std::string response = "Error";
-                
+
                 if (cmd == "pattern") {
-                    if (cmdArg == "red" || cmdArg == "green" || cmdArg == "blue" || 
-                        cmdArg == "colorbar" || cmdArg == "home") {
+                    if (cmdArg == "black" || cmdArg == "white" || cmdArg == "red" || cmdArg == "green" ||
+                        cmdArg == "blue" || cmdArg == "colorbar" || cmdArg == "grayscale-ramp" || cmdArg == "ansi-checker" ||
+                        cmdArg == "home") {
                         response = set_pattern(cmdArg);
                     }
                 }
@@ -492,7 +497,7 @@ void socket_listener() {
                         response = set_hwpartnum(cmdArg);
                     }
                 }
-                
+
                 response += "\n";
                 write(new_socket, response.c_str(), response.length());
             }
@@ -510,7 +515,7 @@ void canbus_listener(bool debugprint, std::string node) {
     struct sockaddr_can addr;
     struct ifreq ifr;
     struct can_frame frame;
-    
+
     if ((sockfd = socket(PF_CAN, SOCK_RAW, CAN_RAW)) < 0) {
         perror("CAN socket creation failed");
         return;
@@ -548,12 +553,12 @@ void canbus_listener(bool debugprint, std::string node) {
         if (FD_ISSET(sockfd, &read_fds)) {
             int nbytes = read(sockfd, &frame, sizeof(struct can_frame));
             if (nbytes < 0) {
-                if (running) 
+                if (running)
                     perror("CAN read failed");
                 break;
             }
 
-            // Print incoming request data 
+            // Print incoming request data
             if (debugprint) {
                 printf("RX [%03X]: ", frame.can_id);
                 for (int i = 0; i < frame.can_dlc; i++)
@@ -564,7 +569,7 @@ void canbus_listener(bool debugprint, std::string node) {
             // Process commands on ID 0x703
             if (frame.can_id == 0x703) {
                 process_can_command(sockfd, frame);
-                
+
                 // Print outgoing response data if debug enabled
                 if (debugprint) {
                     printf("CAN command processed for ID 0x703\n");
@@ -584,21 +589,21 @@ bool parse_pattern_backend(const std::string& backend_str) {
         std::cerr << "Error: Invalid pattern_backend format. Expected ip:port (e.g., 192.168.1.1:8080)\n";
         return false;
     }
-    
+
     std::string ip = backend_str.substr(0, colon_pos);
     std::string port_str = backend_str.substr(colon_pos + 1);
-    
+
     if (ip.empty() || port_str.empty()) {
         std::cerr << "Error: Invalid pattern_backend format. IP or port is empty.\n";
         return false;
     }
-    
+
     int port = atoi(port_str.c_str());
     if (port <= 0 || port > 65535) {
         std::cerr << "Error: Invalid port number in pattern_backend: " << port_str << "\n";
         return false;
     }
-    
+
     // Basic IP validation (simple check for valid format)
     struct sockaddr_in sa;
     int result = inet_pton(AF_INET, ip.c_str(), &(sa.sin_addr));
@@ -606,7 +611,7 @@ bool parse_pattern_backend(const std::string& backend_str) {
         std::cerr << "Error: Invalid IP address in pattern_backend: " << ip << "\n";
         return false;
     }
-    
+
     pattern_backend_ip = ip;
     pattern_backend_port = port;
     return true;
@@ -699,14 +704,14 @@ int main(int argc, char* argv[]) {
         c = tolower(c);
     if (debugprint == "true")
         debugflag = true;
-    
+
     // Print configuration
     std::cout << "Configuration:\n"
               << "  CAN Node: " << node << "\n"
               << "  TCP Listen Port: " << tcp_port << "\n"
               << "  Pattern Backend: " << pattern_backend_ip << ":" << pattern_backend_port << "\n"
               << "  Debug Print: " << (debugflag ? "enabled" : "disabled") << "\n\n";
-    
+
     // Set up the signal handler
     std::signal(SIGINT, handle_signal);
 
