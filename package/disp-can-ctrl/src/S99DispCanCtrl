@@ -12,6 +12,7 @@ LOGFILE=/var/log/${SERVER_NAME}.log
 # Configuration - modify these as needed
 CAN_BITRATE=500000
 PATTERN_BACKEND=127.0.0.1:8080
+LAUNCHER_BACKEND=127.0.0.1:8081
 TCP_PORT=8085
 
 start() {
@@ -49,6 +50,7 @@ start() {
     "$SERVER_PATH/$SERVER_NAME" \
         --node="$CAN_NODE" \
         --pattern_backend="$PATTERN_BACKEND" \
+        --launcher_backend="$LAUNCHER_BACKEND" \
         --port="$TCP_PORT" \
         >>"$LOGFILE" 2>&1 &
     

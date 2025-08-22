@@ -44,6 +44,10 @@ int tcp_port = 8082;
 std::string pattern_backend_ip = "127.0.0.1";
 int pattern_backend_port = 8080;
 
+// Launcher backend configuration
+std::string launcher_backend_ip = "";
+int launcher_backend_port = 8081;
+
 // Shared state with mutex protection
 std::mutex state_mutex;
 std::string current_pattern = "none";  // Current display pattern
@@ -62,6 +66,145 @@ struct isotp_state {
 };
 isotp_state isotp;
 std::mutex isotp_mutex;
+bool send_launcher_command(const std::string& command, std::string& response);
+/*****************************************************************************/
+// Stop pattern-generator via launcher
+bool stop_pattern_generator() {
+    std::string response;
+    if (send_launcher_command("stop-app", response)) {
+        if (response == "OK") {
+            return true;
+        }
+    }
+    return false;
+}
+// Parse launcher backend address (ip:port format)
+bool parse_launcher_backend(const std::string& backend_str) {
+    size_t colon_pos = backend_str.find(':');
+
+    if (colon_pos == std::string::npos) {
+        // No port specified, use IP with default port
+        launcher_backend_ip = backend_str;
+        launcher_backend_port = 8081; // Default port
+    } else {
+        std::string ip = backend_str.substr(0, colon_pos);
+        std::string port_str = backend_str.substr(colon_pos + 1);
+
+        if (ip.empty() || port_str.empty()) {
+            std::cerr << "Error: Invalid launcher_backend format. IP or port is empty.\n";
+            return false;
+        }
+
+        int port = atoi(port_str.c_str());
+        if (port <= 0 || port > 65535) {
+            std::cerr << "Error: Invalid port number in launcher_backend: " << port_str << "\n";
+            return false;
+        }
+
+        // Basic IP validation
+        struct sockaddr_in sa;
+        int result = inet_pton(AF_INET, ip.c_str(), &(sa.sin_addr));
+        if (result != 1) {
+            std::cerr << "Error: Invalid IP address in launcher_backend: " << ip << "\n";
+            return false;
+        }
+
+        launcher_backend_ip = ip;
+        launcher_backend_port = port;
+    }
+
+    return true;
+}
+
+/*****************************************************************************/
+// Send command to launcher backend and get response
+bool send_launcher_command(const std::string& command, std::string& response) {
+    int sockfd;
+    struct sockaddr_in server_addr;
+
+    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+        return false;
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = inet_addr(launcher_backend_ip.c_str());
+    server_addr.sin_port = htons(launcher_backend_port);
+
+    if (connect(sockfd, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+        close(sockfd);
+        return false;
+    }
+
+    std::string full_cmd = command + "\n";
+    if (write(sockfd, full_cmd.c_str(), full_cmd.length()) < 0) {
+        close(sockfd);
+        return false;
+    }
+
+    // Read response
+    char buffer[1024] = {0};
+    ssize_t bytes_read = read(sockfd, buffer, sizeof(buffer) - 1);
+    close(sockfd);
+
+    if (bytes_read > 0) {
+        response = std::string(buffer, bytes_read);
+        // Remove trailing newline if present
+        if (!response.empty() && response.back() == '\n') {
+            response.pop_back();
+        }
+        return true;
+    }
+
+    return false;
+}
+
+/*****************************************************************************/
+// Get currently running app from launcher
+std::string get_running_app() {
+    std::string response;
+    if (send_launcher_command("get-running-app", response)) {
+        return response;
+    }
+    return "";
+}
+
+/*****************************************************************************/
+// Start pattern-generator via launcher
+bool start_pattern_generator() {
+    std::string response;
+    if (send_launcher_command("start-app pattern-generator", response)) {
+        if (response == "OK") {
+            // Wait for pattern-generator to start
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+            return true;
+        }
+    }
+    return false;
+}
+
+/*****************************************************************************/
+// Ensure pattern-generator is running
+bool ensure_pattern_generator_running() {
+    // Check if launcher is configured
+    if (launcher_backend_ip.empty()) {
+        return true; // No launcher configured, skip check
+    }
+
+    // Get currently running app
+    std::string running_app = get_running_app();
+    if (running_app.empty()) {
+        // Cannot communicate with launcher
+        return false;
+    }
+
+    // Check if pattern-generator is already running
+    if (running_app == "pattern-generator") {
+        return true; // Already running
+    }
+
+    // Start pattern-generator
+    return start_pattern_generator();
+}
 
 /*****************************************************************************/
 // Signal handler to handle SIGINT (Ctrl+C) for graceful shutdown
@@ -78,7 +221,32 @@ std::string send_pattern_command(const std::string& pattern_cmd) {
     int sockfd;
     struct sockaddr_in server_addr;
 
+    std::cout << "DEBUG: Processing pattern command: " << pattern_cmd << std::endl;
+
+    // Handle "home" pattern specially - stop pattern-generator via launcher
+    if (pattern_cmd == "home" && !launcher_backend_ip.empty()) {
+        std::cout << "DEBUG: Stopping pattern-generator via launcher backend" << std::endl;
+        if (stop_pattern_generator()) {
+            std::cout << "DEBUG: Successfully stopped pattern-generator" << std::endl;
+            return "OK";
+        } else {
+            std::cout << "DEBUG: Failed to stop pattern-generator via launcher" << std::endl;
+            // Fallback to sending pattern none to pattern-backend (for compatibility)
+        }
+    }
+
     std::cout << "DEBUG: Attempting to connect to pattern backend: " << pattern_backend_ip << ":" << pattern_backend_port << std::endl;
+
+    // Ensure pattern-generator is running if launcher is configured (except for "home" pattern)
+    if (!launcher_backend_ip.empty() && pattern_cmd != "home") {
+        std::cout << "DEBUG: Checking launcher backend: " << launcher_backend_ip << ":" << launcher_backend_port << std::endl;
+        if (!ensure_pattern_generator_running()) {
+            std::cout << "DEBUG: Failed to ensure pattern-generator is running via launcher" << std::endl;
+            // Continue with direct connection attempt (fallback)
+        } else {
+            std::cout << "DEBUG: Pattern-generator is running" << std::endl;
+        }
+    }
 
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         std::cout << "DEBUG: Socket creation failed" << std::endl;
@@ -96,8 +264,10 @@ std::string send_pattern_command(const std::string& pattern_cmd) {
         return "Comm-Error";
     }
 
-    std::string full_cmd = "pattern " + pattern_cmd + "\n";
-    std::cout << "DEBUG: Sending command: '" << pattern_cmd << "'" << std::endl;
+    // For "home" pattern, send "pattern none" to pattern-backend for fallback compatibility
+    std::string backend_cmd = (pattern_cmd == "home") ? "none" : pattern_cmd;
+    std::string full_cmd = "pattern " + backend_cmd + "\n";
+    std::cout << "DEBUG: Sending command: '" << backend_cmd << "'" << std::endl;
 
     ssize_t bytes_written = write(sockfd, full_cmd.c_str(), full_cmd.length());
     if (bytes_written < 0) {
@@ -119,14 +289,8 @@ std::string send_pattern_command(const std::string& pattern_cmd) {
 /*****************************************************************************/
 // Update current pattern and send to pattern-daemon
 std::string set_pattern(const std::string& pattern) {
-    std::string daemon_pattern = pattern;
-
-    // Map "home" to "none" for pattern-daemon
-    if (pattern == "home") {
-        daemon_pattern = "none";
-    }
-
-    std::string result = send_pattern_command(daemon_pattern);
+    // No need to map "home" to "none" anymore - keep "home" as-is
+    std::string result = send_pattern_command(pattern);
     if (result == "OK") {
         std::lock_guard<std::mutex> lock(state_mutex);
         current_pattern = pattern;
@@ -499,7 +663,9 @@ void socket_listener() {
                 }
 
                 response += "\n";
-                write(new_socket, response.c_str(), response.length());
+                if (write(new_socket, response.c_str(), response.length()) < 0) {
+                    // Write failed, but we'll close the socket anyway
+                }
             }
             close(new_socket);
         }
@@ -624,11 +790,13 @@ void printHelp(std::string program) {
               << "  --node=<canx>              Specify the can0/can1 node (or --node <canx>)\n"
               << "  --port=<port>              Specify the TCP listen port (or --port <port>) [default: 8082]\n"
               << "  --pattern_backend=<ip:port> Specify pattern backend address (or --pattern_backend <ip:port>) [default: 127.0.0.1:8080]\n"
+              << "  --launcher_backend=<ip:port> Specify launcher backend address (or --launcher_backend <ip:port>) [default port: 8081]\n"
               << "  --debugprint=<flag>        Specify the true/false debug print (or --debugprint <flag>)\n"
               << "  --help                     Display this help message\n"
               << "\nExamples:\n"
               << "  " << program << " --node=can0 --port=8085 --pattern_backend=192.168.1.100:8080\n"
-              << "  " << program << " --node can0 --pattern_backend 10.0.0.5:9090 --debugprint true\n";
+              << "  " << program << " --node can0 --pattern_backend 10.0.0.5:9090 --debugprint true\n"
+              << "  " << program << " --node=can0 --launcher_backend=127.0.0.1:8081 --pattern_backend=127.0.0.1:8080\n";
 }
 
 /*****************************************************************************/
@@ -638,6 +806,7 @@ int main(int argc, char* argv[]) {
     std::string debugprint = "Unknown";
     std::string port = "Unknown";
     std::string pattern_backend = "Unknown";
+    std::string launcher_backend = "Unknown";
     bool debugflag = false;
 
     // If no arguments or --help is passed, print the help message
@@ -662,6 +831,10 @@ int main(int argc, char* argv[]) {
         else if (arg.rfind("--pattern_backend=", 0) == 0)
             pattern_backend = arg.substr(18);  // Extract the value after '='
 
+        // Check for --launcher_backend= format
+        else if (arg.rfind("--launcher_backend=", 0) == 0)
+            launcher_backend = arg.substr(19);  // Extract the value after '='
+
         // Check for --debugprint= format
         else if (arg.rfind("--debugprint=", 0) == 0)
             debugprint = arg.substr(13);  // Extract the value after '='
@@ -677,6 +850,10 @@ int main(int argc, char* argv[]) {
         // Check for --pattern_backend followed by value
         else if (arg == "--pattern_backend" && i + 1 < argc)
             pattern_backend = argv[++i];  // Get the next argument as the pattern_backend
+
+        // Check for --launcher_backend followed by value
+        else if (arg == "--launcher_backend" && i + 1 < argc)
+            launcher_backend = argv[++i];  // Get the next argument as the launcher_backend
 
         // Check for --debugprint followed by value
         else if (arg == "--debugprint" && i + 1 < argc)
@@ -700,6 +877,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // Set launcher backend if specified
+    if (launcher_backend != "Unknown") {
+        if (!parse_launcher_backend(launcher_backend)) {
+            std::cerr << "Using default launcher backend: " << launcher_backend_ip << ":" << launcher_backend_port << "\n";
+        }
+    }
+
     for (auto& c : debugprint)
         c = tolower(c);
     if (debugprint == "true")
@@ -709,8 +893,15 @@ int main(int argc, char* argv[]) {
     std::cout << "Configuration:\n"
               << "  CAN Node: " << node << "\n"
               << "  TCP Listen Port: " << tcp_port << "\n"
-              << "  Pattern Backend: " << pattern_backend_ip << ":" << pattern_backend_port << "\n"
-              << "  Debug Print: " << (debugflag ? "enabled" : "disabled") << "\n\n";
+              << "  Pattern Backend: " << pattern_backend_ip << ":" << pattern_backend_port << "\n";
+
+    if (!launcher_backend_ip.empty()) {
+        std::cout << "  Launcher Backend: " << launcher_backend_ip << ":" << launcher_backend_port << "\n";
+    } else {
+        std::cout << "  Launcher Backend: disabled\n";
+    }
+
+    std::cout << "  Debug Print: " << (debugflag ? "enabled" : "disabled") << "\n\n";
 
     // Set up the signal handler
     std::signal(SIGINT, handle_signal);

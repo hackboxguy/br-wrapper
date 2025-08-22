@@ -107,7 +107,7 @@
         "border_radius": 20
       },
       {
-        "id": "system",
+        "id": "pattern-generator",
         "enabled": true,
         "text": "Pattern Generator",
         "icon": "/usr/share/icons/tools-large.png",
@@ -133,9 +133,9 @@
         "border_radius": 20
       },
       {
-        "id": "patterns",
+        "id": "test-pictures",
         "enabled": true,
-        "text": "Test Patterns",
+        "text": "Test Pictures",
         "icon": "/usr/share/icons/gallery-large.png",
         "program": "/usr/bin/touch-gallery",
         "arguments": ["/Patterns"],
