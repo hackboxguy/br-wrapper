@@ -37,13 +37,13 @@ start() {
     ip link set "$CAN_NODE" down 2>/dev/null
     if ! ip link set "$CAN_NODE" up type can bitrate "$CAN_BITRATE" 2>/dev/null; then
         echo "FAILED (CAN interface configuration)"
-        return 1
+        #return 1
     fi
     
-    # Verify CAN interface is available and UP
+    # Verify CAN interface is available and UP(if not, continue to run with tcp port)
     if ! ip link show "$CAN_NODE" | grep -q "UP"; then
         echo "FAILED (CAN device $CAN_NODE not UP)"
-        return 1
+        #return 1
     fi
     
     # Start the daemon

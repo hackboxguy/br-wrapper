@@ -31,6 +31,7 @@
 #include <mutex>
 #include <map>
 #include <vector>
+#include <chrono>
 
 using namespace std;
 
@@ -66,7 +67,33 @@ struct isotp_state {
 };
 isotp_state isotp;
 std::mutex isotp_mutex;
+
+//forward declaration
 bool send_launcher_command(const std::string& command, std::string& response);
+/*****************************************************************************/
+// Check if CAN interface is available
+bool is_can_interface_available(const std::string& node) {
+    int sockfd;
+    struct ifreq ifr;
+
+    // Try to create CAN socket
+    if ((sockfd = socket(PF_CAN, SOCK_RAW, CAN_RAW)) < 0) {
+        std::cout << "Warning: Cannot create CAN socket" << std::endl;
+        return false;
+    }
+
+    // Try to get interface index
+    strcpy(ifr.ifr_name, node.c_str());
+    if (ioctl(sockfd, SIOCGIFINDEX, &ifr) < 0) {
+        std::cout << "Warning: CAN interface " << node << " not found" << std::endl;
+        close(sockfd);
+        return false;
+    }
+
+    close(sockfd);
+    return true;
+}
+
 /*****************************************************************************/
 // Stop pattern-generator via launcher
 bool stop_pattern_generator() {
@@ -889,9 +916,12 @@ int main(int argc, char* argv[]) {
     if (debugprint == "true")
         debugflag = true;
 
+    // Check CAN interface availability
+    bool can_available = is_can_interface_available(node);
+
     // Print configuration
     std::cout << "Configuration:\n"
-              << "  CAN Node: " << node << "\n"
+              << "  CAN Node: " << node << (can_available ? " (available)" : " (unavailable - TCP only mode)") << "\n"
               << "  TCP Listen Port: " << tcp_port << "\n"
               << "  Pattern Backend: " << pattern_backend_ip << ":" << pattern_backend_port << "\n";
 
@@ -903,16 +933,42 @@ int main(int argc, char* argv[]) {
 
     std::cout << "  Debug Print: " << (debugflag ? "enabled" : "disabled") << "\n\n";
 
+    // Log CAN unavailability warning
+    if (!can_available) {
+        std::cout << "WARNING: CAN interface " << node << " is unavailable." << std::endl;
+        std::cout << "WARNING: Running in TCP-only mode. CAN bus functionality disabled." << std::endl;
+
+        // Log to file if possible
+        std::ofstream logfile("/var/log/disp-can-ctrl.log", std::ios::app);
+        if (logfile.is_open()) {
+            auto now = std::chrono::system_clock::now();
+            auto time_t = std::chrono::system_clock::to_time_t(now);
+            logfile << std::ctime(&time_t);
+            logfile << "WARNING: CAN interface " << node << " unavailable. Running in TCP-only mode." << std::endl;
+            logfile.close();
+        }
+    }
+
     // Set up the signal handler
     std::signal(SIGINT, handle_signal);
 
-    // Create threads
+    // Start TCP thread (always available)
     std::thread socket_thread(socket_listener);
-    std::thread canbus_thread(canbus_listener, debugflag, node);
+
+    // Start CAN thread only if interface is available
+    std::thread canbus_thread;
+    if (can_available) {
+        std::cout << "Starting CAN bus listener..." << std::endl;
+        canbus_thread = std::thread(canbus_listener, debugflag, node);
+    } else {
+        std::cout << "Skipping CAN bus listener (interface unavailable)" << std::endl;
+    }
 
     // Wait for threads to complete
     socket_thread.join();
-    canbus_thread.join();
+    if (can_available && canbus_thread.joinable()) {
+        canbus_thread.join();
+    }
 
     std::cout << "All threads have exited. Program terminated.\n";
     return 0;
