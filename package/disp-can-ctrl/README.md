@@ -24,6 +24,7 @@ The system supports ISO-TP multi-frame messaging, launcher integration for servi
 │                 │    │  └─────────────┘c│◄──►│srv (Port 8081)     │
 └─────────────────┘    └──────────────────┘    └────────────────────┘
 ```
+[Here](../qt-demo-launcher/README.md) you can find more details on QT-Launcher Backend app.
 
 ---
 
