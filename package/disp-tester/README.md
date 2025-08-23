@@ -1,6 +1,7 @@
 # Qt Pattern Generator
 
 A Qt5-based display pattern generator application designed for testing displays color accuracy, and display uniformity. Features touch navigation and TCP network interface for automated testing integration.
+![Sample-Pattern.](images/sample-pattern.png "Sample-Pattern.")
 
 ## Features
 
@@ -53,7 +54,7 @@ The application can be integrated as a Buildroot package for embedded systems.
 cd src/
 qmake
 make
-./qt-pattern-generator
+./disp-tester --port=8080
 ```
 
 For cross-compilation, ensure Qt5 development tools and target toolchain are configured.
