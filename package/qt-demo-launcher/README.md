@@ -23,16 +23,7 @@ A configurable Qt-based application launcher designed for touch interfaces and e
 
 ## Installation
 
-### Binary Installation
-```bash
-# Install the compiled binary
-sudo install -m 755 qt_demo_launcher /usr/bin/
-
-# Install default configuration (optional)
-sudo cp launcher.json /etc/launcher.json
-```
-
-### From Source
+### Build and deploy from Source
 ```bash
 # Clone, build and run
 git clone -b pi4-983-interrupt-touch https://github.com/hackboxguy/br-wrapper.git
@@ -306,17 +297,18 @@ MOC            # Meta Object Compiler path
 
 ### Build Commands
 ```bash
-# Clean build
-make clean
+# git clone the sources
+git clone -b pi4-983-interrupt-touch https://github.com/hackboxguy/br-wrapper.git
 
-# Build
-make
+# cd into the sources and comment-out NetworkInterface.moc include line which is needed when building from buildroot as a package
+cd br-wrapper/package/qt-demo-launcher/src/
+sed -i 's|^\([[:space:]]*\)#include "NetworkInterface\.moc"|\1//#include "NetworkInterface.moc"|' NetworkInterface.cpp
 
-# Install
-sudo make install
+# make
+qmake qt-demo-launcher.pro;make
 
-# Custom staging directory
-STAGING_DIR=/path/to/sysroot make
+# deploy
+./qt-demo-launcher --config qt-demo-launcher.json --port=8081
 ```
 
 ### Build Dependencies
