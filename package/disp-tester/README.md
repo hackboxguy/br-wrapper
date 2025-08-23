@@ -1,4 +1,4 @@
-# Qt Pattern Generator
+# Qt Pattern Generator(QT-Pattern Backend)
 
 A Qt5-based display pattern generator application designed for testing displays color accuracy, and display uniformity. Features touch navigation and TCP network interface for automated testing integration.
 ![Sample-Pattern.](images/sample-pattern.png "Sample-Pattern.")

@@ -1,4 +1,4 @@
-# Qt Demo Launcher
+# Qt Demo Launcher(QT-Launcher Backend)
 
 A configurable Qt-based application launcher designed for touch interfaces and embedded systems. Features both touch-based GUI interaction and network API control for automated testing and remote management, as shown below, based on json config file, different buttons of different colors can be placed as app-launcher buttons - following launcher-home-screen is rendered by [this config file.](src/qt-demo-launcher.json).
 ![Qt-Launcher-Home-Screen.](images/launcher-home.png "QT-Launcher-Home-Screen.")
