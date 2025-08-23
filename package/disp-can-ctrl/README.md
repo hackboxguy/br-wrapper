@@ -25,6 +25,7 @@ The system supports ISO-TP multi-frame messaging, launcher integration for servi
 └─────────────────┘    └──────────────────┘    └────────────────────┘
 ```
 [Here](../qt-demo-launcher/README.md) you can find more details on QT-Launcher Backend app.
+[Here](../disp-tester/README.md) you can find more details on QT-Pattern Backend.
 
 ---
 
