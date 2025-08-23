@@ -137,7 +137,7 @@ private slots:
     {
         qDebug() << "Network command received:" << command;
 
-        QStringList parts = command.split(' ', Qt::SkipEmptyParts);
+        QStringList parts = command.split(' ', QString::SkipEmptyParts);
         if (parts.isEmpty()) {
             m_networkInterface->sendResponse("ERROR: Empty command");
             return;

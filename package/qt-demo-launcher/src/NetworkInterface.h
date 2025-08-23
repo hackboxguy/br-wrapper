@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QSocketNotifier>
 #include <QTimer>
+#include <QString>
 
 class NetworkInterface : public QObject
 {
