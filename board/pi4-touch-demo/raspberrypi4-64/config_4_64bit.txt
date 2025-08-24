@@ -31,6 +31,9 @@ hdmi_group=2
 hdmi_mode=87
 config_hdmi_boost=4
 
+#ds18b20 temp sensor on gpio8
+dtoverlay=w1-gpio,gpiopin=8,pullup=1
+
 #15.6(2.5k)
 hdmi_timings=2560 0 10 24 222 1440 0 11 3 38 0 0 0 62 0 261888000 4
 framebuffer_width=2560
