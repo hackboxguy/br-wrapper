@@ -2,11 +2,13 @@
 # Enhanced Color Measurement Script for Display Analysis
 # Optimized for Pi4 Buildroot with i1Display Pro
 # Dependencies: spotread (ArgyllCMS), optional: mplayclt, temperature/power sensors
+# NEW: DS18B20 temperature sensor support
 
 # Default configuration - can be overridden by config file or command line
 LOOPCOUNT="1"
 INTERVAL="none"
 TEMPERED="none"
+TEMP2="none"
 POWER="none"
 WFILE="none"
 RFILE="none"
@@ -51,6 +53,9 @@ JSON_SESSION_START=""
 JSON_MEASUREMENTS=""
 JSON_MEASUREMENT_COUNT=0
 
+# Global variables for temperature sensor tracking
+TEMP2_ENABLED="no"
+
 # Usage information
 USAGE="Enhanced Color Measurement Script for Pi4/Buildroot
 
@@ -90,7 +95,8 @@ PATTERN FILES (use 'none' to skip):
     --startupimg=FILE      Initial pattern to display
 
 HARDWARE OPTIONS:
-    --temp=BINARY          Temperature sensor binary name
+    --temp=BINARY/ds18b20  Temperature sensor: binary name or 'ds18b20' for DS18B20
+    --temp2=ds18b20/ID     Second temperature sensor: 'ds18b20' (first) or device ID (28-xxxxxxxxxxxx)
     --power=BINARY         Power measurement binary name
 
 ADVANCED OPTIONS:
@@ -102,12 +108,31 @@ ADVANCED OPTIONS:
     --timeout=S            Timeout for spotread command (default: 30)
     --usb-reset=yes/no     Auto reset USB device on failure (default: yes)
 
+TEMPERATURE SENSOR EXAMPLES:
+    # Use temper USB sensor (legacy)
+    $0 --temp=tempered --sensor-only=yes
+
+    # Use first available DS18B20 sensor
+    $0 --temp=ds18b20 --sensor-only=yes
+
+    # Use specific DS18B20 device as primary sensor
+    $0 --temp=28-3ce1e38018ca --sensor-only=yes
+
+    # Use two DS18B20 sensors
+    $0 --temp=ds18b20 --temp2=28-3ce1e38018ca --sensor-only=yes --format=json
+
+    # Mixed: temper primary, DS18B20 secondary
+    $0 --temp=tempered --temp2=ds18b20 --wfile=white.png
+
 EXAMPLES:
     # Just measure current sensor value (CSV format - default)
     $0 --sensor-only=yes --quiet=yes --noheader=yes
 
-    # JSON formatted single measurement
-    $0 --sensor-only=yes --format=json
+    # JSON formatted single measurement with DS18B20
+    $0 --sensor-only=yes --format=json --temp=ds18b20
+
+    # Two temperature sensors with JSON output
+    $0 --sensor-only=yes --format=json --temp=ds18b20 --temp2=28-3ce1e38018ca
 
     # Compact JSON for streaming/logging
     $0 --sensor-only=yes --format=json --compact=yes --loop=3
@@ -135,6 +160,97 @@ log_info() {
 
 log_debug() {
     [ "$DEBUG" = "yes" ] && [ "$QUIET" != "yes" ] && echo "DEBUG: $*" >&2
+}
+
+# DS18B20 temperature sensor functions
+find_first_ds18b20() {
+    for device in /sys/bus/w1/devices/28-*; do
+        if [ -d "$device" ] && [ -f "$device/temperature" ]; then
+            basename "$device"
+            return 0
+        fi
+    done
+    return 1
+}
+
+validate_ds18b20_device() {
+    local device_id="$1"
+    local device_path="/sys/bus/w1/devices/$device_id"
+
+    if [ -d "$device_path" ] && [ -f "$device_path/temperature" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+read_ds18b20_temperature() {
+    local device_spec="$1"  # "ds18b20", "first", or specific device ID like "28-xxxxxxxxxxxx"
+    local device_id=""
+
+    # Determine which device to use
+    case "$device_spec" in
+        "ds18b20"|"first")
+            device_id=$(find_first_ds18b20)
+            if [ $? -ne 0 ] || [ -z "$device_id" ]; then
+                echo "ERROR"
+                return 1
+            fi
+            ;;
+        28-*)
+            device_id="$device_spec"
+            if ! validate_ds18b20_device "$device_id"; then
+                echo "ERROR"
+                return 1
+            fi
+            ;;
+        *)
+            echo "ERROR"
+            return 1
+            ;;
+    esac
+
+    log_debug "Reading DS18B20 temperature from device: $device_id"
+
+    # Read temperature from device
+    local temp_file="/sys/bus/w1/devices/$device_id/temperature"
+    if [ -r "$temp_file" ]; then
+        local temp_millidegrees=$(cat "$temp_file" 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "$temp_millidegrees" ] && [ "$temp_millidegrees" -eq "$temp_millidegrees" ] 2>/dev/null; then
+            # Convert millidegrees to degrees with 3 decimal places
+            local temp_degrees=$(echo "scale=3; $temp_millidegrees/1000" | bc -l 2>/dev/null)
+            if [ $? -eq 0 ] && [ -n "$temp_degrees" ]; then
+                echo "$temp_degrees"
+                return 0
+            fi
+        fi
+    fi
+
+    echo "ERROR"
+    return 1
+}
+
+# Enhanced temperature reading function
+read_temperature() {
+    local temp_sensor="$1"
+    local tempered_path="$2"
+
+    case "$temp_sensor" in
+        "ds18b20")
+            read_ds18b20_temperature "ds18b20"
+            ;;
+        28-*)
+            read_ds18b20_temperature "$temp_sensor"
+            ;;
+        *)
+            # Legacy temper sensor
+            if [ -x "$tempered_path" ]; then
+                "$tempered_path" 2>/dev/null | awk '{print $4}' 2>/dev/null || echo "ERROR"
+            else
+                echo "N/A"
+            fi
+            ;;
+    esac
 }
 
 # JSON utility functions
@@ -165,18 +281,49 @@ format_json_measurement() {
     local current="${11}"
     local br_level="${12}"
     local is_error="${13:-no}"
+    local temp2="${14:-}"
 
     if [ "$COMPACT" = "yes" ]; then
         # Compact JSON format - single line
         if [ "$is_error" = "yes" ]; then
-            echo "{\"timestamp\":\"$(json_escape "$timestamp")\",\"color\":\"$(json_escape "$color")\",\"error\":\"measurement_failed\",\"temp\":\"$(json_escape "$temp")\",\"voltage\":\"$(json_escape "$voltage")\",\"current\":\"$(json_escape "$current")\",\"brightness\":$br_level}"
+            if [ "$TEMP2_ENABLED" = "yes" ]; then
+                echo "{\"timestamp\":\"$(json_escape "$timestamp")\",\"color\":\"$(json_escape "$color")\",\"error\":\"measurement_failed\",\"temp\":\"$(json_escape "$temp")\",\"temp2\":\"$(json_escape "$temp2")\",\"voltage\":\"$(json_escape "$voltage")\",\"current\":\"$(json_escape "$current")\",\"brightness\":$br_level}"
+            else
+                echo "{\"timestamp\":\"$(json_escape "$timestamp")\",\"color\":\"$(json_escape "$color")\",\"error\":\"measurement_failed\",\"temp\":\"$(json_escape "$temp")\",\"voltage\":\"$(json_escape "$voltage")\",\"current\":\"$(json_escape "$current")\",\"brightness\":$br_level}"
+            fi
         else
-            echo "{\"timestamp\":\"$(json_escape "$timestamp")\",\"color\":\"$(json_escape "$color")\",\"XYZ\":{\"X\":$x_val,\"Y\":$y_val,\"Z\":$z_val},\"Yxy\":{\"Y\":$yc_val,\"x\":$x_chr,\"y\":$y_chr},\"luminance\":$yc_val,\"temp\":\"$(json_escape "$temp")\",\"voltage\":\"$(json_escape "$voltage")\",\"current\":\"$(json_escape "$current")\",\"brightness\":$br_level}"
+            if [ "$TEMP2_ENABLED" = "yes" ]; then
+                echo "{\"timestamp\":\"$(json_escape "$timestamp")\",\"color\":\"$(json_escape "$color")\",\"XYZ\":{\"X\":$x_val,\"Y\":$y_val,\"Z\":$z_val},\"Yxy\":{\"Y\":$yc_val,\"x\":$x_chr,\"y\":$y_chr},\"luminance\":$yc_val,\"temp\":\"$(json_escape "$temp")\",\"temp2\":\"$(json_escape "$temp2")\",\"voltage\":\"$(json_escape "$voltage")\",\"current\":\"$(json_escape "$current")\",\"brightness\":$br_level}"
+            else
+                echo "{\"timestamp\":\"$(json_escape "$timestamp")\",\"color\":\"$(json_escape "$color")\",\"XYZ\":{\"X\":$x_val,\"Y\":$y_val,\"Z\":$z_val},\"Yxy\":{\"Y\":$yc_val,\"x\":$x_chr,\"y\":$y_chr},\"luminance\":$yc_val,\"temp\":\"$(json_escape "$temp")\",\"voltage\":\"$(json_escape "$voltage")\",\"current\":\"$(json_escape "$current")\",\"brightness\":$br_level}"
+            fi
         fi
     else
         # Pretty JSON format
         if [ "$is_error" = "yes" ]; then
-            cat << EOF
+            if [ "$TEMP2_ENABLED" = "yes" ]; then
+                cat << EOF
+    {
+      "timestamp": "$(json_escape "$timestamp")",
+      "measurement": {
+        "color": "$(json_escape "$color")",
+        "error": "measurement_failed"
+      },
+      "environment": {
+        "temperature": "$(json_escape "$temp")",
+        "temperature2": "$(json_escape "$temp2")",
+        "power": {
+          "voltage": "$(json_escape "$voltage")",
+          "current": "$(json_escape "$current")"
+        }
+      },
+      "settings": {
+        "brightness_level": $br_level
+      }
+    }
+EOF
+            else
+                cat << EOF
     {
       "timestamp": "$(json_escape "$timestamp")",
       "measurement": {
@@ -195,8 +342,43 @@ format_json_measurement() {
       }
     }
 EOF
+            fi
         else
-            cat << EOF
+            if [ "$TEMP2_ENABLED" = "yes" ]; then
+                cat << EOF
+    {
+      "timestamp": "$(json_escape "$timestamp")",
+      "measurement": {
+        "color": "$(json_escape "$color")",
+        "colorspace": {
+          "XYZ": {
+            "X": $x_val,
+            "Y": $y_val,
+            "Z": $z_val
+          },
+          "Yxy": {
+            "Y": $yc_val,
+            "x": $x_chr,
+            "y": $y_chr
+          },
+          "luminance_cd_m2": $yc_val
+        }
+      },
+      "environment": {
+        "temperature": "$(json_escape "$temp")",
+        "temperature2": "$(json_escape "$temp2")",
+        "power": {
+          "voltage": "$(json_escape "$voltage")",
+          "current": "$(json_escape "$current")"
+        }
+      },
+      "settings": {
+        "brightness_level": $br_level
+      }
+    }
+EOF
+            else
+                cat << EOF
     {
       "timestamp": "$(json_escape "$timestamp")",
       "measurement": {
@@ -227,6 +409,7 @@ EOF
       }
     }
 EOF
+            fi
         fi
     fi
 }
@@ -446,9 +629,10 @@ output_measurement() {
     local current="${11}"
     local br_level="${12}"
     local is_error="${13:-no}"
+    local temp2="${14:-}"
 
     if [ "$FORMAT" = "json" ]; then
-        local measurement_json=$(format_json_measurement "$timestamp" "$temp" "$color" "$x_val" "$y_val" "$z_val" "$yc_val" "$x_chr" "$y_chr" "$voltage" "$current" "$br_level" "$is_error")
+        local measurement_json=$(format_json_measurement "$timestamp" "$temp" "$color" "$x_val" "$y_val" "$z_val" "$yc_val" "$x_chr" "$y_chr" "$voltage" "$current" "$br_level" "$is_error" "$temp2")
 
         if [ "$COMPACT" = "yes" ]; then
             echo "$measurement_json"
@@ -456,23 +640,33 @@ output_measurement() {
             json_session_add_measurement "$measurement_json"
         fi
     else
-        # CSV format (original behavior)
-        echo "$timestamp,$temp,$color,$x_val,$y_val,$z_val,$yc_val,$x_chr,$y_chr,$voltage,$current,$br_level"
+        # CSV format with optional temp2 column
+        if [ "$TEMP2_ENABLED" = "yes" ]; then
+            echo "$timestamp,$temp,$color,$x_val,$y_val,$z_val,$yc_val,$x_chr,$y_chr,$voltage,$current,$br_level,$temp2"
+        else
+            echo "$timestamp,$temp,$color,$x_val,$y_val,$z_val,$yc_val,$x_chr,$y_chr,$voltage,$current,$br_level"
+        fi
     fi
 }
 
 # Simple sensor-only measurement (no pattern control)
 measure_sensor_only() {
     local temp="N/A"
+    local temp2="N/A"
     local voltage="N/A"
     local current="N/A"
 
     # Get timestamp
     local timestamp=$(date "+%m/%d/%y,%H:%M:%S")
 
-    # Measure temperature if sensor available
-    if [ -x "$TEMPEREDPATH" ]; then
-        temp=$("$TEMPEREDPATH" 2>/dev/null | awk '{print $4}' 2>/dev/null || echo "ERROR")
+    # Measure primary temperature if sensor available
+    temp=$(read_temperature "$TEMPERED" "$TEMPEREDPATH")
+    log_debug "Primary temperature: $temp"
+
+    # Measure secondary temperature if enabled
+    if [ "$TEMP2_ENABLED" = "yes" ]; then
+        temp2=$(read_temperature "$TEMP2" "")
+        log_debug "Secondary temperature: $temp2"
     fi
 
     # Measure power if available
@@ -523,11 +717,11 @@ measure_sensor_only() {
         local x_chr=$(echo "$measurement" | awk '{print $5}')
         local y_chr=$(echo "$measurement" | awk '{print $6}')
 
-        output_measurement "$timestamp" "$temp" "SENSOR" "$x_val" "$y_val" "$z_val" "$yc_val" "$x_chr" "$y_chr" "$voltage" "$current" "$BRLEVEL" "no"
+        output_measurement "$timestamp" "$temp" "SENSOR" "$x_val" "$y_val" "$z_val" "$yc_val" "$x_chr" "$y_chr" "$voltage" "$current" "$BRLEVEL" "no" "$temp2"
         return 0
     else
         log_error "Sensor measurement failed after $MAX_RETRIES attempts"
-        output_measurement "$timestamp" "$temp" "SENSOR" "ERROR" "ERROR" "ERROR" "ERROR" "ERROR" "ERROR" "$voltage" "$current" "$BRLEVEL" "yes"
+        output_measurement "$timestamp" "$temp" "SENSOR" "ERROR" "ERROR" "ERROR" "ERROR" "ERROR" "ERROR" "$voltage" "$current" "$BRLEVEL" "yes" "$temp2"
         return 1
     fi
 }
@@ -627,11 +821,15 @@ measure_color() {
     # Get timestamp
     local timestamp=$(date "+%m/%d/%y,%H:%M:%S")
 
-    # Measure temperature if sensor available
-    local temp="N/A"
-    if [ -x "$tempered_path" ]; then
-        temp=$("$tempered_path" 2>/dev/null | awk '{print $4}' 2>/dev/null || echo "ERROR")
-        log_debug "Temperature: $temp"
+    # Measure primary temperature if sensor available
+    local temp=$(read_temperature "$TEMPERED" "$tempered_path")
+    log_debug "Primary temperature: $temp"
+
+    # Measure secondary temperature if enabled
+    local temp2="N/A"
+    if [ "$TEMP2_ENABLED" = "yes" ]; then
+        temp2=$(read_temperature "$TEMP2" "")
+        log_debug "Secondary temperature: $temp2"
     fi
 
     # Measure power if available
@@ -685,7 +883,7 @@ measure_color() {
         local x_chr=$(echo "$measurement" | awk '{print $5}')
         local y_chr=$(echo "$measurement" | awk '{print $6}')
 
-        output_measurement "$timestamp" "$temp" "$color_prefix" "$x_val" "$y_val" "$z_val" "$yc_val" "$x_chr" "$y_chr" "$voltage" "$current" "$br_level" "no"
+        output_measurement "$timestamp" "$temp" "$color_prefix" "$x_val" "$y_val" "$z_val" "$yc_val" "$x_chr" "$y_chr" "$voltage" "$current" "$br_level" "no" "$temp2"
 
         # Display measurement metadata on disp-tester if successful
         display_measurement_metadata "$x_val" "$y_val" "$z_val"
@@ -693,7 +891,7 @@ measure_color() {
         return 0
     else
         log_error "All measurement attempts failed for $color_prefix"
-        output_measurement "$timestamp" "$temp" "$color_prefix" "ERROR" "ERROR" "ERROR" "ERROR" "ERROR" "ERROR" "$voltage" "$current" "$br_level" "yes"
+        output_measurement "$timestamp" "$temp" "$color_prefix" "ERROR" "ERROR" "ERROR" "ERROR" "ERROR" "ERROR" "$voltage" "$current" "$br_level" "yes" "$temp2"
         return 1
     fi
 }
@@ -720,6 +918,7 @@ parse_arguments() {
             --quiet=*) QUIET="${arg#*=}"; noargs="no" ;;
             --interval=*) INTERVAL="${arg#*=}"; noargs="no" ;;
             --temp=*) TEMPERED="${arg#*=}"; noargs="no" ;;
+            --temp2=*) TEMP2="${arg#*=}"; TEMP2_ENABLED="yes"; noargs="no" ;;
             --power=*) POWER="${arg#*=}"; noargs="no" ;;
             --wfile=*) WFILE="${arg#*=}"; noargs="no" ;;
             --rfile=*) RFILE="${arg#*=}"; noargs="no" ;;
@@ -771,6 +970,19 @@ parse_arguments() {
         mplayclt|disp-tester) ;;
         *) log_error "Invalid pattern source: $PATTERN_SOURCE (must be 'mplayclt' or 'disp-tester')"; exit 1 ;;
     esac
+
+    # Validate DS18B20 specific device IDs
+    if [ "$TEMPERED" != "none" ] && [ "$TEMPERED" != "ds18b20" ] && ! echo "$TEMPERED" | grep -q "^28-"; then
+        # It's a legacy temper sensor name, keep as is
+        :
+    fi
+
+    if [ "$TEMP2_ENABLED" = "yes" ]; then
+        if [ "$TEMP2" != "ds18b20" ] && ! echo "$TEMP2" | grep -q "^28-"; then
+            log_error "Invalid temp2 value: $TEMP2 (must be 'ds18b20' or device ID like '28-xxxxxxxxxxxx')"
+            exit 1
+        fi
+    fi
 }
 
 # Validate configuration and setup paths
@@ -780,10 +992,35 @@ setup_environment() {
     local powerpath="${MYPATH}/binaries/${POWER}"
     local mplayclt="${MYPATH}/brbox/output/bin/mplayclt"
 
-    # Validate executables
-    [ ! -x "$temperedpath" ] && temperedpath="none"
+    # Validate executables (only for non-DS18B20 temperature sensors)
+    case "$TEMPERED" in
+        "ds18b20"|28-*)
+            temperedpath="ds18b20"  # Special marker for DS18B20
+            ;;
+        *)
+            [ ! -x "$temperedpath" ] && temperedpath="none"
+            ;;
+    esac
+
     [ ! -x "$powerpath" ] && powerpath="none"
     [ ! -x "$mplayclt" ] && mplayclt="none"
+
+    # Check for bc command if DS18B20 sensors are being used
+    local need_bc="no"
+    if [ "$TEMPERED" = "ds18b20" ] || echo "$TEMPERED" | grep -q "^28-"; then
+        need_bc="yes"
+    fi
+    if [ "$TEMP2_ENABLED" = "yes" ] && ([ "$TEMP2" = "ds18b20" ] || echo "$TEMP2" | grep -q "^28-"); then
+        need_bc="yes"
+    fi
+
+    if [ "$need_bc" = "yes" ]; then
+        if ! check_command "bc"; then
+            log_error "bc command required for DS18B20 temperature conversion but not found"
+            log_info "Please install bc package: apt-get install bc (or equivalent for your system)"
+            exit 1
+        fi
+    fi
 
     # Skip pattern validation in sensor-only mode
     if [ "$SENSORONLY" = "yes" ]; then
@@ -831,6 +1068,11 @@ setup_environment() {
         MFILEPATH="$mfilepath"
         YFILEPATH="$yfilepath"
     fi
+
+    # Set global variables
+    TEMPEREDPATH="$temperedpath"
+    POWERPATH="$powerpath"
+    MPLAYCLT="$mplayclt"
 }
 
 # Main execution starts here
@@ -862,7 +1104,11 @@ main() {
     if [ "$SENSORONLY" = "yes" ]; then
         log_info "Sensor-only mode - taking measurements"
         if [ "$FORMAT" = "csv" ] && [ "$NOHEADER" = "no" ]; then
-            echo "DATE,TIME,temp,Sampled-Color,X,Y,Z,Y,x,y,voltage,current,brightnesslevel"
+            if [ "$TEMP2_ENABLED" = "yes" ]; then
+                echo "DATE,TIME,temp,Sampled-Color,X,Y,Z,Y,x,y,voltage,current,brightnesslevel,temp2"
+            else
+                echo "DATE,TIME,temp,Sampled-Color,X,Y,Z,Y,x,y,voltage,current,brightnesslevel"
+            fi
         fi
 
         # Sensor-only measurement loop
@@ -907,7 +1153,11 @@ main() {
 
     # Print CSV header (only for CSV format)
     if [ "$FORMAT" = "csv" ] && [ "$NOHEADER" = "no" ]; then
-        echo "DATE,TIME,temp,Sampled-Color,X,Y,Z,Y,x,y,voltage,current,brightnesslevel"
+        if [ "$TEMP2_ENABLED" = "yes" ]; then
+            echo "DATE,TIME,temp,Sampled-Color,X,Y,Z,Y,x,y,voltage,current,brightnesslevel,temp2"
+        else
+            echo "DATE,TIME,temp,Sampled-Color,X,Y,Z,Y,x,y,voltage,current,brightnesslevel"
+        fi
     fi
 
     # Main measurement loop
