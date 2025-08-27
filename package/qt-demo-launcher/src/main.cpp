@@ -20,6 +20,7 @@
 #include <QFile>
 #include <QPixmap>
 #include <QIcon>
+#include <QFileSystemWatcher>
 #include "NetworkInterface.h"
 
 struct ButtonConfig {
@@ -87,13 +88,15 @@ class TouchAppLauncher : public QMainWindow
 
 public:
     TouchAppLauncher(const QString &configPath = QString(), int networkPort = 8081, QWidget *parent = nullptr)
-        : QMainWindow(parent), m_configPath(configPath), m_networkPort(networkPort), 
-          m_networkInterface(nullptr), m_runningProcess(nullptr), m_runningAppId("")
+      : QMainWindow(parent), m_configPath(configPath), m_networkPort(networkPort),
+        m_networkInterface(nullptr), m_runningProcess(nullptr), m_runningAppId(""),
+        m_configWatcher(nullptr), m_currentConfigFile("")
     {
         loadConfig();
         setupUI();
         validatePrograms();
         setupNetworkInterface();
+        setupConfigWatcher();
     }
 
 private slots:
@@ -133,6 +136,88 @@ private slots:
         }
     }
 
+    // Add file monitoring setup method:
+    void setupConfigWatcher()
+    {
+	    if (!m_currentConfigFile.isEmpty()) {
+		m_configWatcher = new QFileSystemWatcher(this);
+		m_configWatcher->addPath(m_currentConfigFile);
+		connect(m_configWatcher, &QFileSystemWatcher::fileChanged,
+			this, &TouchAppLauncher::reloadConfiguration);
+		qDebug() << "File watcher setup for:" << m_currentConfigFile;
+	    } else {
+		qDebug() << "No config file to monitor - using defaults";
+	    }
+    }
+
+    // Add configuration reload method:
+    void reloadConfiguration()
+    {
+	    qDebug() << "Config file changed, reloading...";
+
+	    // Reload configuration from file
+	    loadConfig();
+
+	    // Refresh the UI with new config
+	    refreshUI();
+
+	    // Re-add file to watcher (some systems remove it after change)
+	    if (m_configWatcher && !m_currentConfigFile.isEmpty()) {
+		if (!m_configWatcher->files().contains(m_currentConfigFile)) {
+		    m_configWatcher->addPath(m_currentConfigFile);
+		    qDebug() << "Re-added file to watcher:" << m_currentConfigFile;
+		}
+	    }
+
+	    qDebug() << "Configuration reload complete";
+    }
+
+    // Add UI refresh method:
+    void refreshUI()
+    {
+	    QWidget *centralWidget = this->centralWidget();
+	    if (!centralWidget) return;
+
+	    QVBoxLayout *mainLayout = qobject_cast<QVBoxLayout*>(centralWidget->layout());
+	    if (!mainLayout) return;
+
+	    // Remove existing button layout (keep title widget if present)
+	    // Layout structure: [TitleWidget] [ButtonLayout]
+	    while (mainLayout->count() > 1) {
+		QLayoutItem *item = mainLayout->takeAt(1);
+		deleteLayoutRecursively(item);
+	    }
+
+	    // Create new button layout with current config
+	    QLayout *buttonLayout = createButtonLayout();
+	    if (buttonLayout) {
+		mainLayout->addLayout(buttonLayout);
+	    }
+
+	    // Update window size if changed
+	    setMinimumSize(m_config.windowWidth, m_config.windowHeight);
+
+	    qDebug() << "UI refresh complete";
+    }
+
+    // Add recursive layout deletion helper:
+    void deleteLayoutRecursively(QLayoutItem *item)
+    {
+	    if (!item) return;
+
+	    if (QLayout *layout = item->layout()) {
+		// Recursively delete child layouts
+		while (QLayoutItem *child = layout->takeAt(0)) {
+		    deleteLayoutRecursively(child);
+		}
+	    } else if (QWidget *widget = item->widget()) {
+		// Delete widget
+		widget->deleteLater();
+	    }
+
+	    delete item;
+    }
+
     void handleNetworkCommand(const QString &command)
     {
         qDebug() << "Network command received:" << command;
@@ -165,12 +250,44 @@ private slots:
         } else if (cmd == "get-running-app") {
             QString runningApp = getRunningApp();
             m_networkInterface->sendResponse(runningApp);
+        }
+
+	// NEW COMMANDS FOR RUNTIME CONTROL:
+        else if (cmd == "reload-config") {
+        if (!m_currentConfigFile.isEmpty()) {
+            reloadConfiguration();
+            m_networkInterface->sendResponse("OK");
+        } else {
+            m_networkInterface->sendResponse("ERROR: no-config-file");
+        }
+        } else if (cmd == "set-button-enabled" && parts.size() >= 3) {
+        QString buttonId = parts[1];
+        bool enabled = (parts[2].toLower() == "true");
+        bool result = setButtonEnabled(buttonId, enabled);
+        if (result) {
+            m_networkInterface->sendResponse("OK");
+        } else {
+            m_networkInterface->sendResponse("ERROR: button-not-found");
+        }
+        } else if (cmd == "get-button-status" && parts.size() >= 2) {
+        QString buttonId = parts[1];
+        QString status = getButtonStatus(buttonId);
+        m_networkInterface->sendResponse(status);
+        } else if (cmd == "list-all-buttons") {
+        QStringList allButtons;
+        for (const ButtonConfig &config : m_config.buttons) {
+            QString status = config.enabled ? "enabled" : "disabled";
+            allButtons << QString("%1:%2").arg(config.id, status);
+        }
+        m_networkInterface->sendResponse(allButtons.join(","));
         } else {
             m_networkInterface->sendResponse("ERROR: Unknown command");
         }
     }
 
 private:
+    QFileSystemWatcher *m_configWatcher;
+    QString m_currentConfigFile;
     LauncherConfig m_config;
     QString m_configPath;
     int m_networkPort;
@@ -279,7 +396,7 @@ private:
             // If app doesn't respond to SIGTERM, force kill it
             qWarning() << "App didn't respond to SIGTERM, force killing:" << m_runningAppId;
             m_runningProcess->kill();
-            
+
             // Wait another 2 seconds for force kill to complete
             if (!m_runningProcess->waitForFinished(2000)) {
                 qWarning() << "Failed to force kill app:" << m_runningAppId;
@@ -291,7 +408,7 @@ private:
 
         // Note: Process cleanup and state reset happens automatically
         // via the finished() signal handler we already connected in launchAppAsync()
-        
+
         return true;
     }
 
@@ -321,11 +438,13 @@ private:
             qWarning() << "  - Command line argument:" << (m_configPath.isEmpty() ? "none" : m_configPath);
             qWarning() << "  - /etc/launcher.json";
             qWarning() << "  - ./launcher.json";
+            m_currentConfigFile = "";
             loadDefaultConfig();
             return;
         }
 
         qDebug() << "Loading configuration from:" << configFile;
+        m_currentConfigFile = configFile;
 
         QFile file(configFile);
         if (!file.open(QIODevice::ReadOnly)) {
@@ -826,6 +945,33 @@ private:
             qDebug() << "Created /Pictures directory";
         }
     }
+
+    // Add button enable/disable method:
+    bool setButtonEnabled(const QString &buttonId, bool enabled)
+    {
+	for (ButtonConfig &btn : m_config.buttons) {
+		if (btn.id == buttonId) {
+			if (btn.enabled != enabled) {
+				btn.enabled = enabled;
+				qDebug() << "Button" << buttonId << (enabled ? "enabled" : "disabled");
+				refreshUI();
+			}
+			return true;
+		}
+	}
+	qWarning() << "Button not found:" << buttonId;
+	return false;
+    }
+    // Add button status query method:
+    QString getButtonStatus(const QString &buttonId)
+    {
+	for (const ButtonConfig &btn : m_config.buttons) {
+		if (btn.id == buttonId) {
+			return btn.enabled ? "enabled" : "disabled";
+		}
+	}
+	return "ERROR: button-not-found";
+    }
 };
 
 int main(int argc, char *argv[])
@@ -904,7 +1050,11 @@ int main(int argc, char *argv[])
         qDebug() << "  start-app <app-id>          # Start specific application";
         qDebug() << "  stop-app                    # Stop currently running application";
         qDebug() << "  get-running-app             # Get currently running app or 'none'";
-        return 0;
+	qDebug() << "  reload-config               # Reload JSON configuration from file";
+	qDebug() << "  set-button-enabled <id> <true|false>  # Enable/disable button";
+	qDebug() << "  get-button-status <id>      # Get button status (enabled/disabled)";
+	qDebug() << "  list-all-buttons            # List all buttons with their status";
+	return 0;
     }
 
     // Create and show launcher
