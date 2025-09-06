@@ -605,7 +605,7 @@ private:
 
         // Qt5 framebuffer environment for touch apps
         env.insert("QT_QPA_PLATFORM", "linuxfb");
-        env.insert("QT_QPA_FB_HIDECURSOR", "1");
+        //env.insert("QT_QPA_FB_HIDECURSOR", "1");
         env.insert("QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS", "/dev/input/event0");
         env.insert("QT_QPA_FONTDIR", "/usr/share/fonts/dejavu/");
         env.insert("XDG_RUNTIME_DIR", "/tmp/runtime-root");
