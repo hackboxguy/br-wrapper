@@ -1,65 +1,33 @@
+# Base configuration shared by all display types
 start_file=start4.elf
 fixup_file=fixup4.dat
-
 kernel=Image
-
-# Disable overscan assuming the display supports displaying the full resolution
-# If the text shown on the screen disappears off the edge, comment this out
+dtparam=audio=on
+camera_auto_detect=1
+auto_initramfs=1
 disable_overscan=1
-
-# How much memory in MB to assign to the GPU on Pi models having
-# 256, 512 or 1024 MB total memory
-gpu_mem_256=200
-gpu_mem_512=200
-gpu_mem_1024=200
-
-# fixes rpi (3B, 3B+, 3A+, 4B and Zero W) ttyAMA0 serial console
-dtoverlay=miniuart-bt
-
-# enable autoprobing of Bluetooth driver without need of hciattach/btattach
-dtparam=krnbt=on
-
-# enable 64bits support
 arm_64bit=1
 arm_boost=1
-#dtoverlay=i2c1=on
-#dtparam=i2c_arm=on
 dtoverlay=vc4-fkms-v3d
 disable_fw_kms_setup=1
+max_framebuffers=2
 
-config_hdmi_boost=4
+display_auto_detect=1
 
-#ds18b20 temp sensor on gpio8
-dtoverlay=w1-gpio,gpiopin=8,pullup=1
+[cm4]
+otg_mode=1
+[cm5]
+dtoverlay=dwc2,dr_mode=host
+[all]
+dtoverlay=w1-gpio,gpiopin=8,pullup=1 #ds18b20 1wire-temp-sensor on gpio8
 enable_uart=1
 init_uart_clock=16000000
 dtoverlay=gpio-key,gpio=22,active_low=1,gpio_pull=up,keycode=105   # KEY_LEFT
 dtoverlay=gpio-key,gpio=23,active_low=1,gpio_pull=up,keycode=106   # KEY_RIGHT
 dtoverlay=gpio-key,gpio=24,active_low=1,gpio_pull=up,keycode=103   # KEY_UP
 dtoverlay=gpio-key,gpio=25,active_low=1,gpio_pull=up,keycode=108   # KEY_DOWN
-dtoverlay=gpio-key,gpio=13,active_low=1,gpio_pull=up,keycode=28     # KEY_ENTER
-dtoverlay=rotary-encoder,pin_a=12,pin_b=6,relative_axis=1
+dtoverlay=gpio-key,gpio=13,active_low=1,gpio_pull=up,keycode=28    # KEY_ENTER
+dtoverlay=rotary-encoder,pin_a=12,pin_b=6,relative_axis=1          # rotary-encoder
 dtparam=i2c=on
 dtparam=i2c_arm_baudrate=400000
 dtoverlay=i2c3,pins_4_5,baudrate=400000
-
-#edid
-#display_auto_detect=1 #for edid - enable this line
-hdmi_group=2 #for edid - disable this line
-hdmi_mode=87 #for edid - disable this line
-
-#15.6(2.5k)
-hdmi_timings=2560 0 10 24 222 1440 0 11 3 38 0 0 0 62 0 261888000 4
-framebuffer_width=2560
-framebuffer_height=1440
-max_framebuffer_width=2560
-max_framebuffer_height=1440
-hdmi_pixel_freq_limit=261888000
-
-#ej-14.6(fullHD)
-#hdmi_timings=1920 0 76 22 10 1080 0 28 4 10 0 0 0 60 0 136687000 3
-#framebuffer_width=1920
-#framebuffer_height=1080
-#max_framebuffer_width=1920
-#max_framebuffer_height=1080
-#hdmi_pixel_freq_limit=136687000
