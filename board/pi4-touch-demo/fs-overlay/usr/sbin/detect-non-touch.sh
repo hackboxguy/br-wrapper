@@ -108,12 +108,24 @@ extract_y_value() {
     echo "$1" | tail -1 | cut -d',' -f5
 }
 
+# Function to cleanup any hanging measurement processes
+cleanup_measurement_processes() {
+    # Kill any existing spotread processes
+    pkill -f "spotread" 2>/dev/null || true
+    # Kill any existing measure-display.sh processes
+    pkill -f "measure-display.sh" 2>/dev/null || true
+    # Wait a moment for processes to terminate
+    sleep 1
+}
+
 # Function to measure display without touch with retry logic
 measure_display_only() {
     local attempt=0
     while [ "$attempt" -le "$RETRY_COUNT" ]; do
         if [ "$attempt" -gt 0 ]; then
             echo "    Measurement retry attempt $attempt/$RETRY_COUNT"
+            # Cleanup any hanging processes before retry
+            cleanup_measurement_processes
         fi
         
         MEASUREMENT=$($MEASURE_DISPLAY_CMD --measureonly=yes --sensor-only=yes --noheader=yes 2>/dev/null)
@@ -124,7 +136,7 @@ measure_display_only() {
         
         if [ "$attempt" -lt "$RETRY_COUNT" ]; then
             echo "    Measurement failed - retrying..."
-            sleep 1
+            sleep 2
         fi
         
         attempt=$((attempt + 1))
@@ -152,6 +164,8 @@ measure_after_touch() {
     while [ "$attempt" -le "$RETRY_COUNT" ]; do
         if [ "$attempt" -gt 0 ]; then
             echo "    Measurement retry attempt $attempt/$RETRY_COUNT"
+            # Cleanup any hanging processes before retry
+            cleanup_measurement_processes
         fi
         
         MEASUREMENT=$($MEASURE_DISPLAY_CMD --measureonly=yes --sensor-only=yes --noheader=yes 2>/dev/null)
@@ -162,7 +176,7 @@ measure_after_touch() {
         
         if [ "$attempt" -lt "$RETRY_COUNT" ]; then
             echo "    Measurement failed - retrying..."
-            sleep 1
+            sleep 2
         fi
         
         attempt=$((attempt + 1))
@@ -190,7 +204,8 @@ echo "========================================="
 # Main detection loop
 CURRENT_CYCLE=1
 while [ "$CURRENT_CYCLE" -le "$LOOP_COUNT" ]; do
-    echo "Cycle $CURRENT_CYCLE/$LOOP_COUNT:"
+    TIMESTAMP=$(date '+%m/%d/%y %H:%M:%S')
+    echo "[$TIMESTAMP] Cycle $CURRENT_CYCLE/$LOOP_COUNT:"
     
     # Power off the display
     echo "  Powering off display..."
