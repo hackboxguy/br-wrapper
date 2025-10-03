@@ -1,11 +1,12 @@
 #!/bin/sh
 
 # Automotive touch display non-responsive detection script
-# Usage: ./detect-non-touch.sh --loop=1000 --waitsec=30 --ythreshold=15 --retry=2 --toolspath=/path/to/tools/
+# Usage: ./detect-non-touch.sh --loop=1000 --onwaitsec=30 --offwaitsec=30 --ythreshold=15 --retry=2 --toolspath=/path/to/tools/
 
 # Default values
 LOOP_COUNT=100
-WAIT_SEC=30
+ON_WAIT_SEC=30
+OFF_WAIT_SEC=30
 Y_THRESHOLD=15
 CHECK_DISPLAY_STATUS="no"
 TOOLS_PATH=""
@@ -16,14 +17,15 @@ if [ $# -eq 0 ]; then
     echo "Usage: $0 [OPTIONS]"
     echo "Options:"
     echo "  --loop=N                    Number of power cycles (default: 100)"
-    echo "  --waitsec=N                Wait seconds for off/on cycles (default: 30)"
+    echo "  --onwaitsec=N              Wait seconds after display power ON (default: 30)"
+    echo "  --offwaitsec=N             Wait seconds after display power OFF (default: 30)"
     echo "  --ythreshold=N             Minimum Y luminance delta for responsive touch (default: 15)"
     echo "  --retry=N                  Number of retry attempts for touch (default: 2)"
     echo "  --toolspath=PATH           Path prefix for tools (default: current script directory)"
     echo "  --check-display-on-status=yes/no  Check display power status (placeholder, default: no)"
     echo "  --help, -h                 Show this help message"
     echo ""
-    echo "Example: $0 --loop=1000 --waitsec=30 --ythreshold=15"
+    echo "Example: $0 --loop=1000 --onwaitsec=30 --offwaitsec=15 --ythreshold=15"
     exit 0
 fi
 
@@ -33,8 +35,18 @@ for arg in "$@"; do
         --loop=*)
             LOOP_COUNT="${arg#*=}"
             ;;
+        --onwaitsec=*)
+            ON_WAIT_SEC="${arg#*=}"
+            ;;
+        --offwaitsec=*)
+            OFF_WAIT_SEC="${arg#*=}"
+            ;;
         --waitsec=*)
+            # Backward compatibility: if --waitsec is used, set both ON and OFF to same value
             WAIT_SEC="${arg#*=}"
+            ON_WAIT_SEC="$WAIT_SEC"
+            OFF_WAIT_SEC="$WAIT_SEC"
+            echo "Warning: --waitsec is deprecated, use --onwaitsec and --offwaitsec instead"
             ;;
         --ythreshold=*)
             Y_THRESHOLD="${arg#*=}"
@@ -52,7 +64,8 @@ for arg in "$@"; do
             echo "Usage: $0 [OPTIONS]"
             echo "Options:"
             echo "  --loop=N                    Number of power cycles (default: 100)"
-            echo "  --waitsec=N                Wait seconds for off/on cycles (default: 30)"
+            echo "  --onwaitsec=N              Wait seconds after display power ON (default: 30)"
+            echo "  --offwaitsec=N             Wait seconds after display power OFF (default: 30)"
             echo "  --ythreshold=N             Minimum Y luminance delta for responsive touch (default: 15)"
             echo "  --retry=N                  Number of retry attempts for touch (default: 2)"
             echo "  --toolspath=PATH           Path prefix for tools (default: current script directory)"
@@ -74,8 +87,13 @@ if ! echo "$LOOP_COUNT" | grep -q '^[0-9]\+$' || [ "$LOOP_COUNT" -le 0 ]; then
     exit 1
 fi
 
-if ! echo "$WAIT_SEC" | grep -q '^[0-9]\+$' || [ "$WAIT_SEC" -le 0 ]; then
-    echo "Error: wait seconds must be a positive integer"
+if ! echo "$ON_WAIT_SEC" | grep -q '^[0-9]\+$' || [ "$ON_WAIT_SEC" -le 0 ]; then
+    echo "Error: ON wait seconds must be a positive integer"
+    exit 1
+fi
+
+if ! echo "$OFF_WAIT_SEC" | grep -q '^[0-9]\+$' || [ "$OFF_WAIT_SEC" -le 0 ]; then
+    echo "Error: OFF wait seconds must be a positive integer"
     exit 1
 fi
 
@@ -127,21 +145,21 @@ measure_display_only() {
             # Cleanup any hanging processes before retry
             cleanup_measurement_processes
         fi
-        
+
         MEASUREMENT=$($MEASURE_DISPLAY_CMD --measureonly=yes --sensor-only=yes --noheader=yes 2>/dev/null)
         if [ $? -eq 0 ] && [ -n "$MEASUREMENT" ]; then
             echo "$MEASUREMENT"
             return 0
         fi
-        
+
         if [ "$attempt" -lt "$RETRY_COUNT" ]; then
             echo "    Measurement failed - retrying..."
             sleep 2
         fi
-        
+
         attempt=$((attempt + 1))
     done
-    
+
     echo "Error: Failed to measure display after $RETRY_COUNT retries"
     return 1
 }
@@ -150,15 +168,15 @@ measure_display_only() {
 measure_after_touch() {
     # Wait 2 seconds before touch (as in your working sequence)
     sleep 2
-    
+
     # Generate touch event with proper timing
     gpioset 0 27=1
     sleep 1
     gpioset 0 27=0
-    
+
     # Wait 3 seconds after touch before measuring
     sleep 3
-    
+
     # Measure display with retry logic
     local attempt=0
     while [ "$attempt" -le "$RETRY_COUNT" ]; do
@@ -167,21 +185,21 @@ measure_after_touch() {
             # Cleanup any hanging processes before retry
             cleanup_measurement_processes
         fi
-        
+
         MEASUREMENT=$($MEASURE_DISPLAY_CMD --measureonly=yes --sensor-only=yes --noheader=yes 2>/dev/null)
         if [ $? -eq 0 ] && [ -n "$MEASUREMENT" ]; then
             echo "$MEASUREMENT"
             return 0
         fi
-        
+
         if [ "$attempt" -lt "$RETRY_COUNT" ]; then
             echo "    Measurement failed - retrying..."
             sleep 2
         fi
-        
+
         attempt=$((attempt + 1))
     done
-    
+
     echo "Error: Failed to measure display after $RETRY_COUNT retries"
     return 1
 }
@@ -195,7 +213,7 @@ check_display_power() {
 }
 
 echo "Starting touch responsiveness detection..."
-echo "Parameters: loop=$LOOP_COUNT, wait=${WAIT_SEC}s, threshold=$Y_THRESHOLD, retry=$RETRY_COUNT"
+echo "Parameters: loop=$LOOP_COUNT, onwait=${ON_WAIT_SEC}s, offwait=${OFF_WAIT_SEC}s, threshold=$Y_THRESHOLD, retry=$RETRY_COUNT"
 if [ -n "$TOOLS_PATH" ]; then
     echo "Tools path: $TOOLS_PATH"
 fi
@@ -206,30 +224,32 @@ CURRENT_CYCLE=1
 while [ "$CURRENT_CYCLE" -le "$LOOP_COUNT" ]; do
     TIMESTAMP=$(date '+%m/%d/%y %H:%M:%S')
     echo "[$TIMESTAMP] Cycle $CURRENT_CYCLE/$LOOP_COUNT:"
-    
+
     # Power off the display
     echo "  Powering off display..."
     if ! $USB_RELAY_CMD /dev/ttyUSB0 off; then
         echo "Error: Failed to power off display"
         exit 1
     fi
-    
+
     # Wait for power off stabilization
-    sleep "$WAIT_SEC"
-    
+    echo "  Waiting ${OFF_WAIT_SEC}s for power OFF stabilization..."
+    sleep "$OFF_WAIT_SEC"
+
     # Power on the display
     echo "  Powering on display..."
     if ! $USB_RELAY_CMD /dev/ttyUSB0 on; then
         echo "Error: Failed to power on display"
         exit 1
     fi
-    
+
     # Wait for power on stabilization
-    sleep "$WAIT_SEC"
-    
+    echo "  Waiting ${ON_WAIT_SEC}s for power ON stabilization..."
+    sleep "$ON_WAIT_SEC"
+
     # Check display power status (placeholder)
     check_display_power
-    
+
     # First measurement (before touch - should be bright initially)
     echo "  Taking measurement before touch..."
     MEASUREMENT1=$(measure_display_only)
@@ -237,36 +257,36 @@ while [ "$CURRENT_CYCLE" -le "$LOOP_COUNT" ]; do
         exit 1
     fi
     Y1=$(extract_y_value "$MEASUREMENT1")
-    
+
     # Second measurement with retry logic (after touch - should be dimmer if responsive)
     echo "  Taking measurement after touch..."
     RETRY_ATTEMPT=0
     IS_RESPONSIVE="no"
-    
+
     while [ "$RETRY_ATTEMPT" -le "$RETRY_COUNT" ] && [ "$IS_RESPONSIVE" = "no" ]; do
         if [ "$RETRY_ATTEMPT" -gt 0 ]; then
             echo "    Retry attempt $RETRY_ATTEMPT/$RETRY_COUNT"
         fi
-        
+
         MEASUREMENT2=$(measure_after_touch)
         if [ $? -ne 0 ]; then
             exit 1
         fi
         Y2=$(extract_y_value "$MEASUREMENT2")
-        
+
         # Calculate delta using awk for floating point arithmetic
         DELTA=$(echo "$Y1 $Y2" | awk '{printf "%.6f", $1 - $2}')
-        
-        # Check if touch is responsive using awk for floating point comparison  
+
+        # Check if touch is responsive using awk for floating point comparison
         IS_RESPONSIVE=$(echo "$DELTA $Y_THRESHOLD" | awk '{if ($1 >= $2) print "yes"; else print "no"}')
-        
+
         if [ "$IS_RESPONSIVE" = "no" ]; then
             echo "    Delta=$DELTA (< $Y_THRESHOLD) - attempting retry..."
         fi
-        
+
         RETRY_ATTEMPT=$((RETRY_ATTEMPT + 1))
     done
-    
+
     if [ "$IS_RESPONSIVE" = "yes" ]; then
         echo "  Result: Y1=$Y1, Y2=$Y2, Delta=$DELTA - RESPONSIVE"
     else
@@ -276,10 +296,10 @@ while [ "$CURRENT_CYCLE" -le "$LOOP_COUNT" ]; do
         echo "Touch display failed to respond properly after $RETRY_COUNT retries."
         exit 1
     fi
-    
+
     # Wait 3 seconds at end of cycle (matching your sequence)
     sleep 3
-    
+
     echo ""
     CURRENT_CYCLE=$((CURRENT_CYCLE + 1))
 done
