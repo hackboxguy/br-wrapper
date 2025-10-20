@@ -164,7 +164,7 @@
         "text": "Video Player",
         "icon": "/usr/share/icons/video-large.png",
         "program": "/usr/bin/qt-mpv-wrapper.sh",
-        "arguments": ["/Videos", "--port", "8082"],
+        "arguments": ["/Videos", "--port", "8084"],
         "working_directory": "/tmp",
         "position": {
           "row": 1,
