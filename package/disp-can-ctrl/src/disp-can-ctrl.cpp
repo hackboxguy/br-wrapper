@@ -1,15 +1,16 @@
 //Display CAN Control daemon with TCP and CAN bus interface
-//TCP Commands (default port 8082, configurable via --port):
-//echo "pattern red" | nc -q 0 127.0.0.1 8082
-//echo "pattern green" | nc -q 0 127.0.0.1 8082
-//echo "pattern blue" | nc -q 0 127.0.0.1 8082
-//echo "pattern colorbar" | nc -q 0 127.0.0.1 8082
-//echo "pattern home" | nc -q 0 127.0.0.1 8082
-//echo "get-pattern" | nc -q 0 127.0.0.1 8082
-//echo "get-hwpartnum" | nc -q 0 127.0.0.1 8082
-//echo "set-hwpartnum 1234567890ABCDEF" | nc -q 0 127.0.0.1 8082
-//Pattern backend default: 127.0.0.1:8080 (configurable via --pattern_backend)
+//TCP Commands (default port 8085, configurable via --port):
+//echo "pattern red" | nc -q 0 127.0.0.1 8085
+//echo "pattern green" | nc -q 0 127.0.0.1 8085
+//echo "pattern blue" | nc -q 0 127.0.0.1 8085
+//echo "pattern colorbar" | nc -q 0 127.0.0.1 8085
+//echo "pattern home" | nc -q 0 127.0.0.1 8085
+//echo "get-pattern" | nc -q 0 127.0.0.1 8085
+//echo "get-hwpartnum" | nc -q 0 127.0.0.1 8085
+//echo "set-hwpartnum 1234567890ABCDEF" | nc -q 0 127.0.0.1 8085
+//Pattern backend default: 127.0.0.1:8082 (configurable via --pattern_backend)
 
+#include "config.h"
 #include <iostream>
 #include <thread>
 #include <atomic>
@@ -38,16 +39,16 @@ using namespace std;
 // Global running flag
 std::atomic<bool> running(true);
 
-// Default TCP port
-int tcp_port = 8082;
+// Default TCP port (configurable via --port)
+int tcp_port = DEFAULT_TCP_PORT;
 
-// Pattern backend configuration
-std::string pattern_backend_ip = "127.0.0.1";
-int pattern_backend_port = 8080;
+// Pattern backend configuration (configurable via --pattern_backend)
+std::string pattern_backend_ip = DEFAULT_PATTERN_BACKEND_IP;
+int pattern_backend_port = DEFAULT_PATTERN_BACKEND_PORT;
 
-// Launcher backend configuration
-std::string launcher_backend_ip = "";
-int launcher_backend_port = 8081;
+// Launcher backend configuration (configurable via --launcher_backend)
+std::string launcher_backend_ip = DEFAULT_LAUNCHER_BACKEND_IP;
+int launcher_backend_port = DEFAULT_LAUNCHER_BACKEND_PORT;
 
 // Shared state with mutex protection
 std::mutex state_mutex;
@@ -112,7 +113,7 @@ bool parse_launcher_backend(const std::string& backend_str) {
     if (colon_pos == std::string::npos) {
         // No port specified, use IP with default port
         launcher_backend_ip = backend_str;
-        launcher_backend_port = 8081; // Default port
+        launcher_backend_port = DEFAULT_LAUNCHER_BACKEND_PORT;
     } else {
         std::string ip = backend_str.substr(0, colon_pos);
         std::string port_str = backend_str.substr(colon_pos + 1);
@@ -815,15 +816,15 @@ void printHelp(std::string program) {
     std::cout << "Usage: " << program << " [options]\n"
               << "Options:\n"
               << "  --node=<canx>              Specify the can0/can1 node (or --node <canx>)\n"
-              << "  --port=<port>              Specify the TCP listen port (or --port <port>) [default: 8082]\n"
-              << "  --pattern_backend=<ip:port> Specify pattern backend address (or --pattern_backend <ip:port>) [default: 127.0.0.1:8080]\n"
-              << "  --launcher_backend=<ip:port> Specify launcher backend address (or --launcher_backend <ip:port>) [default port: 8081]\n"
+              << "  --port=<port>              Specify the TCP listen port (or --port <port>) [default: " << DEFAULT_TCP_PORT << "]\n"
+              << "  --pattern_backend=<ip:port> Specify pattern backend address (or --pattern_backend <ip:port>) [default: " << DEFAULT_PATTERN_BACKEND_IP << ":" << DEFAULT_PATTERN_BACKEND_PORT << "]\n"
+              << "  --launcher_backend=<ip:port> Specify launcher backend address (or --launcher_backend <ip:port>) [default port: " << DEFAULT_LAUNCHER_BACKEND_PORT << "]\n"
               << "  --debugprint=<flag>        Specify the true/false debug print (or --debugprint <flag>)\n"
               << "  --help                     Display this help message\n"
               << "\nExamples:\n"
-              << "  " << program << " --node=can0 --port=8085 --pattern_backend=192.168.1.100:8080\n"
+              << "  " << program << " --node=can0 --port=" << DEFAULT_TCP_PORT << " --pattern_backend=192.168.1.100:" << DEFAULT_PATTERN_BACKEND_PORT << "\n"
               << "  " << program << " --node can0 --pattern_backend 10.0.0.5:9090 --debugprint true\n"
-              << "  " << program << " --node=can0 --launcher_backend=127.0.0.1:8081 --pattern_backend=127.0.0.1:8080\n";
+              << "  " << program << " --node=can0 --launcher_backend=127.0.0.1:" << DEFAULT_LAUNCHER_BACKEND_PORT << " --pattern_backend=127.0.0.1:" << DEFAULT_PATTERN_BACKEND_PORT << "\n";
 }
 
 /*****************************************************************************/
