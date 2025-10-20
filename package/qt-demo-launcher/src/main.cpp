@@ -603,8 +603,9 @@ private:
     {
         QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
 
-        // Qt5 framebuffer environment for touch apps
-        env.insert("QT_QPA_PLATFORM", "linuxfb");
+        // Child apps inherit QT_QPA_PLATFORM from parent (systemEnvironment)
+        // No need to explicitly set it - this allows both linuxfb and eglfs to work
+
         //env.insert("QT_QPA_FB_HIDECURSOR", "1");
         env.insert("QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS", "/dev/input/event0");
         env.insert("QT_QPA_FONTDIR", "/usr/share/fonts/dejavu/");
