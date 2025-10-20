@@ -1,6 +1,7 @@
 #ifndef VIDEOCONTROLLER_H
 #define VIDEOCONTROLLER_H
 
+#include "config.h"
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -12,7 +13,7 @@ class VideoController : public QObject
     Q_OBJECT
 
 public:
-    explicit VideoController(VideoPlayer *player, const QString &videoDir, int networkPort = 8082, QObject *parent = nullptr);
+    explicit VideoController(VideoPlayer *player, const QString &videoDir, int networkPort = DEFAULT_VIDEO_PLAYER_PORT, QObject *parent = nullptr);
     ~VideoController();
 
     Q_INVOKABLE QString getVideoDirectory() const { return m_videoDirectory; }

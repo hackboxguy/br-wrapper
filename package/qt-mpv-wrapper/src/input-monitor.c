@@ -72,8 +72,8 @@ int device_has_buttons(const char *device_path) {
 int find_input_device(char *device_path, size_t path_size) {
     DIR *dir;
     struct dirent *entry;
-    char name_path[256];
-    char test_path[256];
+    char name_path[512];
+    char test_path[512];
     char name[256];
     FILE *fp;
 

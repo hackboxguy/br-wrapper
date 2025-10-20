@@ -1,3 +1,4 @@
+#include "config.h"
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -16,7 +17,7 @@ int main(int argc, char *argv[])
     // Parse command line arguments
     // Usage: qt-mpv-wrapper [video_directory] [--port PORT]
     QString videoPath = "Videos"; // Default: relative path (can be overridden via command-line)
-    int networkPort = 8084; // Default port
+    int networkPort = DEFAULT_VIDEO_PLAYER_PORT; // Default port
 
     for (int i = 1; i < argc; i++) {
         QString arg = argv[i];
