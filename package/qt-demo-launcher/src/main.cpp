@@ -1,3 +1,4 @@
+#include "config.h"
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QMainWindow>
 #include <QtWidgets/QVBoxLayout>
@@ -87,10 +88,10 @@ class TouchAppLauncher : public QMainWindow
     Q_OBJECT
 
 public:
-    TouchAppLauncher(const QString &configPath = QString(), int networkPort = 8081, QWidget *parent = nullptr)
-      : QMainWindow(parent), m_configPath(configPath), m_networkPort(networkPort),
-        m_networkInterface(nullptr), m_runningProcess(nullptr), m_runningAppId(""),
-        m_configWatcher(nullptr), m_currentConfigFile("")
+    TouchAppLauncher(const QString &configPath = QString(), int networkPort = DEFAULT_LAUNCHER_PORT, QWidget *parent = nullptr)
+      : QMainWindow(parent), m_configWatcher(nullptr), m_currentConfigFile(""),
+        m_configPath(configPath), m_networkPort(networkPort),
+        m_networkInterface(nullptr), m_runningProcess(nullptr), m_runningAppId("")
     {
         loadConfig();
         setupUI();
@@ -222,7 +223,7 @@ private slots:
     {
         qDebug() << "Network command received:" << command;
 
-        QStringList parts = command.split(' ', QString::SkipEmptyParts);
+        QStringList parts = command.split(' ', Qt::SkipEmptyParts);
         if (parts.isEmpty()) {
             m_networkInterface->sendResponse("ERROR: Empty command");
             return;
@@ -655,7 +656,7 @@ private:
 
         // Show launcher again when app exits
         connect(m_runningProcess, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-                [this, program, appId](int exitCode, QProcess::ExitStatus exitStatus) {
+                [this, program, appId](int exitCode, QProcess::ExitStatus /*exitStatus*/) {
                     qDebug() << "App finished:" << program << "App ID:" << appId << "Exit code:" << exitCode;
                     this->show();
                     m_runningAppId = "";
@@ -714,7 +715,7 @@ private:
 
         // Show launcher again when app exits
         connect(m_runningProcess, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-                [this, program, appId](int exitCode, QProcess::ExitStatus exitStatus) {
+                [this, program, appId](int exitCode, QProcess::ExitStatus /*exitStatus*/) {
                     qDebug() << "App finished:" << program << "App ID:" << appId << "Exit code:" << exitCode;
                     this->show();
                     m_runningAppId = "";
@@ -985,7 +986,7 @@ int main(int argc, char *argv[])
 
     // Parse command line arguments
     QString configPath;
-    int networkPort = 8081; // Default port
+    int networkPort = DEFAULT_LAUNCHER_PORT; // Default port
     bool showHelp = false;
 
     for (int i = 1; i < argc; i++) {
@@ -1031,11 +1032,11 @@ int main(int argc, char *argv[])
         qDebug() << "";
         qDebug() << "Options:";
         qDebug() << "  -c, --config FILE    Use specified JSON configuration file";
-        qDebug() << "  -p, --port PORT      Network interface port (default: 8081)";
+        qDebug() << "  -p, --port PORT      Network interface port (default:" << DEFAULT_LAUNCHER_PORT << ")";
         qDebug() << "  -h, --help           Show this help message";
         qDebug() << "";
         qDebug() << "Examples:";
-        qDebug() << " " << argv[0] << "                              # Use default config and port 8081";
+        qDebug() << " " << argv[0] << "                              # Use default config and port" << DEFAULT_LAUNCHER_PORT;
         qDebug() << " " << argv[0] << "--port 8090                   # Use port 8090";
         qDebug() << " " << argv[0] << "/tmp/my-launcher.json          # Use specific config file";
         qDebug() << " " << argv[0] << "--config /tmp/my-launcher.json --port 8090 # Use specific config and port";
