@@ -9,6 +9,9 @@
 #include "NetworkInterface.h"
 #include "PatternParameters.h"
 
+// Default network server port
+#define DEFAULT_NETWORK_PORT 8082
+
 class PatternController : public QObject
 {
     Q_OBJECT

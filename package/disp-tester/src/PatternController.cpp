@@ -193,10 +193,10 @@ QString PatternController::getNetworkInfo()
     }
 
     // Get port from network interface
-    int port = 8080; // default
+    int port = DEFAULT_NETWORK_PORT; // default
     if (m_networkInterface) {
         // We could store the port in NetworkInterface class, but for now use default
-        port = 8080;
+        port = DEFAULT_NETWORK_PORT;
     }
 
     return QString("TCP:%1:%2").arg(ipAddress).arg(port);

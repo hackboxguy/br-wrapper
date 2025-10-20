@@ -19,7 +19,8 @@ int main(int argc, char *argv[])
     parser.addVersionOption();
 
     QCommandLineOption portOption(QStringList() << "p" << "port",
-                                  "TCP server port (default: 8080)", "port", "8080");
+                                  QString("TCP server port (default: %1)").arg(DEFAULT_NETWORK_PORT),
+                                  "port", QString::number(DEFAULT_NETWORK_PORT));
     parser.addOption(portOption);
 
     QCommandLineOption fullscreenOption(QStringList() << "f" << "fullscreen",
@@ -42,8 +43,8 @@ int main(int argc, char *argv[])
     bool portOk;
     int port = parser.value(portOption).toInt(&portOk);
     if (!portOk || port < 1024 || port > 65535) {
-        qWarning() << "Invalid port number, using default 8080";
-        port = 8080;
+        qWarning() << "Invalid port number, using default" << DEFAULT_NETWORK_PORT;
+        port = DEFAULT_NETWORK_PORT;
     }
 
     // Start network interface
