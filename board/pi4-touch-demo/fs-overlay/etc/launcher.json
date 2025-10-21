@@ -112,7 +112,7 @@
         "text": "Pattern Generator",
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/disp-tester",
-        "arguments": [],
+        "arguments": ["--port", "8082"],
         "working_directory": "/tmp",
         "position": {
           "row": 1,
