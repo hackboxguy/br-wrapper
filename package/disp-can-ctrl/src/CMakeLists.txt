@@ -65,7 +65,7 @@ install(TARGETS disp-can-client
 
 # Install documentation
 install(FILES readme.txt
-    DESTINATION usr/share/doc/${COMPONENT_NAME}
+    DESTINATION share/doc/${COMPONENT_NAME}
     OPTIONAL
 )
 

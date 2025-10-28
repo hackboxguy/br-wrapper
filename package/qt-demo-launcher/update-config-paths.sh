@@ -1,8 +1,13 @@
 #!/bin/bash
-# Update qt-demo-launcher.json to use /home/pi/micropanel/qt-apps/ paths
+# Update qt-demo-launcher.json to use custom installation paths
+#
+# Usage: ./update-config-paths.sh [BASE_PATH]
+#   BASE_PATH: Installation prefix (default: /home/pi/micropanel/qt-apps)
+#
+# Example: ./update-config-paths.sh /home/testpc/qt-apps
 
 CONFIG_FILE="qt-demo-launcher.json"
-BASE_PATH="/home/pi/micropanel/qt-apps"
+BASE_PATH="${1:-/home/pi/micropanel/qt-apps}"
 
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "Error: $CONFIG_FILE not found!"
@@ -16,30 +21,33 @@ echo "Base path: $BASE_PATH"
 cp "$CONFIG_FILE" "$CONFIG_FILE.backup"
 echo "Backup saved as $CONFIG_FILE.backup"
 
-# Update binary paths
-sed -i "s|/usr/bin/touch-gallery|$BASE_PATH/touch-gallery|g" "$CONFIG_FILE"
-sed -i "s|/usr/bin/disp-tester|$BASE_PATH/disp-tester|g" "$CONFIG_FILE"
-sed -i "s|/usr/lib/qt/examples/widgets/touch/fingerpaint/fingerpaint|$BASE_PATH/fingerpaint|g" "$CONFIG_FILE"
-sed -i "s|/usr/bin/qt-mpv-wrapper.sh|$BASE_PATH/qt-mpv-wrapper.sh|g" "$CONFIG_FILE"
+# Update binary paths in "program" fields (focus on program paths, not icons)
+# Binaries are in ${BASE_PATH}/bin/
+sed -i "s|/usr/bin/touch-gallery|$BASE_PATH/bin/touch-gallery|g" "$CONFIG_FILE"
+sed -i "s|/usr/bin/disp-tester|$BASE_PATH/bin/disp-tester|g" "$CONFIG_FILE"
+sed -i "s|/usr/lib/qt/examples/widgets/touch/fingerpaint/fingerpaint|$BASE_PATH/bin/fingerpaint|g" "$CONFIG_FILE"
+
+# qt-mpv-wrapper.sh is in ${BASE_PATH}/share/qt-apps/
+sed -i "s|/usr/bin/qt-mpv-wrapper.sh|$BASE_PATH/share/qt-apps/qt-mpv-wrapper.sh|g" "$CONFIG_FILE"
 
 # Update qt-mpv-wrapper path - handle both possible structures:
 # Option 1: /path/to/qt-mpv-wrapper/src/qt-mpv-wrapper.sh (development)
 # Option 2: /path/to/qt-mpv-wrapper.sh (flat deployment)
-sed -i "s|\"program\": \".*/qt-mpv-wrapper/src/qt-mpv-wrapper.sh\"|\"program\": \"$BASE_PATH/qt-mpv-wrapper.sh\"|g" "$CONFIG_FILE"
-sed -i "s|\"program\": \".*/qt-mpv-wrapper.sh\"|\"program\": \"$BASE_PATH/qt-mpv-wrapper.sh\"|g" "$CONFIG_FILE"
+sed -i "s|\"program\": \".*/qt-mpv-wrapper/src/qt-mpv-wrapper.sh\"|\"program\": \"$BASE_PATH/share/qt-apps/qt-mpv-wrapper.sh\"|g" "$CONFIG_FILE"
+sed -i "s|\"program\": \".*/qt-mpv-wrapper.sh\"|\"program\": \"$BASE_PATH/share/qt-apps/qt-mpv-wrapper.sh\"|g" "$CONFIG_FILE"
 
-# Update directory paths
-sed -i "s|\"arguments\": \\[\"/Pictures\"|\"arguments\": [\"$BASE_PATH/Pictures\"|g" "$CONFIG_FILE"
-sed -i "s|\"arguments\": \\[\"/Patterns\"|\"arguments\": [\"$BASE_PATH/Patterns\"|g" "$CONFIG_FILE"
-sed -i "s|\"arguments\": \\[\"/Videos\"|\"arguments\": [\"$BASE_PATH/Videos\"|g" "$CONFIG_FILE"
-sed -i "s|\"working_directory\": \"/Pictures\"|\"working_directory\": \"$BASE_PATH/Pictures\"|g" "$CONFIG_FILE"
-sed -i "s|\"working_directory\": \"/Patterns\"|\"working_directory\": \"$BASE_PATH/Patterns\"|g" "$CONFIG_FILE"
+# Update directory paths in arguments (data is in ${BASE_PATH}/share/qt-apps/)
+sed -i "s|\"arguments\": \\[\"/Pictures\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Pictures\"|g" "$CONFIG_FILE"
+sed -i "s|\"arguments\": \\[\"/Patterns\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Patterns\"|g" "$CONFIG_FILE"
+sed -i "s|\"arguments\": \\[\"/Videos\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Videos\"|g" "$CONFIG_FILE"
+sed -i "s|\"working_directory\": \"/Pictures\"|\"working_directory\": \"$BASE_PATH/share/qt-apps/Pictures\"|g" "$CONFIG_FILE"
+sed -i "s|\"working_directory\": \"/Patterns\"|\"working_directory\": \"$BASE_PATH/share/qt-apps/Patterns\"|g" "$CONFIG_FILE"
 
 # Handle slideshow arguments (has multiple args)
-sed -i "s|\"arguments\": \\[\"/Pictures\", \"slideshow\"|\"arguments\": [\"$BASE_PATH/Pictures\", \"slideshow\"|g" "$CONFIG_FILE"
+sed -i "s|\"arguments\": \\[\"/Pictures\", \"slideshow\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Pictures\", \"slideshow\"|g" "$CONFIG_FILE"
 
 # Handle qt-mpv-wrapper arguments - update Videos path if it's absolute
-sed -i "s|\"arguments\": \\[\".*/Videos\"|\"arguments\": [\"$BASE_PATH/Videos\"|g" "$CONFIG_FILE"
+sed -i "s|\"arguments\": \\[\".*/Videos\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Videos\"|g" "$CONFIG_FILE"
 
 echo ""
 echo "✓ Updated program paths:"
