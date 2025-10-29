@@ -25,7 +25,20 @@ echo "Backup saved as $CONFIG_FILE.backup"
 # Binaries are in ${BASE_PATH}/bin/
 sed -i "s|/usr/bin/touch-gallery|$BASE_PATH/bin/touch-gallery|g" "$CONFIG_FILE"
 sed -i "s|/usr/bin/disp-tester|$BASE_PATH/bin/disp-tester|g" "$CONFIG_FILE"
-sed -i "s|/usr/lib/qt/examples/widgets/touch/fingerpaint/fingerpaint|$BASE_PATH/bin/fingerpaint|g" "$CONFIG_FILE"
+
+# Update fingerpaint to system Qt examples location (not part of our build)
+# Detect architecture and use appropriate path
+if [ -f "/usr/lib/aarch64-linux-gnu/qt5/examples/widgets/touch/fingerpaint/fingerpaint" ]; then
+    FINGERPAINT_PATH="/usr/lib/aarch64-linux-gnu/qt5/examples/widgets/touch/fingerpaint/fingerpaint"
+elif [ -f "/usr/lib/arm-linux-gnueabihf/qt5/examples/widgets/touch/fingerpaint/fingerpaint" ]; then
+    FINGERPAINT_PATH="/usr/lib/arm-linux-gnueabihf/qt5/examples/widgets/touch/fingerpaint/fingerpaint"
+elif [ -f "/usr/lib/x86_64-linux-gnu/qt5/examples/widgets/touch/fingerpaint/fingerpaint" ]; then
+    FINGERPAINT_PATH="/usr/lib/x86_64-linux-gnu/qt5/examples/widgets/touch/fingerpaint/fingerpaint"
+else
+    # Fallback - keep as is if fingerpaint not found
+    FINGERPAINT_PATH="/usr/lib/qt/examples/widgets/touch/fingerpaint/fingerpaint"
+fi
+sed -i "s|/usr/lib/qt/examples/widgets/touch/fingerpaint/fingerpaint|$FINGERPAINT_PATH|g" "$CONFIG_FILE"
 
 # qt-mpv-wrapper.sh is in ${BASE_PATH}/share/qt-apps/
 sed -i "s|/usr/bin/qt-mpv-wrapper.sh|$BASE_PATH/share/qt-apps/qt-mpv-wrapper.sh|g" "$CONFIG_FILE"
