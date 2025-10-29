@@ -16,8 +16,10 @@ WorkingDirectory=/home/pi/micropanel/qt-apps
 
 # Qt Platform Configuration for LinuxFB (framebuffer, no X11 required)
 Environment="QT_QPA_PLATFORM=linuxfb"
-Environment="QT_QPA_FB_HIDECURSOR=0"  # Explicitly show mouse cursor (0=visible, 1=hidden)
-Environment="QT_IM_MODULE=none"       # Disable input module to hide blinking text cursor
+# Explicitly show mouse cursor (0=visible, 1=hidden)
+Environment="QT_QPA_FB_HIDECURSOR=0"
+# Disable input module to hide blinking text cursor
+Environment="QT_IM_MODULE=none"
 Environment="QT_QPA_EGLFS_PHYSICAL_WIDTH=155"
 Environment="QT_QPA_EGLFS_PHYSICAL_HEIGHT=86"
 Environment="QT_QPA_FONTDIR=/usr/share/fonts/dejavu/"

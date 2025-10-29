@@ -21,19 +21,19 @@ echo "Base path: $BASE_PATH"
 cp "$SERVICE_FILE" "$SERVICE_FILE.backup"
 echo "Backup saved as $SERVICE_FILE.backup"
 
-# Update Documentation path
-sed -i "s|Documentation=file://.*/README.md|Documentation=file://$BASE_PATH/share/qt-apps/README.md|g" "$SERVICE_FILE"
+# Update Documentation path (matches to end of line only)
+sed -i "s|^\(Documentation=file://\)[^[:space:]]*\(/README.md\).*|\1$BASE_PATH/share/qt-apps\2|" "$SERVICE_FILE"
 
-# Update WorkingDirectory
-sed -i "s|WorkingDirectory=.*|WorkingDirectory=$BASE_PATH/share/qt-apps|g" "$SERVICE_FILE"
+# Update WorkingDirectory (matches to end of line only)
+sed -i "s|^\(WorkingDirectory=\).*|\1$BASE_PATH/share/qt-apps|" "$SERVICE_FILE"
 
-# Update ExecStartPre directory creation paths
-sed -i "s|ExecStartPre=/bin/mkdir -p .*/Pictures|ExecStartPre=/bin/mkdir -p $BASE_PATH/share/qt-apps/Pictures|g" "$SERVICE_FILE"
-sed -i "s|ExecStartPre=/bin/mkdir -p .*/Patterns|ExecStartPre=/bin/mkdir -p $BASE_PATH/share/qt-apps/Patterns|g" "$SERVICE_FILE"
-sed -i "s|ExecStartPre=/bin/mkdir -p .*/Videos|ExecStartPre=/bin/mkdir -p $BASE_PATH/share/qt-apps/Videos|g" "$SERVICE_FILE"
+# Update ExecStartPre directory creation paths (specific path matching)
+sed -i "s|\(ExecStartPre=/bin/mkdir -p \)[^[:space:]]*/Pictures|\1$BASE_PATH/share/qt-apps/Pictures|g" "$SERVICE_FILE"
+sed -i "s|\(ExecStartPre=/bin/mkdir -p \)[^[:space:]]*/Patterns|\1$BASE_PATH/share/qt-apps/Patterns|g" "$SERVICE_FILE"
+sed -i "s|\(ExecStartPre=/bin/mkdir -p \)[^[:space:]]*/Videos|\1$BASE_PATH/share/qt-apps/Videos|g" "$SERVICE_FILE"
 
-# Update ExecStart - both binary path and config path
-sed -i "s|ExecStart=.*/qt-demo-launcher --config .*/qt-demo-launcher.json|ExecStart=$BASE_PATH/bin/qt-demo-launcher --config $BASE_PATH/share/qt-apps/qt-demo-launcher.json|g" "$SERVICE_FILE"
+# Update ExecStart - both binary path and config path (match only the path parts)
+sed -i "s|\(^ExecStart=\)[^[:space:]]*/qt-demo-launcher\( --config \)[^[:space:]]*/qt-demo-launcher.json|\1$BASE_PATH/bin/qt-demo-launcher\2$BASE_PATH/share/qt-apps/qt-demo-launcher.json|" "$SERVICE_FILE"
 
 echo ""
 echo "✓ Updated Documentation path:"
