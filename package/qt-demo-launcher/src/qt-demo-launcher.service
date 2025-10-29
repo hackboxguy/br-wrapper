@@ -1,9 +1,14 @@
 [Unit]
 Description=Qt Demo Launcher - Touch Application Launcher
 Documentation=file:///home/pi/micropanel/qt-apps/README.md
+# Start after basic system is ready
 After=multi-user.target systemd-user-sessions.service getty.target systemd-udevd.service
+# Wait for network to be available (optional dependency)
 Wants=network-online.target
+After=network-online.target
 # Conflicts with getty on tty1 to prevent login prompt from overwriting the display
+# NOTE: You must disable getty@tty1.service manually with:
+#   sudo systemctl mask getty@tty1.service
 Conflicts=getty@tty1.service
 # Ensure input devices are ready
 Requires=systemd-udevd.service
