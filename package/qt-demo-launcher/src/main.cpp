@@ -607,10 +607,21 @@ private:
         // Child apps inherit QT_QPA_PLATFORM from parent (systemEnvironment)
         // No need to explicitly set it - this allows both linuxfb and eglfs to work
 
-        //env.insert("QT_QPA_FB_HIDECURSOR", "1");
-        env.insert("QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS", "/dev/input/event0");
-        env.insert("QT_QPA_FONTDIR", "/usr/share/fonts/dejavu/");
-        env.insert("XDG_RUNTIME_DIR", "/tmp/runtime-root");
+        // Only set touch device if not already set by system environment
+        // This allows init scripts or systemd to configure the correct device
+        if (!env.contains("QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS")) {
+            env.insert("QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS", "/dev/input/event0");
+        }
+
+        // Set font directory if not already set
+        if (!env.contains("QT_QPA_FONTDIR")) {
+            env.insert("QT_QPA_FONTDIR", "/usr/share/fonts/dejavu/");
+        }
+
+        // Set runtime directory if not already set
+        if (!env.contains("XDG_RUNTIME_DIR")) {
+            env.insert("XDG_RUNTIME_DIR", "/tmp/runtime-root");
+        }
 
         return env;
     }

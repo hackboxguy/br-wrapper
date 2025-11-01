@@ -8,13 +8,34 @@ DAEMON_PATH="/usr/bin"
 DAEMON_ARGS="/etc/launcher.json"
 PIDFILE="/var/run/$DAEMON.pid"
 
+# Detect touchscreen device
+detect_touch_device() {
+    # Search for touch device by name (himax, touchscreen, touch, etc.)
+    for dev in /dev/input/event*; do
+        if [ -e "$dev" ]; then
+            name=$(cat /sys/class/input/$(basename "$dev")/device/name 2>/dev/null || echo "")
+            case "$name" in
+                *himax*|*Himax*|*touchscreen*|*Touchscreen*|*TOUCHSCREEN*|*touch*|*Touch*)
+                    echo "$dev"
+                    return 0
+                    ;;
+            esac
+        fi
+    done
+    # Fallback to event0 if no touchscreen found
+    echo "/dev/input/event0"
+}
+
 # Set Qt environment variables
 export QT_QPA_PLATFORM=linuxfb
 export QT_QPA_FONTDIR=/usr/share/fonts/dejavu/
+# Auto-detect and set touchscreen device
+export QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=$(detect_touch_device)
 
 start() {
     printf "Starting $DAEMON: "
-    
+    echo "Using touchscreen device: $QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS"
+
     # Wait for framebuffer to be ready
     sleep 2
     
