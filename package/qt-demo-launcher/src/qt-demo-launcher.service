@@ -33,13 +33,14 @@ Environment="QT_LOGGING_RULES=*.debug=false"
 # Runtime directory
 Environment="XDG_RUNTIME_DIR=/tmp/runtime-root-pi"
 
-# Touch screen configuration (adjust event device as needed)
-Environment="QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event0"
-
 # GPU and DRM permissions
 SupplementaryGroups=input render
 
 # Application command
+# Detect and set the correct touchscreen device dynamically
+ExecStartPre=/bin/sh -c 'for dev in /dev/input/event*; do name=$(cat /sys/class/input/$(basename $dev)/device/name 2>/dev/null || echo ""); if echo "$name" | grep -iq "himax\\|touchscreen\\|touch"; then echo "QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=$dev" > /tmp/qt-touch-env; exit 0; fi; done; echo "QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event0" > /tmp/qt-touch-env'
+# Load the dynamically detected touchscreen device
+EnvironmentFile=-/tmp/qt-touch-env
 ExecStartPre=/bin/mkdir -p /tmp/runtime-root-pi
 ExecStartPre=/bin/chmod 700 /tmp/runtime-root-pi
 ExecStartPre=/bin/mkdir -p /home/pi/micropanel/qt-apps/Pictures
