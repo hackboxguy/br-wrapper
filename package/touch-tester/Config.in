@@ -1,0 +1,23 @@
+config BR2_PACKAGE_TOUCH_TESTER
+	bool "touch-tester"
+	select BR2_PACKAGE_LIBGPIOD
+	help
+	  Touch latency measurement and testing utility for embedded systems.
+
+	  This package provides tools for measuring touch input latency,
+	  counting touch events, and generating test touch pulses using
+	  GPIO-controlled capacitive auto-clickers.
+
+	  Components:
+	  - libtouch-test: Core library for GPIO control, touch event
+	    reading, and latency measurement
+	  - touch-tester: Command-line tool for automated testing
+	  - qt-touch-tester: Qt5 GUI application with network daemon mode
+	    (requires Qt5 to be enabled)
+
+	  Typical use cases:
+	  - Automotive head-unit touch display testing
+	  - Touch controller latency characterization
+	  - Touch event reliability testing
+
+	  https://github.com/your-org/br-wrapper
