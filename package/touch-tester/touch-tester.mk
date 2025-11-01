@@ -3,11 +3,9 @@
 # touch-tester
 #
 ################################################################################
-
 TOUCH_TESTER_VERSION = 1.0.0
-TOUCH_TESTER_SITE = $(BR2_EXTERNAL_BR_WRAPPER_PATH)/package/touch-tester
+TOUCH_TESTER_SITE = $(BR2_EXTERNAL_BRWRAPPER_PATH)/package/touch-tester
 TOUCH_TESTER_SITE_METHOD = local
-TOUCH_TESTER_LICENSE = Proprietary
 TOUCH_TESTER_INSTALL_STAGING = YES
 
 # Required dependencies
