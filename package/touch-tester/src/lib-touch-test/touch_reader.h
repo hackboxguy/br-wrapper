@@ -76,6 +76,12 @@ public:
     bool waitForEvent(TouchEvent& event, int timeout_ms = 0);
 
     /**
+     * @brief Flush all pending events from input buffer
+     * Reads and discards all available events without blocking
+     */
+    void flush();
+
+    /**
      * @brief Close input device
      */
     void close();

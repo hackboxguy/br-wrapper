@@ -214,8 +214,12 @@ int runLatencyMeasure(const Config& config)
             std::cout.flush();
         }
 
-        // Start timing
+        // Flush any old events from previous iterations
+        touch.flush();
+
+        // Record timestamp immediately before pulse
         measurer.start();
+        double pulseStartTime = measurer.getStartTime();
 
         // Generate pulse
         if (!gpio.generatePulse(config.pulseWidthMs)) {
@@ -229,8 +233,9 @@ int runLatencyMeasure(const Config& config)
 
         if (touch.waitForEvent(event, timeout)) {
             if (event.type == TouchEventType::TouchDown) {
-                // Calculate latency
-                double latency = event.timestamp * 1000.0 - measurer.getStartTime();
+                // Calculate latency using pulse start time
+                double eventTimeMs = event.timestamp * 1000.0;
+                double latency = eventTimeMs - pulseStartTime;
                 stats.addSample(latency);
                 successCount++;
 

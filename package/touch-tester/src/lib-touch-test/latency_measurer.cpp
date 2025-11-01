@@ -36,7 +36,9 @@ double LatencyMeasurer::end()
 double LatencyMeasurer::getCurrentTime()
 {
     struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC_RAW, &ts);
+    // Use CLOCK_REALTIME to match input event timestamps
+    // (input events use gettimeofday which is CLOCK_REALTIME)
+    clock_gettime(CLOCK_REALTIME, &ts);
     return timespecToMilliseconds(ts);
 }
 

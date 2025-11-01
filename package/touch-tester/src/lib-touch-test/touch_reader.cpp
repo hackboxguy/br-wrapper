@@ -218,6 +218,19 @@ bool TouchReader::waitForEvent(TouchEvent& event, int timeout_ms)
     return false;
 }
 
+void TouchReader::flush()
+{
+    if (m_fd < 0) {
+        return;
+    }
+
+    // Read and discard all pending events (non-blocking)
+    TouchEvent dummy;
+    while (readEvent(dummy)) {
+        // Keep reading until buffer is empty
+    }
+}
+
 void TouchReader::close()
 {
     if (m_fd >= 0) {
