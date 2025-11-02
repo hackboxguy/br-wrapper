@@ -47,6 +47,7 @@ DSO_EDGE2="${DSO_EDGE2:-rising}"
 DSO_CONFIG_FILE=""  # Empty means no DSO setup/initialization
 
 # Output configuration
+OUTPUT_FILE=""  # Combined JSON output file (empty means no file output)
 OUTPUT_DIR="${OUTPUT_DIR:-./results}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 TEST_NAME="${TEST_NAME:-latency_test_${TIMESTAMP}}"
@@ -125,8 +126,10 @@ OPTIONS:
     --dso-edge2 TYPE        DSO channel 2 edge type (rising/falling, default: rising)
     --dso-config FILE       DSO setup config file (if provided, applies setup before test)
 
-    --output-dir DIR        Output directory for results (default: ./results)
-    --test-name NAME        Test name for output files (default: latency_test_TIMESTAMP)
+    --output FILE           Combined JSON output file (touch+DSO data)
+                            If not specified, no files are created (console output only)
+    --output-dir DIR        Output directory for results (default: ./results, deprecated)
+    --test-name NAME        Test name for output files (default: latency_test_TIMESTAMP, deprecated)
 
     --verbose               Enable verbose output (show all phase details)
     --help, -h              Show this help message
@@ -139,25 +142,27 @@ ENVIRONMENT VARIABLES:
     OUTPUT_DIR              Results directory
 
 EXAMPLES:
-    # Basic test with defaults (100 samples)
+    # Basic test with console output only (no files created)
     $0
 
-    # Initialize DSO with config file before test
-    $0 --dso-config=/usr/share/touch-tester/dso-configs/touch-tester/touch-test-setup.json
+    # Save combined results to JSON file
+    $0 --output=./results/latency-test.json
 
-    # Custom GPIO and sample count with slower pulse rate for DSO
-    $0 --output-gpio=17 --output-probe=22 --loop-count=200 --wait-ms=150
+    # Full test with DSO config and output file
+    $0 --dso-config=/usr/share/touch-tester/dso-configs/touch-tester/touch-test-setup.json \\
+       --loop-count=100 --wait-ms=75 --output=./output/touch-dso-combined.json
+
+    # Custom GPIO and sample count
+    $0 --output-gpio=17 --output-probe=22 --loop-count=200 --wait-ms=150 \\
+       --output=./results/custom-test.json
 
     # Different DSO channels and edges
-    $0 --dso-ch1=2 --dso-ch2=3 --dso-edge1=falling --dso-edge2=rising
+    $0 --dso-ch1=2 --dso-ch2=3 --dso-edge1=falling --dso-edge2=rising \\
+       --output=./results/multi-channel.json
 
-    # Custom output location
-    $0 --output-dir=/data/tests --test-name=prod_validation_001
-
-OUTPUT FILES:
-    \$OUTPUT_DIR/\$TEST_NAME_touch.json     - Touch-tester measurement results
-    \$OUTPUT_DIR/\$TEST_NAME_dso.json       - DSO accumulated statistics
-    \$OUTPUT_DIR/\$TEST_NAME_combined.json  - Combined analysis report
+OUTPUT:
+    When --output is specified: Single combined JSON file with both touch and DSO data
+    When --output is omitted:   Console output only (no files created)
 
 EOF
 }
@@ -200,6 +205,9 @@ while [ $# -gt 0 ]; do
             ;;
         --dso-config=*)
             DSO_CONFIG_FILE="${1#*=}"
+            ;;
+        --output=*)
+            OUTPUT_FILE="${1#*=}"
             ;;
         --output-dir=*)
             OUTPUT_DIR="${1#*=}"
@@ -247,19 +255,29 @@ if ! command -v "$TOUCH_TESTER" >/dev/null 2>&1; then
     exit 1
 fi
 
-# Create output directory
-mkdir -p "$OUTPUT_DIR"
+# Define output files based on whether --output was specified
+if [ -n "$OUTPUT_FILE" ]; then
+    # User wants file output - create output directory if needed
+    OUTPUT_DIR_FROM_FILE=$(dirname "$OUTPUT_FILE")
+    mkdir -p "$OUTPUT_DIR_FROM_FILE"
 
-# Define output files
-TOUCH_OUTPUT="$OUTPUT_DIR/${TEST_NAME}_touch.json"
-DSO_OUTPUT="$OUTPUT_DIR/${TEST_NAME}_dso.json"
-COMBINED_OUTPUT="$OUTPUT_DIR/${TEST_NAME}_combined.json"
+    # Use temp files for intermediate touch and DSO data
+    TOUCH_OUTPUT=$(mktemp)
+    DSO_OUTPUT=$(mktemp)
+else
+    # No file output - use temp files that will be cleaned up
+    TOUCH_OUTPUT=$(mktemp)
+    DSO_OUTPUT=$(mktemp)
+fi
 
 # Print configuration
 printf "\n${BOLD}=== Automated Touch Latency Test (Hardware Synchronized) ===${NC}\n\n"
 log_info "Test Configuration:"
-printf "  Test Name:       %s\n" "$TEST_NAME"
-printf "  Output Dir:      %s\n" "$OUTPUT_DIR"
+if [ -n "$OUTPUT_FILE" ]; then
+    printf "  Output File:     %s\n" "$OUTPUT_FILE"
+else
+    printf "  Output Mode:     Console only (no files)\n"
+fi
 printf "\n"
 printf "  ${BOLD}Touch Configuration:${NC}\n"
 printf "  Touch Tester:    %s\n" "$TOUCH_TESTER"
@@ -434,8 +452,8 @@ printf "  Max Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MAX_RESU
 printf "  Mean Delay:        %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $AVG_RESULT * 1000}")
 printf "  Std Deviation:     %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $DEV_RESULT * 1000}")
 
-# Combine results if both exist
-if [ -f "$TOUCH_OUTPUT" ] && [ -f "$DSO_OUTPUT" ]; then
+# Create combined output file if --output was specified
+if [ -n "$OUTPUT_FILE" ]; then
     [ "$VERBOSE" = "true" ] && printf "\n"
     log_info_verbose "Generating combined analysis report..."
 
@@ -461,8 +479,8 @@ if [ -f "$TOUCH_OUTPUT" ] && [ -f "$DSO_OUTPUT" ]; then
                         dso_delay_mean_ms: ($dso[0].statistics.mean_ms // 0),
                         correlation: "Hardware synchronized via DSO trigger"
                     }
-                }' > "$COMBINED_OUTPUT"
-            log_success_verbose "Combined report saved to: $COMBINED_OUTPUT"
+                }' > "$OUTPUT_FILE"
+            log_success_verbose "Combined report saved to: $OUTPUT_FILE"
         else
             # Touch output is not JSON - include as raw text
             jq -n \
@@ -477,30 +495,32 @@ if [ -f "$TOUCH_OUTPUT" ] && [ -f "$DSO_OUTPUT" ]; then
                     touch_tester_output: $touch_raw,
                     oscilloscope: $dso[0],
                     note: "Touch-tester output is human-readable text, not JSON"
-                }' > "$COMBINED_OUTPUT"
-            log_success_verbose "Combined report saved to: $COMBINED_OUTPUT (touch output as text)"
+                }' > "$OUTPUT_FILE"
+            log_success_verbose "Combined report saved to: $OUTPUT_FILE (touch output as text)"
         fi
     else
-        cat > "$COMBINED_OUTPUT" <<EOF
+        cat > "$OUTPUT_FILE" <<EOF
 {
   "test_name": "$TEST_NAME",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "synchronization_method": "hardware_trigger",
-  "touch_tester_results": "$TOUCH_OUTPUT",
-  "oscilloscope_results": "$DSO_OUTPUT",
-  "note": "Install jq for automated data merging"
+  "touch_tester_output_file": "$TOUCH_OUTPUT",
+  "oscilloscope_data": $(cat "$DSO_OUTPUT"),
+  "note": "Install jq for better data merging"
 }
 EOF
         log_warning "jq not found - basic combined report created"
     fi
 fi
 
+# Clean up temp files
+rm -f "$TOUCH_OUTPUT" "$DSO_OUTPUT"
+
 # Print final summary
 printf "\n${BOLD}=== Test Complete ===${NC}\n\n"
-log_success "Results saved to:"
-printf "  Touch Data:    %s\n" "$TOUCH_OUTPUT"
-printf "  DSO Data:      %s\n" "$DSO_OUTPUT"
-[ -f "$COMBINED_OUTPUT" ] && printf "  Combined:      %s\n" "$COMBINED_OUTPUT"
-printf "\n"
+if [ -n "$OUTPUT_FILE" ]; then
+    log_success "Results saved to: $OUTPUT_FILE"
+    printf "\n"
+fi
 
 exit 0
