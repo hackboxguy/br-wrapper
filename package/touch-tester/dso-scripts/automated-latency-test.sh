@@ -42,9 +42,11 @@ WAIT_MS="${WAIT_MS:-50}"  # Wait time between pulses in ms (default matches touc
 DSO_IP="${DSO_IP:-192.168.1.7}"
 DSO_CH1="${DSO_CH1:-1}"
 DSO_CH2="${DSO_CH2:-2}"
+DSO_CH3="${DSO_CH3:-3}"
 DSO_EDGE1="${DSO_EDGE1:-rising}"
 DSO_EDGE2="${DSO_EDGE2:-rising}"
 DSO_CONFIG_FILE=""  # Empty means no DSO setup/initialization
+WITH_TOUCH_INTR="false"  # Enable 3-channel touch interrupt measurement
 
 # Output configuration
 OUTPUT_FILE=""  # Combined JSON output file (empty means no file output)
@@ -122,9 +124,11 @@ OPTIONS:
     --dso-ip IP             Oscilloscope IP address (default: 192.168.1.7)
     --dso-ch1 NUM           DSO channel 1 number (default: 1)
     --dso-ch2 NUM           DSO channel 2 number (default: 2)
+    --dso-ch3 NUM           DSO channel 3 number (default: 3, only with --with-touch-intr)
     --dso-edge1 TYPE        DSO channel 1 edge type (rising/falling, default: rising)
     --dso-edge2 TYPE        DSO channel 2 edge type (rising/falling, default: rising)
     --dso-config FILE       DSO setup config file (if provided, applies setup before test)
+    --with-touch-intr       Enable 3-channel touch interrupt timing measurement
 
     --output FILE           Combined JSON output file (touch+DSO data)
                             If not specified, no files are created (console output only)
@@ -197,6 +201,9 @@ while [ $# -gt 0 ]; do
         --dso-ch2=*)
             DSO_CH2="${1#*=}"
             ;;
+        --dso-ch3=*)
+            DSO_CH3="${1#*=}"
+            ;;
         --dso-edge1=*)
             DSO_EDGE1="${1#*=}"
             ;;
@@ -205,6 +212,9 @@ while [ $# -gt 0 ]; do
             ;;
         --dso-config=*)
             DSO_CONFIG_FILE="${1#*=}"
+            ;;
+        --with-touch-intr)
+            WITH_TOUCH_INTR="true"
             ;;
         --output=*)
             OUTPUT_FILE="${1#*=}"
@@ -290,7 +300,13 @@ printf "  ${BOLD}DSO Configuration:${NC}\n"
 printf "  DSO IP:          %s\n" "$DSO_IP"
 printf "  Channel 1:       %s (%s edge)\n" "$DSO_CH1" "$DSO_EDGE1"
 printf "  Channel 2:       %s (%s edge)\n" "$DSO_CH2" "$DSO_EDGE2"
+if [ "$WITH_TOUCH_INTR" = "true" ]; then
+    printf "  Channel 3:       %s (touch interrupt)\n" "$DSO_CH3"
+fi
 printf "  Delay Type:      %s\n" "$DELAY_TYPE"
+if [ "$WITH_TOUCH_INTR" = "true" ]; then
+    printf "  Touch Intr:      Enabled (3-channel mode)\n"
+fi
 if [ -n "$DSO_CONFIG_FILE" ]; then
     printf "  Config File:     %s\n" "$DSO_CONFIG_FILE"
 fi
@@ -338,6 +354,14 @@ log_info_verbose "  - Enabling statistics mode..."
 log_info_verbose "  - Setting up ${DELAY_TYPE} measurement (CH${DSO_CH1} → CH${DSO_CH2})..."
 "$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:CLEar" >/dev/null
 "$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM ${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" >/dev/null
+
+# Setup additional measurements if touch interrupt mode is enabled
+if [ "$WITH_TOUCH_INTR" = "true" ]; then
+    log_info_verbose "  - Setting up RFDelay measurement (CH${DSO_CH1} → CH${DSO_CH3} - Touch Controller Reaction)..."
+    "$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM RFDelay,CHANnel${DSO_CH1},CHANnel${DSO_CH3}" >/dev/null
+    # Note: Kernel Processing time is calculated as (Total Latency - Touch Controller Reaction)
+    # rather than measured directly, due to CH3 pulse characteristics
+fi
 
 # Reset statistics counter
 log_info_verbose "  - Resetting statistics counter to zero..."
@@ -399,14 +423,97 @@ CNT_INTEGER=$(awk "BEGIN {printf \"%.0f\", $CNT_RESULT}")
 
 log_info_verbose "  Statistics count: $CNT_INTEGER triggers captured"
 
-# Query all statistics
+# Query all statistics for CH1→CH2 (Total Latency)
 MIN_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? MINimum,${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" | grep "Response:" | sed 's/Response: //' || echo "0")
 MAX_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? MAXimum,${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" | grep "Response:" | sed 's/Response: //' || echo "0")
 AVG_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? AVERages,${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" | grep "Response:" | sed 's/Response: //' || echo "0")
 DEV_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? DEViation,${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" | grep "Response:" | sed 's/Response: //' || echo "0")
 
+# Query CH3 statistics if touch interrupt mode is enabled
+if [ "$WITH_TOUCH_INTR" = "true" ]; then
+    log_info_verbose "  Querying CH1→CH3 statistics (Touch Controller Reaction)..."
+    MIN_RF_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? MINimum,RFDelay,CHANnel${DSO_CH1},CHANnel${DSO_CH3}" | grep "Response:" | sed 's/Response: //' || echo "0")
+    MAX_RF_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? MAXimum,RFDelay,CHANnel${DSO_CH1},CHANnel${DSO_CH3}" | grep "Response:" | sed 's/Response: //' || echo "0")
+    AVG_RF_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? AVERages,RFDelay,CHANnel${DSO_CH1},CHANnel${DSO_CH3}" | grep "Response:" | sed 's/Response: //' || echo "0")
+    DEV_RF_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? DEViation,RFDelay,CHANnel${DSO_CH1},CHANnel${DSO_CH3}" | grep "Response:" | sed 's/Response: //' || echo "0")
+
+    # Calculate Kernel Processing time as: Total Latency - Touch Controller Reaction
+    # This is more accurate than measuring CH3→CH2 directly due to CH3 pulse characteristics
+    log_info_verbose "  Calculating Kernel Processing time (Total - Controller Reaction)..."
+    MIN_FR_RESULT=$(awk "BEGIN {printf \"%.6f\", $MIN_RESULT - $MAX_RF_RESULT}")
+    MAX_FR_RESULT=$(awk "BEGIN {printf \"%.6f\", $MAX_RESULT - $MIN_RF_RESULT}")
+    AVG_FR_RESULT=$(awk "BEGIN {printf \"%.6f\", $AVG_RESULT - $AVG_RF_RESULT}")
+    # For std deviation, we use propagation of uncertainty: sqrt(a^2 + b^2)
+    # Use bc for square root if awk doesn't support math functions
+    if command -v bc >/dev/null 2>&1; then
+        # Calculate using bc with proper absolute value handling
+        DEV_SQ_SUM=$(echo "scale=6; ($DEV_RESULT * $DEV_RESULT) + ($DEV_RF_RESULT * $DEV_RF_RESULT)" | bc 2>/dev/null || echo "0")
+        if [ "$DEV_SQ_SUM" != "0" ]; then
+            DEV_FR_RESULT=$(echo "scale=6; sqrt($DEV_SQ_SUM)" | bc 2>/dev/null || echo "0")
+        else
+            DEV_FR_RESULT="0.000000"
+        fi
+    else
+        # Fallback: approximate as max of the two deviations (conservative estimate)
+        DEV_FR_RESULT=$(awk "BEGIN {d1=$DEV_RESULT; d2=$DEV_RF_RESULT; if(d1<0) d1=-d1; if(d2<0) d2=-d2; printf \"%.6f\", (d1>d2)?d1:d2}")
+    fi
+fi
+
 # Create JSON output with DSO statistics
-cat > "$DSO_OUTPUT" <<EOF
+if [ "$WITH_TOUCH_INTR" = "true" ]; then
+    # 3-channel mode with touch interrupt measurements
+    cat > "$DSO_OUTPUT" <<EOF
+{
+  "measurement": "hardware_triggered_stats",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "oscilloscope_ip": "$DSO_IP",
+  "channel1": $DSO_CH1,
+  "channel2": $DSO_CH2,
+  "channel3": $DSO_CH3,
+  "edge1": "$DSO_EDGE1",
+  "edge2": "$DSO_EDGE2",
+  "delay_type": "$DELAY_TYPE",
+  "samples_requested": $LOOP_COUNT,
+  "samples_captured": $CNT_RESULT,
+  "touch_interrupt_mode": true,
+  "total_latency_ch1_ch2": {
+    "min_seconds": $MIN_RESULT,
+    "max_seconds": $MAX_RESULT,
+    "mean_seconds": $AVG_RESULT,
+    "stddev_seconds": $DEV_RESULT,
+    "min_ms": $(awk "BEGIN {printf \"%.6f\", $MIN_RESULT * 1000}"),
+    "max_ms": $(awk "BEGIN {printf \"%.6f\", $MAX_RESULT * 1000}"),
+    "mean_ms": $(awk "BEGIN {printf \"%.6f\", $AVG_RESULT * 1000}"),
+    "stddev_ms": $(awk "BEGIN {printf \"%.6f\", $DEV_RESULT * 1000}")
+  },
+  "touch_controller_reaction_ch1_ch3": {
+    "min_seconds": $MIN_RF_RESULT,
+    "max_seconds": $MAX_RF_RESULT,
+    "mean_seconds": $AVG_RF_RESULT,
+    "stddev_seconds": $DEV_RF_RESULT,
+    "min_ms": $(awk "BEGIN {printf \"%.6f\", $MIN_RF_RESULT * 1000}"),
+    "max_ms": $(awk "BEGIN {printf \"%.6f\", $MAX_RF_RESULT * 1000}"),
+    "mean_ms": $(awk "BEGIN {printf \"%.6f\", $AVG_RF_RESULT * 1000}"),
+    "stddev_ms": $(awk "BEGIN {printf \"%.6f\", $DEV_RF_RESULT * 1000}")
+  },
+  "kernel_processing_ch3_ch2": {
+    "calculation_method": "total_latency_minus_controller_reaction",
+    "min_seconds": $MIN_FR_RESULT,
+    "max_seconds": $MAX_FR_RESULT,
+    "mean_seconds": $AVG_FR_RESULT,
+    "stddev_seconds": $DEV_FR_RESULT,
+    "min_ms": $(awk "BEGIN {printf \"%.6f\", $MIN_FR_RESULT * 1000}"),
+    "max_ms": $(awk "BEGIN {printf \"%.6f\", $MAX_FR_RESULT * 1000}"),
+    "mean_ms": $(awk "BEGIN {printf \"%.6f\", $AVG_FR_RESULT * 1000}"),
+    "stddev_ms": $(awk "BEGIN {printf \"%.6f\", $DEV_FR_RESULT * 1000}")
+  },
+  "synchronization": "hardware_trigger",
+  "status": "success"
+}
+EOF
+else
+    # 2-channel mode (legacy/default)
+    cat > "$DSO_OUTPUT" <<EOF
 {
   "measurement": "hardware_triggered_stats",
   "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
@@ -418,6 +525,7 @@ cat > "$DSO_OUTPUT" <<EOF
   "delay_type": "$DELAY_TYPE",
   "samples_requested": $LOOP_COUNT,
   "samples_captured": $CNT_RESULT,
+  "touch_interrupt_mode": false,
   "statistics": {
     "min_seconds": $MIN_RESULT,
     "max_seconds": $MAX_RESULT,
@@ -432,6 +540,7 @@ cat > "$DSO_OUTPUT" <<EOF
   "status": "success"
 }
 EOF
+fi
 
 log_success_verbose "DSO statistics saved to: $DSO_OUTPUT"
 
@@ -472,10 +581,27 @@ else
     printf "  Triggers Captured: ${RED}%d / %d requested${NC}\n" "$CNT_INTEGER" "$LOOP_COUNT"
 fi
 
-printf "  Min Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MIN_RESULT * 1000}")
-printf "  Max Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MAX_RESULT * 1000}")
-printf "  Mean Delay:        %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $AVG_RESULT * 1000}")
-printf "  Std Deviation:     %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $DEV_RESULT * 1000}")
+# Display Total Latency (CH1→CH2)
+printf "\n  ${BOLD}Total Latency (CH1→CH2):${NC}\n"
+printf "    Min Delay:       %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MIN_RESULT * 1000}")
+printf "    Max Delay:       %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MAX_RESULT * 1000}")
+printf "    Mean Delay:      ${BLUE}%.3f ms${NC}\n" $(awk "BEGIN {printf \"%.3f\", $AVG_RESULT * 1000}")
+printf "    Std Deviation:   %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $DEV_RESULT * 1000}")
+
+# Display additional metrics if touch interrupt mode is enabled
+if [ "$WITH_TOUCH_INTR" = "true" ]; then
+    printf "\n  ${BOLD}Touch Controller Reaction (CH1→CH3):${NC}\n"
+    printf "    Min Delay:       %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MIN_RF_RESULT * 1000}")
+    printf "    Max Delay:       %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MAX_RF_RESULT * 1000}")
+    printf "    Mean Delay:      ${BLUE}%.3f ms${NC}\n" $(awk "BEGIN {printf \"%.3f\", $AVG_RF_RESULT * 1000}")
+    printf "    Std Deviation:   %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $DEV_RF_RESULT * 1000}")
+
+    printf "\n  ${BOLD}Kernel Processing (CH3→CH2):${NC}\n"
+    printf "    Min Delay:       %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MIN_FR_RESULT * 1000}")
+    printf "    Max Delay:       %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MAX_FR_RESULT * 1000}")
+    printf "    Mean Delay:      ${BLUE}%.3f ms${NC}\n" $(awk "BEGIN {printf \"%.3f\", $AVG_FR_RESULT * 1000}")
+    printf "    Std Deviation:   %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $DEV_FR_RESULT * 1000}")
+fi
 
 # Display SW-Feedback results
 printf "\n${BOLD}Test Results SW-Feedback:${NC}\n"
@@ -495,7 +621,7 @@ fi
 
 printf "  Min Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $SW_MIN}")
 printf "  Max Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $SW_MAX}")
-printf "  Mean Delay:        %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $SW_AVG}")
+printf "  Mean Delay:        ${BLUE}%.3f ms${NC}\n" $(awk "BEGIN {printf \"%.3f\", $SW_AVG}")
 printf "  Std Deviation:     %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $SW_STDDEV}")
 
 # Create combined output file if --output was specified
