@@ -22,11 +22,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -x "$SCRIPT_DIR/rigol-tool.sh" ]; then
     # Found in same directory (development/source tree)
     RIGOL_TOOL="$SCRIPT_DIR/rigol-tool.sh"
-elif [ -x "/usr/share/touch-tester/dso-scripts/rigol-tool.sh" ]; then
-    # Found in install location (CMAKE_INSTALL_PREFIX)
-    RIGOL_TOOL="/usr/share/touch-tester/dso-scripts/rigol-tool.sh"
 elif command -v rigol-tool.sh >/dev/null 2>&1; then
-    # Found in PATH
+    # Found in PATH (installed system-wide)
     RIGOL_TOOL="rigol-tool.sh"
 else
     echo "Error: rigol-tool.sh not found" >&2

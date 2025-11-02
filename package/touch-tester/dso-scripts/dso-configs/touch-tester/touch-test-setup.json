@@ -1,6 +1,6 @@
 {
   "version": "1.0",
-  "timestamp": "2025-11-02T17:54:06Z",
+  "timestamp": "2025-11-02T18:08:29Z",
   "device": "RIGOL TECHNOLOGIES,DHO924S,DHO9S264605407,00.01.03",
   "channels": {
     "1": {
@@ -45,9 +45,9 @@
     "offset": 0.02000000
   },
   "trigger": {
-    "source": "CHAN1",
-    "level": 0.4000000,
-    "slope": "POS",
+    "source": "CHAN2",
+    "level": 1.720000,
+    "slope": "NEG",
     "sweep": "NORM",
     "coupling": "DC"
   }
