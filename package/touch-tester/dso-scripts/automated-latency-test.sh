@@ -39,6 +39,7 @@ OUTPUT_GPIO="${OUTPUT_GPIO:-27}"
 OUTPUT_PROBE="${OUTPUT_PROBE:-7}"
 LOOP_COUNT="${LOOP_COUNT:-100}"
 TEST_TYPE="${TEST_TYPE:-latencymeasure}"
+WAIT_MS="${WAIT_MS:-50}"  # Wait time between pulses in ms (default matches touch-tester default)
 
 # DSO configuration
 DSO_IP="${DSO_IP:-192.168.1.7}"
@@ -52,6 +53,7 @@ DSO_CONFIG_FILE=""  # Empty means no DSO setup/initialization
 OUTPUT_DIR="${OUTPUT_DIR:-./results}"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 TEST_NAME="${TEST_NAME:-latency_test_${TIMESTAMP}}"
+VERBOSE="${VERBOSE:-false}"  # Verbose output mode
 
 # Color codes
 if [ -t 1 ]; then
@@ -86,6 +88,18 @@ log_error() {
     printf "${RED}❌ %s${NC}\n" "$1"
 }
 
+log_info_verbose() {
+    if [ "$VERBOSE" = "true" ]; then
+        printf "${BLUE}ℹ️  %s${NC}\n" "$1"
+    fi
+}
+
+log_success_verbose() {
+    if [ "$VERBOSE" = "true" ]; then
+        printf "${GREEN}✅ %s${NC}\n" "$1"
+    fi
+}
+
 usage() {
     cat <<EOF
 Usage: $0 [OPTIONS]
@@ -105,6 +119,7 @@ OPTIONS:
     --output-probe NUM      GPIO number for latency probe pulse (default: 7)
     --loop-count NUM        Number of touch events to generate (default: 100)
     --test-type TYPE        Touch-tester test type (default: latencymeasure)
+    --wait-ms NUM           Wait time between touch events in ms (default: 50)
 
     --dso-ip IP             Oscilloscope IP address (default: 192.168.1.7)
     --dso-ch1 NUM           DSO channel 1 number (default: 1)
@@ -116,6 +131,7 @@ OPTIONS:
     --output-dir DIR        Output directory for results (default: ./results)
     --test-name NAME        Test name for output files (default: latency_test_TIMESTAMP)
 
+    --verbose               Enable verbose output (show all phase details)
     --help, -h              Show this help message
 
 ENVIRONMENT VARIABLES:
@@ -132,8 +148,8 @@ EXAMPLES:
     # Initialize DSO with config file before test
     $0 --dso-config=/usr/share/touch-tester/dso-configs/touch-tester/touch-test-setup.json
 
-    # Custom GPIO and sample count
-    $0 --output-gpio=17 --output-probe=22 --loop-count=200
+    # Custom GPIO and sample count with slower pulse rate for DSO
+    $0 --output-gpio=17 --output-probe=22 --loop-count=200 --wait-ms=150
 
     # Different DSO channels and edges
     $0 --dso-ch1=2 --dso-ch2=3 --dso-edge1=falling --dso-edge2=rising
@@ -167,6 +183,9 @@ while [ $# -gt 0 ]; do
         --test-type=*)
             TEST_TYPE="${1#*=}"
             ;;
+        --wait-ms=*)
+            WAIT_MS="${1#*=}"
+            ;;
         --dso-ip=*)
             DSO_IP="${1#*=}"
             ;;
@@ -190,6 +209,9 @@ while [ $# -gt 0 ]; do
             ;;
         --test-name=*)
             TEST_NAME="${1#*=}"
+            ;;
+        --verbose)
+            VERBOSE="true"
             ;;
         --help|-h)
             usage
@@ -260,17 +282,17 @@ fi
 printf "\n"
 
 # Test DSO connection first
-log_info "Testing DSO connection..."
+log_info_verbose "Testing DSO connection..."
 if ! "$RIGOL_TOOL" --command=check-connection --dso-ip="$DSO_IP" >/dev/null 2>&1; then
     log_error "Cannot connect to oscilloscope at $DSO_IP"
     exit 1
 fi
-log_success "DSO connection OK"
+log_success_verbose "DSO connection OK"
 
 # Phase 0 (Optional): Initialize DSO with config file
 if [ -n "$DSO_CONFIG_FILE" ]; then
-    printf "\n"
-    log_info "Phase 0: Initializing DSO with configuration file..."
+    [ "$VERBOSE" = "true" ] && printf "\n"
+    log_info_verbose "Phase 0: Initializing DSO with configuration file..."
 
     # Check if config file exists
     if [ ! -f "$DSO_CONFIG_FILE" ]; then
@@ -278,9 +300,9 @@ if [ -n "$DSO_CONFIG_FILE" ]; then
         exit 1
     fi
 
-    log_info "  Applying setup from: $DSO_CONFIG_FILE"
+    log_info_verbose "  Applying setup from: $DSO_CONFIG_FILE"
     if "$RIGOL_TOOL" --command=apply-setup --dso-ip="$DSO_IP" --input="$DSO_CONFIG_FILE"; then
-        log_success "DSO initialization complete"
+        log_success_verbose "DSO initialization complete"
     else
         log_error "Failed to apply DSO configuration"
         exit 1
@@ -291,58 +313,76 @@ if [ -n "$DSO_CONFIG_FILE" ]; then
 fi
 
 # Phase 1: Configure DSO for hardware-triggered measurements
-log_info "Phase 1: Configuring DSO for hardware-triggered measurement..."
+log_info_verbose "Phase 1: Configuring DSO for hardware-triggered measurement..."
 
 # Enable delay measurement with statistics
-log_info "  - Enabling statistics mode..."
+log_info_verbose "  - Enabling statistics mode..."
 "$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:DISPlay ON" >/dev/null
 
 # Setup the delay measurement
-log_info "  - Setting up ${DELAY_TYPE} measurement (CH${DSO_CH1} → CH${DSO_CH2})..."
+log_info_verbose "  - Setting up ${DELAY_TYPE} measurement (CH${DSO_CH1} → CH${DSO_CH2})..."
 "$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:CLEar" >/dev/null
 "$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM ${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" >/dev/null
 
 # Reset statistics counter
-log_info "  - Resetting statistics counter to zero..."
+log_info_verbose "  - Resetting statistics counter to zero..."
 "$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:RESet" >/dev/null
 
 # Ensure trigger is in NORMAL mode (waits for signal)
-log_info "  - Setting trigger to NORMAL mode (hardware synchronized)..."
+log_info_verbose "  - Setting trigger to NORMAL mode (hardware synchronized)..."
 "$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":TRIGger:SWEep NORM" >/dev/null
 
 sleep 1
-log_success "DSO configured and armed, waiting for triggers"
+log_success_verbose "DSO configured and armed, waiting for triggers"
 
 # Phase 2: Run touch-tester to generate events
-printf "\n"
-log_info "Phase 2: Generating ${LOOP_COUNT} touch events..."
-printf "\n"
+[ "$VERBOSE" = "true" ] && printf "\n"
+log_info "Generating ${LOOP_COUNT} touch events..."
+[ "$VERBOSE" = "true" ] && printf "\n"
 
-TOUCH_CMD="$TOUCH_TESTER --testtype=$TEST_TYPE --output-gpio=$OUTPUT_GPIO --output-probe=$OUTPUT_PROBE --loopcount=$LOOP_COUNT"
-if [ -n "$TOUCH_OUTPUT" ]; then
-    TOUCH_CMD="$TOUCH_CMD --output=$TOUCH_OUTPUT"
-fi
+TOUCH_CMD="$TOUCH_TESTER --testtype=$TEST_TYPE --output-gpio=$OUTPUT_GPIO --output-probe=$OUTPUT_PROBE --loopcount=$LOOP_COUNT --wait-ms=$WAIT_MS"
 
-log_info "Command: $TOUCH_CMD"
-printf "\n"
+log_info_verbose "Command: $TOUCH_CMD"
+[ "$VERBOSE" = "true" ] && printf "\n"
 
 # Run touch-tester (DSO captures automatically on each trigger)
-if $TOUCH_CMD; then
-    TOUCH_EXIT=0
-    log_success "Touch-tester completed successfully"
+# Note: touch-tester doesn't support --output parameter, so redirect stdout/stderr to file if needed
+if [ -n "$TOUCH_OUTPUT" ]; then
+    if $TOUCH_CMD > "$TOUCH_OUTPUT" 2>&1; then
+        TOUCH_EXIT=0
+        log_success_verbose "Touch-tester completed successfully (output saved to $TOUCH_OUTPUT)"
+    else
+        TOUCH_EXIT=$?
+        log_error "Touch-tester failed with exit code $TOUCH_EXIT"
+        cat "$TOUCH_OUTPUT"
+        exit 1
+    fi
 else
-    TOUCH_EXIT=$?
-    log_error "Touch-tester failed with exit code $TOUCH_EXIT"
-    exit 1
+    if $TOUCH_CMD; then
+        TOUCH_EXIT=0
+        log_success_verbose "Touch-tester completed successfully"
+    else
+        TOUCH_EXIT=$?
+        log_error "Touch-tester failed with exit code $TOUCH_EXIT"
+        exit 1
+    fi
 fi
 
 # Phase 3: Query accumulated statistics from DSO
-printf "\n"
-log_info "Phase 3: Querying accumulated statistics from DSO..."
+[ "$VERBOSE" = "true" ] && printf "\n"
+log_info_verbose "Phase 3: Querying accumulated statistics from DSO..."
+
+# Give DSO time to finish processing final measurements
+log_info_verbose "  Waiting for DSO to complete final measurement processing..."
+sleep 2
 
 # Query statistics count
 CNT_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? CNT,${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" | grep "Response:" | sed 's/Response: //' || echo "0")
-log_info "  Statistics count: $CNT_RESULT triggers captured"
+
+# Convert scientific notation to integer
+CNT_INTEGER=$(awk "BEGIN {printf \"%.0f\", $CNT_RESULT}")
+
+log_info_verbose "  Statistics count: $CNT_INTEGER triggers captured"
 
 # Query all statistics
 MIN_RESULT=$("$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM? MINimum,${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" | grep "Response:" | sed 's/Response: //' || echo "0")
@@ -378,11 +418,20 @@ cat > "$DSO_OUTPUT" <<EOF
 }
 EOF
 
-log_success "DSO statistics saved to: $DSO_OUTPUT"
+log_success_verbose "DSO statistics saved to: $DSO_OUTPUT"
 
 # Display summary
-printf "\n${BOLD}DSO Statistics Summary:${NC}\n"
-printf "  Triggers Captured: %s / %s requested\n" "$CNT_RESULT" "$LOOP_COUNT"
+printf "\n${BOLD}Test Results:${NC}\n"
+
+# Compare captured count with requested count and color accordingly
+if [ "$CNT_INTEGER" -eq "$LOOP_COUNT" ]; then
+    # Match - use green
+    printf "  Triggers Captured: ${GREEN}%d / %d requested${NC}\n" "$CNT_INTEGER" "$LOOP_COUNT"
+else
+    # Mismatch - use red
+    printf "  Triggers Captured: ${RED}%d / %d requested${NC}\n" "$CNT_INTEGER" "$LOOP_COUNT"
+fi
+
 printf "  Min Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MIN_RESULT * 1000}")
 printf "  Max Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MAX_RESULT * 1000}")
 printf "  Mean Delay:        %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $AVG_RESULT * 1000}")
@@ -390,30 +439,50 @@ printf "  Std Deviation:     %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $DEV_RESU
 
 # Combine results if both exist
 if [ -f "$TOUCH_OUTPUT" ] && [ -f "$DSO_OUTPUT" ]; then
-    printf "\n"
-    log_info "Generating combined analysis report..."
+    [ "$VERBOSE" = "true" ] && printf "\n"
+    log_info_verbose "Generating combined analysis report..."
 
     if command -v jq >/dev/null 2>&1; then
-        jq -n \
-            --argfile touch "$TOUCH_OUTPUT" \
-            --argfile dso "$DSO_OUTPUT" \
-            --arg test_name "$TEST_NAME" \
-            --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{
-                test_name: $test_name,
-                timestamp: $timestamp,
-                synchronization_method: "hardware_trigger",
-                touch_tester: $touch,
-                oscilloscope: $dso,
-                summary: {
-                    samples_touch: ($touch.loop_count // 0),
-                    samples_dso: ($dso.samples_captured // 0),
-                    touch_latency_mean_ms: ($touch.statistics.mean_ms // 0),
-                    dso_delay_mean_ms: ($dso.statistics.mean_ms // 0),
-                    correlation: "Hardware synchronized via DSO trigger"
-                }
-            }' > "$COMBINED_OUTPUT"
-        log_success "Combined report saved to: $COMBINED_OUTPUT"
+        # Check if touch output is valid JSON
+        if jq empty "$TOUCH_OUTPUT" 2>/dev/null; then
+            # Both files are valid JSON - create structured combined report
+            jq -n \
+                --slurpfile touch "$TOUCH_OUTPUT" \
+                --slurpfile dso "$DSO_OUTPUT" \
+                --arg test_name "$TEST_NAME" \
+                --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                '{
+                    test_name: $test_name,
+                    timestamp: $timestamp,
+                    synchronization_method: "hardware_trigger",
+                    touch_tester: $touch[0],
+                    oscilloscope: $dso[0],
+                    summary: {
+                        samples_touch: ($touch[0].loop_count // 0),
+                        samples_dso: ($dso[0].samples_captured // 0),
+                        touch_latency_mean_ms: ($touch[0].statistics.mean_ms // 0),
+                        dso_delay_mean_ms: ($dso[0].statistics.mean_ms // 0),
+                        correlation: "Hardware synchronized via DSO trigger"
+                    }
+                }' > "$COMBINED_OUTPUT"
+            log_success_verbose "Combined report saved to: $COMBINED_OUTPUT"
+        else
+            # Touch output is not JSON - include as raw text
+            jq -n \
+                --rawfile touch_raw "$TOUCH_OUTPUT" \
+                --slurpfile dso "$DSO_OUTPUT" \
+                --arg test_name "$TEST_NAME" \
+                --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                '{
+                    test_name: $test_name,
+                    timestamp: $timestamp,
+                    synchronization_method: "hardware_trigger",
+                    touch_tester_output: $touch_raw,
+                    oscilloscope: $dso[0],
+                    note: "Touch-tester output is human-readable text, not JSON"
+                }' > "$COMBINED_OUTPUT"
+            log_success_verbose "Combined report saved to: $COMBINED_OUTPUT (touch output as text)"
+        fi
     else
         cat > "$COMBINED_OUTPUT" <<EOF
 {
