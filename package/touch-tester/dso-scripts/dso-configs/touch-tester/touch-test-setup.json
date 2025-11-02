@@ -1,7 +1,7 @@
 {
   "version": "1.0",
-  "timestamp": "2025-11-02T14:04:06Z",
-  "device": "RIGOL TECHNOLOGIES,DHO924S,DHO9S264,00.01.03",
+  "timestamp": "2025-11-02T17:54:06Z",
+  "device": "RIGOL TECHNOLOGIES,DHO924S,DHO9S264605407,00.01.03",
   "channels": {
     "1": {
       "display": true,
@@ -24,7 +24,16 @@
     "3": {
       "display": false,
       "scale": 0.02000000,
-      "offset": 0.01341474,
+      "offset": 0.01086855,
+      "position": 0.000000,
+      "coupling": "DC",
+      "probe": 1,
+      "bandwidth_limit": "OFF"
+    },
+    "4": {
+      "display": false,
+      "scale": 0.05000000,
+      "offset": 0.000000,
       "position": 0.000000,
       "coupling": "DC",
       "probe": 1,
@@ -33,7 +42,7 @@
   },
   "timebase": {
     "scale": 0.005000000,
-    "offset": 0.01500000
+    "offset": 0.02000000
   },
   "trigger": {
     "source": "CHAN1",
