@@ -224,11 +224,19 @@ void TouchReader::flush()
         return;
     }
 
-    // Read and discard all pending events (non-blocking)
-    TouchEvent dummy;
-    while (readEvent(dummy)) {
-        // Keep reading until buffer is empty
+    // Flush at raw input_event level, not TouchEvent level
+    // This ensures we drain ALL events including incomplete touch sequences
+    struct input_event ev;
+    while (read(m_fd, &ev, sizeof(ev)) > 0) {
+        // Keep reading until buffer is empty (EAGAIN/EWOULDBLOCK)
     }
+
+    // Reset state tracking to avoid carrying over partial state
+    m_currentX = 0;
+    m_currentY = 0;
+    m_currentTrackingId = -1;
+    m_currentPressure = 0;
+    m_hasTouchDown = false;
 }
 
 void TouchReader::close()
