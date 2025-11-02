@@ -8,11 +8,16 @@ cmake_minimum_required(VERSION 3.10)
 set(DSO_SCRIPTS_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/share/touch-tester/dso-scripts")
 set(DSO_CONFIGS_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/share/touch-tester/dso-configs")
 
-# Install DSO automation scripts
+# Install main automation script to /usr/bin (in PATH)
+install(PROGRAMS
+    automated-latency-test.sh
+    DESTINATION ${CMAKE_INSTALL_PREFIX}/bin
+)
+
+# Install helper DSO scripts to /usr/share (library scripts)
 install(PROGRAMS
     rigol-tool.sh
     rigol-scpi.sh
-    automated-latency-test.sh
     DESTINATION ${DSO_SCRIPTS_INSTALL_DIR}
 )
 
@@ -26,5 +31,6 @@ install(DIRECTORY
 
 # Print installation paths
 message(STATUS "DSO Scripts Configuration:")
-message(STATUS "  Scripts install to: ${DSO_SCRIPTS_INSTALL_DIR}")
-message(STATUS "  Configs install to: ${DSO_CONFIGS_INSTALL_DIR}")
+message(STATUS "  Main script:     ${CMAKE_INSTALL_PREFIX}/bin/automated-latency-test.sh")
+message(STATUS "  Helper scripts:  ${DSO_SCRIPTS_INSTALL_DIR}")
+message(STATUS "  Config files:    ${DSO_CONFIGS_INSTALL_DIR}")

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 
 # automated-latency-test.sh - Automated touch latency testing with hardware-synchronized DSO measurement
 # Coordinates touch-tester and oscilloscope using DSO's hardware trigger for precise synchronization
@@ -13,10 +13,10 @@
 #
 # Usage: ./automated-latency-test.sh [OPTIONS]
 
-set -euo pipefail
+set -eu
 
 # Default configuration
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Try to find rigol-tool.sh in multiple locations
 if [ -x "$SCRIPT_DIR/rigol-tool.sh" ]; then
