@@ -355,7 +355,7 @@ log_success_verbose "DSO configured and armed, waiting for triggers"
 log_info "Generating ${LOOP_COUNT} touch events..."
 [ "$VERBOSE" = "true" ] && printf "\n"
 
-TOUCH_CMD="$TOUCH_TESTER --testtype=$TEST_TYPE --output-gpio=$OUTPUT_GPIO --output-probe=$OUTPUT_PROBE --loopcount=$LOOP_COUNT --wait-ms=$WAIT_MS"
+TOUCH_CMD="$TOUCH_TESTER --testtype=$TEST_TYPE --output-gpio=$OUTPUT_GPIO --output-probe=$OUTPUT_PROBE --loopcount=$LOOP_COUNT --wait-ms=$WAIT_MS --format=json"
 
 log_info_verbose "Command: $TOUCH_CMD"
 [ "$VERBOSE" = "true" ] && printf "\n"
@@ -435,12 +435,37 @@ EOF
 
 log_success_verbose "DSO statistics saved to: $DSO_OUTPUT"
 
-# Display summary
-printf "\n${BOLD}Test Results:${NC}\n"
+# Parse SW-Feedback (touch-tester) JSON output
+if [ -f "$TOUCH_OUTPUT" ] && command -v jq >/dev/null 2>&1; then
+    SW_SUCCESS=$(jq -r '.successful_events // 0' "$TOUCH_OUTPUT" 2>/dev/null || echo "0")
+    SW_MISSED=$(jq -r '.missed_events // 0' "$TOUCH_OUTPUT" 2>/dev/null || echo "0")
+    SW_MIN=$(jq -r '.statistics.min_ms // 0' "$TOUCH_OUTPUT" 2>/dev/null || echo "0")
+    SW_MAX=$(jq -r '.statistics.max_ms // 0' "$TOUCH_OUTPUT" 2>/dev/null || echo "0")
+    SW_AVG=$(jq -r '.statistics.avg_ms // 0' "$TOUCH_OUTPUT" 2>/dev/null || echo "0")
+    SW_STDDEV=$(jq -r '.statistics.stddev_ms // 0' "$TOUCH_OUTPUT" 2>/dev/null || echo "0")
+    SW_TOTAL=$((SW_SUCCESS + SW_MISSED))
+else
+    SW_SUCCESS=0
+    SW_MISSED=0
+    SW_MIN=0
+    SW_MAX=0
+    SW_AVG=0
+    SW_STDDEV=0
+    SW_TOTAL=0
+fi
 
-# Compare captured count with requested count and color accordingly
-if [ "$CNT_INTEGER" -eq "$LOOP_COUNT" ]; then
-    # Match - use green
+# Check if HW and SW counts match and all meet expectations
+HW_SW_MATCH=0
+if [ "$CNT_INTEGER" -eq "$LOOP_COUNT" ] && [ "$SW_SUCCESS" -eq "$LOOP_COUNT" ] && [ "$SW_MISSED" -eq "0" ] && [ "$CNT_INTEGER" -eq "$SW_SUCCESS" ]; then
+    HW_SW_MATCH=1
+fi
+
+# Display summary with dual feedback
+printf "\n${BOLD}Test Results HW-Feedback:${NC}\n"
+
+# Color code: green only if HW count matches loop count AND HW/SW counts match
+if [ "$HW_SW_MATCH" -eq "1" ]; then
+    # All counts match - use green
     printf "  Triggers Captured: ${GREEN}%d / %d requested${NC}\n" "$CNT_INTEGER" "$LOOP_COUNT"
 else
     # Mismatch - use red
@@ -451,6 +476,27 @@ printf "  Min Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MIN_RESU
 printf "  Max Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $MAX_RESULT * 1000}")
 printf "  Mean Delay:        %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $AVG_RESULT * 1000}")
 printf "  Std Deviation:     %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $DEV_RESULT * 1000}")
+
+# Display SW-Feedback results
+printf "\n${BOLD}Test Results SW-Feedback:${NC}\n"
+
+# Color code: green only if SW count matches loop count, no missed events, AND HW/SW counts match
+if [ "$HW_SW_MATCH" -eq "1" ]; then
+    # All counts match - use green
+    printf "  Triggers Captured: ${GREEN}%d / %d requested${NC}\n" "$SW_SUCCESS" "$LOOP_COUNT"
+else
+    # Mismatch - use red
+    if [ "$SW_MISSED" -gt "0" ]; then
+        printf "  Triggers Captured: ${RED}%d / %d requested (missed: %d)${NC}\n" "$SW_SUCCESS" "$LOOP_COUNT" "$SW_MISSED"
+    else
+        printf "  Triggers Captured: ${RED}%d / %d requested${NC}\n" "$SW_SUCCESS" "$LOOP_COUNT"
+    fi
+fi
+
+printf "  Min Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $SW_MIN}")
+printf "  Max Delay:         %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $SW_MAX}")
+printf "  Mean Delay:        %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $SW_AVG}")
+printf "  Std Deviation:     %.3f ms\n" $(awk "BEGIN {printf \"%.3f\", $SW_STDDEV}")
 
 # Create combined output file if --output was specified
 if [ -n "$OUTPUT_FILE" ]; then
