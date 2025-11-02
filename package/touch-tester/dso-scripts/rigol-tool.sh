@@ -74,7 +74,8 @@ ${BOLD}COMMANDS:${NC}
     ${BOLD}status${NC}                 Show current oscilloscope configuration
     ${BOLD}copy-setup${NC}             Save current scope config to JSON file
     ${BOLD}apply-setup${NC}            Restore scope config from JSON file
-    ${BOLD}query${NC}                  Send raw SCPI query command
+    ${BOLD}query${NC}                  Send raw SCPI query command (expects response)
+    ${BOLD}write${NC}                  Send raw SCPI write command (no response expected)
     ${BOLD}reset${NC}                  Reset oscilloscope to factory defaults
 
 ${BOLD}OPTIONS:${NC}
@@ -473,6 +474,23 @@ cmd_query() {
         return 0
     else
         log_error "No response received"
+        return 1
+    fi
+}
+
+# Command: write (send SCPI command without expecting response)
+cmd_write() {
+    if [ -z "$SCPI_CMD" ]; then
+        log_error "SCPI command not specified. Use --scpi=\"COMMAND\""
+        return 1
+    fi
+
+    log_info "Sending SCPI write command: $SCPI_CMD"
+    if scpi_write "$SCPI_CMD"; then
+        log_success "Command sent successfully"
+        return 0
+    else
+        log_error "Failed to send command"
         return 1
     fi
 }
@@ -961,6 +979,9 @@ main() {
             ;;
         query)
             cmd_query
+            ;;
+        write)
+            cmd_write
             ;;
         reset)
             cmd_reset

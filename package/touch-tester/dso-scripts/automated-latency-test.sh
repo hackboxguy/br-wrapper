@@ -295,20 +295,20 @@ log_info "Phase 1: Configuring DSO for hardware-triggered measurement..."
 
 # Enable delay measurement with statistics
 log_info "  - Enabling statistics mode..."
-"$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:DISPlay ON" >/dev/null
+"$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:DISPlay ON" >/dev/null
 
 # Setup the delay measurement
 log_info "  - Setting up ${DELAY_TYPE} measurement (CH${DSO_CH1} → CH${DSO_CH2})..."
-"$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:CLEar" >/dev/null
-"$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM ${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" >/dev/null
+"$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:CLEar" >/dev/null
+"$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:ITEM ${DELAY_TYPE},CHANnel${DSO_CH1},CHANnel${DSO_CH2}" >/dev/null
 
 # Reset statistics counter
 log_info "  - Resetting statistics counter to zero..."
-"$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:RESet" >/dev/null
+"$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":MEASure:STATistic:RESet" >/dev/null
 
 # Ensure trigger is in NORMAL mode (waits for signal)
 log_info "  - Setting trigger to NORMAL mode (hardware synchronized)..."
-"$RIGOL_TOOL" --command=query --dso-ip="$DSO_IP" --scpi=":TRIGger:SWEep NORM" >/dev/null
+"$RIGOL_TOOL" --command=write --dso-ip="$DSO_IP" --scpi=":TRIGger:SWEep NORM" >/dev/null
 
 sleep 1
 log_success "DSO configured and armed, waiting for triggers"
