@@ -25,6 +25,14 @@ public:
     bool init(unsigned int gpio_num, const std::string& chip_name = "gpiochip0");
 
     /**
+     * @brief Initialize probe GPIO line for oscilloscope timing
+     * @param probe_num Probe GPIO line number (e.g., 7 for GPIO7)
+     * @param chip_name GPIO chip name (default: "gpiochip0")
+     * @return true on success, false on failure
+     */
+    bool initProbe(unsigned int probe_num, const std::string& chip_name = "gpiochip0");
+
+    /**
      * @brief Set GPIO line high (1)
      * @return true on success, false on failure
      */
@@ -42,6 +50,24 @@ public:
      * @return true on success, false on failure
      */
     bool generatePulse(unsigned int pulse_width_ms);
+
+    /**
+     * @brief Set probe GPIO high (for oscilloscope timing)
+     * @return true on success, false on failure
+     */
+    bool setProbeHigh();
+
+    /**
+     * @brief Set probe GPIO low (for oscilloscope timing)
+     * @return true on success, false on failure
+     */
+    bool setProbeLow();
+
+    /**
+     * @brief Check if probe GPIO is initialized
+     * @return true if probe is initialized, false otherwise
+     */
+    bool isProbeInitialized() const { return m_probeLine != nullptr; }
 
     /**
      * @brief Release GPIO resources
@@ -70,6 +96,11 @@ private:
     struct gpiod_chip* m_chip;
     struct gpiod_line* m_line;
     unsigned int m_gpioNum;
+
+    struct gpiod_chip* m_probeChip;
+    struct gpiod_line* m_probeLine;
+    unsigned int m_probeNum;
+
     std::string m_lastError;
 
     void setError(const std::string& error);

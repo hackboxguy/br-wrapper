@@ -15,6 +15,7 @@ struct Config {
     std::string testType;           // latencymeasure, touchcount, touchtrigger, verify
     std::string inputEvent;         // Device path or "auto"
     int outputGpio;                 // GPIO pin number
+    int outputProbe;                // Probe GPIO pin number (-1 = disabled)
     int loopCount;                  // Number of iterations
     int pulseWidthMs;               // Pulse width in milliseconds
     int waitMs;                     // Wait time between pulses
@@ -25,6 +26,7 @@ struct Config {
         : testType("latencymeasure")
         , inputEvent("auto")
         , outputGpio(-1)
+        , outputProbe(-1)
         , loopCount(1)
         , pulseWidthMs(25)
         , waitMs(50)
@@ -53,6 +55,11 @@ int main(int argc, char* argv[])
     // Validate configuration
     if (config.outputGpio < 0) {
         std::cerr << "Error: --output-gpio is required\n";
+        return 1;
+    }
+
+    if (config.outputProbe >= 0 && config.outputProbe == config.outputGpio) {
+        std::cerr << "Error: --output-probe cannot be the same as --output-gpio\n";
         return 1;
     }
 
@@ -90,6 +97,7 @@ void printUsage(const char* progName)
     std::cout << "\n";
     std::cout << "Optional:\n";
     std::cout << "  --inputevent=PATH        Input device path or 'auto' (default: auto)\n";
+    std::cout << "  --output-probe=NUM       Probe GPIO for oscilloscope timing (default: disabled)\n";
     std::cout << "  --loopcount=NUM          Number of test iterations (default: 1)\n";
     std::cout << "  --pulsewidth-ms=NUM      Pulse width in milliseconds (default: 25)\n";
     std::cout << "  --wait-ms=NUM            Wait time between pulses in ms (default: 50)\n";
@@ -126,6 +134,8 @@ bool parseArguments(int argc, char* argv[], Config& config)
             config.inputEvent = arg.substr(13);
         } else if (arg.find("--output-gpio=") == 0) {
             config.outputGpio = std::stoi(arg.substr(14));
+        } else if (arg.find("--output-probe=") == 0) {
+            config.outputProbe = std::stoi(arg.substr(15));
         } else if (arg.find("--loopcount=") == 0) {
             config.loopCount = std::stoi(arg.substr(12));
         } else if (arg.find("--pulsewidth-ms=") == 0) {
@@ -177,6 +187,17 @@ int runLatencyMeasure(const Config& config)
         std::cout << "GPIO " << config.outputGpio << " initialized\n";
     }
 
+    // Initialize probe GPIO if specified
+    if (config.outputProbe >= 0) {
+        if (!gpio.initProbe(config.outputProbe)) {
+            std::cerr << "Error: " << gpio.getLastError() << "\n";
+            return 1;
+        }
+        if (config.verbose) {
+            std::cout << "Probe GPIO " << config.outputProbe << " initialized (oscilloscope mode)\n";
+        }
+    }
+
     // Initialize touch reader
     TouchReader touch;
     if (config.inputEvent == "auto") {
@@ -217,6 +238,11 @@ int runLatencyMeasure(const Config& config)
         // Flush any old events from previous iterations
         touch.flush();
 
+        // Set probe LOW before pulse (if enabled)
+        if (gpio.isProbeInitialized()) {
+            gpio.setProbeLow();
+        }
+
         // Record timestamp immediately before pulse
         measurer.start();
         double pulseStartTime = measurer.getStartTime();
@@ -233,6 +259,11 @@ int runLatencyMeasure(const Config& config)
 
         if (touch.waitForEvent(event, timeout)) {
             if (event.type == TouchEventType::TouchDown) {
+                // Set probe HIGH when touch-down received (if enabled)
+                if (gpio.isProbeInitialized()) {
+                    gpio.setProbeHigh();
+                }
+
                 // Calculate latency using pulse start time
                 double eventTimeMs = event.timestamp * 1000.0;
                 double latency = eventTimeMs - pulseStartTime;
@@ -245,6 +276,10 @@ int runLatencyMeasure(const Config& config)
             }
         } else {
             missedCount++;
+            // Reset probe to idle HIGH on timeout
+            if (gpio.isProbeInitialized()) {
+                gpio.setProbeHigh();
+            }
             if (config.verbose) {
                 std::cout << "MISSED\n";
             }
@@ -292,6 +327,17 @@ int runTouchCount(const Config& config)
         return 1;
     }
 
+    // Initialize probe GPIO if specified
+    if (config.outputProbe >= 0) {
+        if (!gpio.initProbe(config.outputProbe)) {
+            std::cerr << "Error: " << gpio.getLastError() << "\n";
+            return 1;
+        }
+        if (config.verbose) {
+            std::cout << "Probe GPIO " << config.outputProbe << " initialized (oscilloscope mode)\n";
+        }
+    }
+
     // Initialize touch reader
     TouchReader touch;
     if (config.inputEvent == "auto") {
@@ -310,6 +356,11 @@ int runTouchCount(const Config& config)
     int receivedCount = 0;
 
     for (int i = 0; i < config.loopCount; i++) {
+        // Set probe LOW before pulse (if enabled)
+        if (gpio.isProbeInitialized()) {
+            gpio.setProbeLow();
+        }
+
         // Generate pulse
         if (!gpio.generatePulse(config.pulseWidthMs)) {
             std::cerr << "Error generating pulse: " << gpio.getLastError() << "\n";
@@ -322,7 +373,16 @@ int runTouchCount(const Config& config)
         TouchEvent event;
 
         if (touch.waitForEvent(event, timeout) && event.type == TouchEventType::TouchDown) {
+            // Set probe HIGH when touch-down received (if enabled)
+            if (gpio.isProbeInitialized()) {
+                gpio.setProbeHigh();
+            }
             receivedCount++;
+        } else {
+            // Reset probe to idle HIGH on timeout/miss
+            if (gpio.isProbeInitialized()) {
+                gpio.setProbeHigh();
+            }
         }
 
         // Wait before next iteration
@@ -371,14 +431,37 @@ int runTouchTrigger(const Config& config)
         return 1;
     }
 
+    // Initialize probe GPIO if specified
+    if (config.outputProbe >= 0) {
+        if (!gpio.initProbe(config.outputProbe)) {
+            std::cerr << "Error: " << gpio.getLastError() << "\n";
+            return 1;
+        }
+        if (config.verbose) {
+            std::cout << "Probe GPIO " << config.outputProbe << " initialized (oscilloscope mode)\n";
+        }
+    }
+
     for (int i = 0; i < config.loopCount; i++) {
         if (config.verbose) {
             std::cout << "Pulse " << (i + 1) << "/" << config.loopCount << "\n";
         }
 
+        // Set probe LOW before pulse (if enabled)
+        if (gpio.isProbeInitialized()) {
+            gpio.setProbeLow();
+        }
+
         if (!gpio.generatePulse(config.pulseWidthMs)) {
             std::cerr << "Error generating pulse: " << gpio.getLastError() << "\n";
             return 1;
+        }
+
+        // Set probe HIGH after pulse (if enabled)
+        // Note: In touchtrigger mode, we don't wait for touch events,
+        // so probe goes HIGH immediately after pulse ends
+        if (gpio.isProbeInitialized()) {
+            gpio.setProbeHigh();
         }
 
         if (i < config.loopCount - 1) {
@@ -406,6 +489,15 @@ int runVerify(const Config& config)
     }
     std::cout << "GPIO " << config.outputGpio << " initialized\n";
 
+    // Initialize probe GPIO if specified
+    if (config.outputProbe >= 0) {
+        if (!gpio.initProbe(config.outputProbe)) {
+            std::cerr << "Error: " << gpio.getLastError() << "\n";
+            return 1;
+        }
+        std::cout << "Probe GPIO " << config.outputProbe << " initialized (oscilloscope mode)\n";
+    }
+
     // Initialize touch reader
     TouchReader touch;
     if (config.inputEvent == "auto") {
@@ -425,6 +517,11 @@ int runVerify(const Config& config)
 
     std::cout << "\nGenerating single touch pulse (" << config.pulseWidthMs << " ms)...\n";
 
+    // Set probe LOW before pulse (if enabled)
+    if (gpio.isProbeInitialized()) {
+        gpio.setProbeLow();
+    }
+
     LatencyMeasurer measurer;
     measurer.start();
     double pulseStartTime = measurer.getStartTime();
@@ -440,6 +537,11 @@ int runVerify(const Config& config)
     TouchEvent event;
     if (touch.waitForEvent(event, 2000)) {
         if (event.type == TouchEventType::TouchDown) {
+            // Set probe HIGH when touch-down received (if enabled)
+            if (gpio.isProbeInitialized()) {
+                gpio.setProbeHigh();
+            }
+
             double touchDownTime = event.timestamp * 1000.0;
             double latency = touchDownTime - pulseStartTime;
 
@@ -451,6 +553,10 @@ int runVerify(const Config& config)
             std::cout << "  Latency: " << latency << " ms\n\n";
         }
     } else {
+        // Reset probe to idle HIGH on timeout
+        if (gpio.isProbeInitialized()) {
+            gpio.setProbeHigh();
+        }
         std::cout << "No touch-down event received (timeout)\n";
         return 1;
     }
