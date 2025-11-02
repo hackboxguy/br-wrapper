@@ -17,21 +17,21 @@ Usage: $0 [OPTIONS] COMMAND
 Send SCPI commands to Rigol oscilloscope over TCP/IP
 
 OPTIONS:
-    -i IP           IP address of oscilloscope (default: $DEFAULT_IP)
-    -p PORT         TCP port (default: $DEFAULT_PORT)  
+    --dso-ip IP     IP address of oscilloscope (default: $DEFAULT_IP)
+    -p PORT         TCP port (default: $DEFAULT_PORT)
     -q              Expect response (query mode)
     -t SEC          Connection timeout (default: $DEFAULT_TIMEOUT)
     -h              Show this help
 
 EXAMPLES:
-    $0 "*IDN?"                                    # Query instrument ID
-    $0 -q ":MEASure:NWIDth? CHAN1"               # Query measurement
-    $0 ":CHANnel1:DISPlay on"                    # Send command
-    $0 -i 192.168.1.100 ":CHANnel1:SCALe 2"     # Custom IP
+    $0 "*IDN?"                                        # Query instrument ID
+    $0 -q ":MEASure:NWIDth? CHAN1"                   # Query measurement
+    $0 ":CHANnel1:DISPlay on"                        # Send command
+    $0 --dso-ip 192.168.1.100 ":CHANnel1:SCALe 2"   # Custom IP
     
 BATCH MODE:
     Multiple commands can be sent by piping to stdin:
-    printf ":CHAN1:DISP on\\n:CHAN1:SCAL 2\\n" | $0 -i 192.168.1.7
+    printf ":CHAN1:DISP on\\n:CHAN1:SCAL 2\\n" | $0 --dso-ip 192.168.1.7
 
 EOF
 }
@@ -106,9 +106,9 @@ command=""
 # Parse command line arguments (POSIX compliant)
 while [ $# -gt 0 ]; do
     case $1 in
-        -i)
+        --dso-ip)
             if [ $# -lt 2 ]; then
-                printf "Error: -i requires an argument\n" >&2
+                printf "Error: --dso-ip requires an argument\n" >&2
                 exit 1
             fi
             ip="$2"

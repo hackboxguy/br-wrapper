@@ -44,6 +44,9 @@ message(STATUS "  Install systemd services: ${INSTALL_SYSTEMD_SERVICES}")
 # Add source subdirectory
 add_subdirectory(src)
 
+# Add DSO scripts subdirectory (handles oscilloscope automation installation)
+add_subdirectory(dso-scripts)
+
 # Print installation summary
 message(STATUS "")
 message(STATUS "Installation paths:")
