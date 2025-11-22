@@ -23,7 +23,7 @@ PatternController::PatternController(QObject *parent)
     // Initialize available patterns (added solid colors, removed white-text-black)
     m_patterns << "grayscale-ramp" << "ansi-checker" << "colorbar" << "white" << "black"
                << "red" << "green" << "blue" << "cyan" << "magenta" << "yellow"
-               << "zone-boundary-grid" << "blooming-detection" << "cross-dimming";
+               << "zone-boundary-grid" << "blooming-detection" << "cross-dimming" << "whitebox";
     m_currentPattern = m_patterns[0];
 }
 
@@ -607,6 +607,45 @@ bool PatternController::setPatternParameter(const QString &pattern, const QStrin
                 changed = true;
             }
         }
+    } else if (pattern == "whitebox") {
+        // Support multiple sizing modes: percent, pixels, mm
+        if ((param == "size" || param == "percent") && !values[0].isEmpty()) {
+            // Percent mode: whitebox size 10 OR whitebox percent 10
+            bool ok;
+            int size = values[0].toInt(&ok);
+            if (ok && size >= 1 && size <= 50) {
+                m_parameters.whiteboxMode = "percent";
+                m_parameters.whiteboxSize = size;
+                changed = true;
+            }
+        } else if (param == "pixels" && !values[0].isEmpty()) {
+            // Pixels mode: whitebox pixels 200
+            bool ok;
+            int pixels = values[0].toInt(&ok);
+            if (ok && pixels >= 1 && pixels <= 2000) {
+                m_parameters.whiteboxMode = "pixels";
+                m_parameters.whiteboxPixels = pixels;
+                changed = true;
+            }
+        } else if (param == "mm" && !values[0].isEmpty()) {
+            // MM mode: whitebox mm 50 diagonal-inch 15.6
+            bool ok;
+            float mm = values[0].toFloat(&ok);
+            if (ok && mm >= 1.0f && mm <= 500.0f) {
+                m_parameters.whiteboxMode = "mm";
+                m_parameters.whiteboxMM = mm;
+                changed = true;
+
+                // Check for optional diagonal-inch parameter
+                if (values.size() >= 3 && values[1] == "diagonal-inch") {
+                    bool diagOk;
+                    float diagonal = values[2].toFloat(&diagOk);
+                    if (diagOk && diagonal >= 5.0f && diagonal <= 100.0f) {
+                        m_parameters.whiteboxDiagonalInch = diagonal;
+                    }
+                }
+            }
+        }
     }
 
     if (changed) {
@@ -635,6 +674,12 @@ QString PatternController::getPatternParameter(const QString &pattern, const QSt
         if (param == "y") return QString::number(m_parameters.bloomingY);
     } else if (pattern == "cross-dimming") {
         if (param == "spots") return QString::number(m_parameters.crossDimmingSpots);
+    } else if (pattern == "whitebox") {
+        if (param == "size") return QString::number(m_parameters.whiteboxSize);
+        if (param == "mode") return m_parameters.whiteboxMode;
+        if (param == "pixels") return QString::number(m_parameters.whiteboxPixels);
+        if (param == "mm") return QString::number(m_parameters.whiteboxMM);
+        if (param == "diagonal-inch") return QString::number(m_parameters.whiteboxDiagonalInch);
     }
     return "";
 }

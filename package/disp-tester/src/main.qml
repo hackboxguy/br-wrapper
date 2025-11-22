@@ -56,6 +56,8 @@ Window {
                     return "qrc:/patterns/BloomingDetection.qml"
                 case "cross-dimming":
                     return "qrc:/patterns/CrossDimming.qml"
+                case "whitebox":
+                    return "qrc:/patterns/WhiteBox.qml"
                 default:
                     return "qrc:/patterns/GrayscaleRamp.qml"
             }
@@ -149,7 +151,7 @@ Window {
                 text: {
                     var patterns = ["grayscale-ramp", "ansi-checker", "colorbar","white", "black",
                                    "red", "green", "blue", "cyan", "magenta", "yellow",
-                                   "zone-boundary-grid", "blooming-detection", "cross-dimming"];
+                                   "zone-boundary-grid", "blooming-detection", "cross-dimming", "whitebox"];
                     var currentIndex = patterns.indexOf(patternController.currentPattern) + 1;
                     var totalPatterns = patterns.length;
                     return currentIndex + "/" + totalPatterns;
