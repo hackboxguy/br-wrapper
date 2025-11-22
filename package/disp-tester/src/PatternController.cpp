@@ -342,6 +342,9 @@ void PatternController::handleNetworkCommand(const QString &command)
         } else if (m_patterns.contains(pattern)) {
             // Check for pattern parameters
             if (parts.size() > 2) {
+                // First update the pattern, then set parameters
+                updatePattern(pattern);
+
                 QString param = parts[2].toLower();
                 QStringList values = parts.mid(3);
                 if (setPatternParameter(pattern, param, values)) {
