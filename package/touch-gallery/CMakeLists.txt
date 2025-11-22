@@ -17,6 +17,14 @@ set(CMAKE_AUTOUIC ON)
 # Source files
 set(SOURCES
     src/main.cpp
+    src/NetworkInterface.cpp
+    src/GalleryController.cpp
+)
+
+# Header files
+set(HEADERS
+    src/NetworkInterface.h
+    src/GalleryController.h
 )
 
 # QML resource files
@@ -25,7 +33,7 @@ set(RESOURCES
 )
 
 # Create executable
-add_executable(touch-gallery ${SOURCES} ${RESOURCES})
+add_executable(touch-gallery ${SOURCES} ${HEADERS} ${RESOURCES})
 
 # Link Qt5 libraries
 target_link_libraries(touch-gallery

@@ -18,10 +18,47 @@ ApplicationWindow {
 
     FolderListModel {
         id: folderModel
-        folder: picturesPath || "file:///Pictures"
+        folder: (typeof galleryController !== 'undefined' && galleryController.picturesDirectory)
+                ? "file://" + galleryController.picturesDirectory
+                : (picturesPath || "file:///Pictures")
         nameFilters: ["*.jpg", "*.jpeg", "*.png", "*.bmp", "*.gif", "*.tiff", "*.JPG", "*.JPEG", "*.PNG"]
         showDirs: false
         sortField: FolderListModel.Name
+
+        onCountChanged: {
+            // Notify controller of image count changes
+            if (typeof galleryController !== 'undefined') {
+                galleryController.setImageCount(count)
+            }
+        }
+    }
+
+    // Connect to GalleryController signals
+    Connections {
+        target: typeof galleryController !== 'undefined' ? galleryController : null
+
+        function onNavigateNext() {
+            nextImage()
+        }
+
+        function onNavigatePrevious() {
+            previousImage()
+        }
+
+        function onCurrentIndexChanged() {
+            // Sync QML current index with controller
+            currentImageIndex = galleryController.currentIndex
+        }
+
+        function onDisplayImageRequested(filePath) {
+            // Find and display the requested image
+            for (var i = 0; i < folderModel.count; i++) {
+                if (folderModel.get(i, "filePath") === filePath) {
+                    currentImageIndex = i
+                    break
+                }
+            }
+        }
     }
 
     Rectangle {
@@ -348,6 +385,10 @@ ApplicationWindow {
             if (!isSlideshow) {
                 showUITemporarily()
             }
+            // Update controller's current index
+            if (typeof galleryController !== 'undefined') {
+                galleryController.setCurrentIndex(currentImageIndex)
+            }
         }
     }
 
@@ -356,6 +397,10 @@ ApplicationWindow {
             currentImageIndex = currentImageIndex > 0 ? currentImageIndex - 1 : folderModel.count - 1
             if (!isSlideshow) {
                 showUITemporarily()
+            }
+            // Update controller's current index
+            if (typeof galleryController !== 'undefined') {
+                galleryController.setCurrentIndex(currentImageIndex)
             }
         }
     }
@@ -376,6 +421,11 @@ ApplicationWindow {
         showUITemporarily()
         if (isSlideshow && folderModel.count > 1) {
             console.log("Starting slideshow with", slideshowInterval/1000, "second interval")
+        }
+        // Initialize controller with current state
+        if (typeof galleryController !== 'undefined') {
+            galleryController.setImageCount(folderModel.count)
+            galleryController.setCurrentIndex(currentImageIndex)
         }
     }
 

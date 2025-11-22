@@ -1,0 +1,62 @@
+#ifndef GALLERYCONTROLLER_H
+#define GALLERYCONTROLLER_H
+
+#include <QObject>
+#include <QString>
+#include <QUrl>
+#include "NetworkInterface.h"
+
+// Default network server port
+#define DEFAULT_NETWORK_PORT 8086
+
+class GalleryController : public QObject
+{
+    Q_OBJECT
+    Q_PROPERTY(QString picturesDirectory READ picturesDirectory WRITE setPicturesDirectory NOTIFY picturesDirectoryChanged)
+    Q_PROPERTY(int currentIndex READ currentIndex WRITE setCurrentIndex NOTIFY currentIndexChanged)
+    Q_PROPERTY(int imageCount READ imageCount NOTIFY imageCountChanged)
+
+public:
+    explicit GalleryController(QObject *parent = nullptr);
+    ~GalleryController();
+
+    QString picturesDirectory() const { return m_picturesDirectory; }
+    void setPicturesDirectory(const QString &directory);
+
+    int currentIndex() const { return m_currentIndex; }
+    void setCurrentIndex(int index);
+
+    int imageCount() const { return m_imageCount; }
+    void setImageCount(int count);
+
+    bool startNetworkInterface(int port);
+
+public slots:
+    void nextImage();
+    void previousImage();
+    QString getCurrentImage() const;
+    QString listImages() const;
+
+signals:
+    void picturesDirectoryChanged();
+    void currentIndexChanged();
+    void imageCountChanged();
+    void navigateNext();
+    void navigatePrevious();
+    void displayImageRequested(const QString &filePath);
+
+private slots:
+    void handleNetworkCommand(const QString &command);
+
+private:
+    QString m_picturesDirectory;
+    int m_currentIndex;
+    int m_imageCount;
+    QStringList m_imageList;
+    NetworkInterface *m_networkInterface;
+
+    void updateImageList();
+    QString getImagePathAtIndex(int index) const;
+};
+
+#endif // GALLERYCONTROLLER_H
