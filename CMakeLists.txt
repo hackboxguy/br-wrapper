@@ -58,6 +58,7 @@ message(STATUS "========================================")
 # Add subdirectories for each package
 # These packages don't require Qt5
 add_subdirectory(package/disp-can-ctrl/src)
+add_subdirectory(package/hh983-serializer/src)
 
 # Add Qt packages if Qt5 was found
 if(Qt5_FOUND)
@@ -67,6 +68,22 @@ if(Qt5_FOUND)
     add_subdirectory(package/qt-mpv-wrapper)
 else()
     message(WARNING "Skipping Qt applications because Qt5 was not found")
+endif()
+
+# Install utility scripts from fs-overlay
+set(FS_OVERLAY_SBIN "${CMAKE_SOURCE_DIR}/board/pi4-touch-demo/fs-overlay/usr/sbin")
+if(EXISTS "${FS_OVERLAY_SBIN}")
+    install(PROGRAMS
+        "${FS_OVERLAY_SBIN}/measure-display-gamut.sh"
+        "${FS_OVERLAY_SBIN}/measure-display.sh"
+        "${FS_OVERLAY_SBIN}/usb-relay.sh"
+        "${FS_OVERLAY_SBIN}/validate-launcher-config.sh"
+        DESTINATION sbin
+        OPTIONAL
+    )
+    message(STATUS "Will install utility scripts to: ${CMAKE_INSTALL_PREFIX}/sbin")
+else()
+    message(STATUS "fs-overlay sbin directory not found at: ${FS_OVERLAY_SBIN}")
 endif()
 
 # Install sample data if requested
@@ -117,6 +134,7 @@ install(CODE "message(STATUS \"Or manually edit qt-demo-launcher.json to match y
 install(CODE "message(STATUS \"\")")
 install(CODE "message(STATUS \"Installed files:\")")
 install(CODE "message(STATUS \"  Binaries: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}/\")")
+install(CODE "message(STATUS \"  Utilities: ${CMAKE_INSTALL_PREFIX}/sbin/\")")
 install(CODE "message(STATUS \"  Configs:  ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/qt-apps/\")")
 if(INSTALL_SAMPLE_DATA)
     install(CODE "message(STATUS \"  Data:     ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/qt-apps/{Patterns,Pictures,Videos}/\")")
@@ -140,6 +158,7 @@ install(CODE "message(STATUS \"\")")
 message(STATUS "")
 message(STATUS "Configured packages:")
 message(STATUS "  - disp-can-ctrl (daemon)")
+message(STATUS "  - hh983-serializer (FPDLink initialization)")
 if(Qt5_FOUND)
     message(STATUS "  - qt-demo-launcher (Qt Widgets)")
     message(STATUS "  - disp-tester (Qt Quick)")
