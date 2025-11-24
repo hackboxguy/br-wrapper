@@ -82,7 +82,10 @@ OUTPUT FORMAT OPTIONS:
 PATTERN SOURCE OPTIONS:
     --pattern-source=TYPE  Pattern display method: mplayclt or disp-tester (default: mplayclt)
     --disp-tester-host=IP  disp-tester daemon host IP (default: 127.0.0.1)
-    --disp-tester-port=N   disp-tester daemon port (default: 8080)
+    --disp-tester-port=N   disp-tester daemon port (default: 8082)
+
+ENVIRONMENT VARIABLES:
+    LAUNCHER_CLIENT        Path to launcher-client binary (for disp-tester pattern control)
 
 PATTERN FILES (use 'none' to skip):
     --wfile=FILE           White pattern file (mplayclt) or any value to enable (disp-tester)
@@ -474,20 +477,35 @@ get_disp_tester_color() {
     esac
 }
 
-# Send command to disp-tester daemon
+# Send command to disp-tester daemon using launcher-client
 send_disp_tester_command() {
     local command="$1"
     local response
+    local launcher_client
 
-    log_debug "Sending disp-tester command: $command"
+    # Auto-detect launcher-client location
+    if [ -n "$LAUNCHER_CLIENT" ] && [ -x "$LAUNCHER_CLIENT" ]; then
+        launcher_client="$LAUNCHER_CLIENT"
+    elif [ -x "/usr/bin/launcher-client" ]; then
+        launcher_client="/usr/bin/launcher-client"
+    elif command -v launcher-client >/dev/null 2>&1; then
+        launcher_client="launcher-client"
+    else
+        log_error "launcher-client not found"
+        log_error "Set LAUNCHER_CLIENT environment variable or install launcher-client to PATH"
+        exit 1
+    fi
 
-    # Send command with 1 second timeout
-    response=$(echo "$command" | nc -q 1 "$DISP_TESTER_HOST" "$DISP_TESTER_PORT" 2>/dev/null)
-    local nc_exit_code=$?
+    log_debug "Sending disp-tester command via launcher-client: $command"
 
-    if [ $nc_exit_code -ne 0 ]; then
+    # Send command via launcher-client
+    response=$("$launcher_client" --srv="${DISP_TESTER_HOST}:${DISP_TESTER_PORT}" --command="$command" --timeoutsec=2 2>&1)
+    local exit_code=$?
+
+    if [ $exit_code -ne 0 ]; then
         log_error "Failed to connect to disp-tester at ${DISP_TESTER_HOST}:${DISP_TESTER_PORT}"
-        log_error "Ensure disp-tester daemon is running and accessible"
+        log_error "Ensure pattern-generator is running and accessible"
+        log_error "Response: $response"
         exit 1
     fi
 
