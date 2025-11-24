@@ -47,7 +47,7 @@ write_ser_reg() {
     local desc=$3
 
     echo -n "Writing 0x${value} to serializer reg 0x${reg} (${desc})... "
-    if i2cset -y ${I2C_BUS} ${SERIALIZER_ADDR} 0x${reg} 0x${value} 2>/dev/null; then
+    if i2cset -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x${reg} 0x${value} 2>/dev/null; then
         echo -e "${GREEN}OK${NC}"
         return 0
     else
@@ -61,7 +61,7 @@ read_ser_reg() {
     local reg=$1
     local desc=$2
 
-    local value=$(i2cget -y ${I2C_BUS} ${SERIALIZER_ADDR} 0x${reg} 2>/dev/null)
+    local value=$(i2cget -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x${reg} 2>/dev/null)
     if [ $? -eq 0 ]; then
         echo -e "Read serializer reg 0x${reg} (${desc}): ${GREEN}${value}${NC}"
         return 0
@@ -78,7 +78,7 @@ write_deser_reg() {
     local desc=$3
 
     echo -n "Writing 0x${value} to deserializer reg 0x${reg} (${desc})... "
-    if i2cset -y ${I2C_BUS} ${DESERIALIZER_ADDR} 0x${reg} 0x${value} 2>/dev/null; then
+    if i2cset -y ${I2C_BUS} 0x${DESERIALIZER_ADDR} 0x${reg} 0x${value} 2>/dev/null; then
         echo -e "${GREEN}OK${NC}"
         return 0
     else
@@ -92,7 +92,7 @@ read_deser_reg() {
     local reg=$1
     local desc=$2
 
-    local value=$(i2cget -y ${I2C_BUS} ${DESERIALIZER_ADDR} 0x${reg} 2>/dev/null)
+    local value=$(i2cget -y ${I2C_BUS} 0x${DESERIALIZER_ADDR} 0x${reg} 2>/dev/null)
     if [ $? -eq 0 ]; then
         echo -e "Read deserializer reg 0x${reg} (${desc}): ${GREEN}${value}${NC}"
         return 0
