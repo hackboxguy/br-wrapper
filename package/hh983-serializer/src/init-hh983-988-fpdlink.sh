@@ -108,7 +108,23 @@ write_ser "79" "92" "TARGET_ALIAS1: alias 0x49"
 write_ser "89" "20" "TARGET_DEST1: DES I2C Port 1"
 echo ""
 
-echo "=== Step 4: Verify Configuration ==="
+echo "=== Step 4: Configure REM_INTB (TDDI touch_int forwarding) ==="
+# Signal path: TDDI touch_int -> 988 INTB_IN (pin 45) -> BCC -> 983 REM_INTB -> Host GPIO
+#
+# 988 Deserializer: Enable INTB_IN forwarding (datasheet 7.3.9)
+#   RX_INTN_CTL (0x44) bit 7 = 1 enables INTB_IN -> back channel -> serializer
+write_des "44" "81" "INTB_IN enable (0x81 required, not 0x80!)"
+
+# 983 Serializer: Configure REM_INTB
+#   0xC6 = 0x21: Enable REM_INT
+#   0x1B = 0x98: GPIO4 for Port 1 REM_INT forwarding
+#   0x51 = 0x83: Enable global INTB output
+write_ser "c6" "21" "Enable REM_INT"
+write_ser "1b" "98" "GPIO4 = Port 1 REM_INT"
+write_ser "51" "83" "Global INTB enable"
+echo ""
+
+echo "=== Step 5: Verify Configuration ==="
 read_ser "07" "I2C Control"
 read_ser "70" "TARGET_ID0"
 read_ser "78" "TARGET_ALIAS0"
@@ -116,6 +132,10 @@ read_ser "88" "TARGET_DEST0"
 read_ser "71" "TARGET_ID1"
 read_ser "79" "TARGET_ALIAS1"
 read_ser "89" "TARGET_DEST1"
+read_ser "c6" "REM_INT Control"
+read_ser "1b" "GPIO4 Config"
+read_ser "51" "Global INT"
+read_des "44" "RX_INTN_CTL (INTB_IN)"
 echo ""
 
 printf "${GREEN}================================================${NC}\n"
@@ -123,6 +143,7 @@ printf "${GREEN}Initialization Complete${NC}\n"
 printf "${GREEN}================================================${NC}\n"
 echo ""
 echo "Expected: 0x48 and 0x49 visible in 'i2cdetect -r -y ${I2C_BUS}'"
+echo "REM_INTB chain: TDDI touch_int -> 988 INTB_IN -> BCC -> 983 REM_INTB -> Host"
 echo ""
 
 exit 0
