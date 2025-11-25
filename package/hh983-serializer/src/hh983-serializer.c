@@ -49,7 +49,7 @@ MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default
 
 /* 988 Deserializer configuration values */
 #define DES988_ENABLE_PASSTHROUGH 0xD9
-#define DES988_INTB_IN_ENABLE    0x80  /* Bit 7 = 1: Enable INTB_IN -> REM_INTB forwarding */
+#define DES988_INTB_IN_ENABLE    0x81  /* 0x81 required, not 0x80! Enables INTB_IN -> REM_INTB forwarding */
 
 /* TDDI I2C targets (7-bit addresses) */
 #define TDDI_ADDR_1              0x48
@@ -148,10 +148,10 @@ static int hh983_read_deser_reg(struct i2c_client *client, u8 deser_addr, u8 reg
 /* Configure REM_INTB on serializer (common to both modes) */
 static int hh983_configure_rem_intb(struct i2c_client *client, int port)
 {
-	int ret;
+	int ret, readback;
 	u8 gpio4_val = (port == 0) ? SER_GPIO4_PORT0_REM_INT : SER_GPIO4_PORT1_REM_INT;
 
-	dev_info(&client->dev, "Configuring REM_INTB for Port %d\n", port);
+	dev_info(&client->dev, "Configuring REM_INTB for Port %d (GPIO4=0x%02X)\n", port, gpio4_val);
 
 	/* Enable REM_INT in interrupt control */
 	ret = hh983_write_reg(client, SER_INTERRUPT_CTRL, SER_ENABLE_REM_INT);
@@ -160,10 +160,19 @@ static int hh983_configure_rem_intb(struct i2c_client *client, int port)
 	usleep_range(1000, 2000);
 
 	/* Configure GPIO4 for REM_INT forwarding */
+	dev_info(&client->dev, "Writing GPIO4_CONFIG (0x%02X) = 0x%02X\n", SER_GPIO4_CONFIG, gpio4_val);
 	ret = hh983_write_reg(client, SER_GPIO4_CONFIG, gpio4_val);
 	if (ret < 0)
 		return ret;
 	usleep_range(1000, 2000);
+
+	/* Verify write */
+	readback = hh983_read_reg(client, SER_GPIO4_CONFIG);
+	if (readback != gpio4_val)
+		dev_warn(&client->dev, "GPIO4_CONFIG readback mismatch: wrote 0x%02X, read 0x%02X\n",
+			 gpio4_val, readback);
+	else
+		dev_info(&client->dev, "GPIO4_CONFIG verified: 0x%02X\n", readback);
 
 	/* Enable global INTB */
 	ret = hh983_write_reg(client, SER_GLOBAL_INT, SER_ENABLE_GLOBAL_INT);
