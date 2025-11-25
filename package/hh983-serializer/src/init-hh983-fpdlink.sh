@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 #
 # HH983 FPDLink Serializer Initialization Script
 # Equivalent to hh983-serializer kernel module
@@ -20,15 +20,14 @@ DESERIALIZER_ADDR=2c
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Error handling
+# Exit on error
 set -e
-trap 'echo -e "${RED}Error: Script failed at line $LINENO${NC}"; exit 1' ERR
 
 # Check if running as root or with i2c permissions
 if ! i2cdetect -y ${I2C_BUS} >/dev/null 2>&1; then
-    echo -e "${RED}Error: Cannot access I2C bus ${I2C_BUS}. Run as root or add user to i2c group.${NC}"
+    printf "${RED}Error: Cannot access I2C bus ${I2C_BUS}. Run as root or add user to i2c group.${NC}\n"
     exit 1
 fi
 
@@ -42,62 +41,62 @@ echo ""
 
 # Function to write to serializer register
 write_ser_reg() {
-    local reg=$1
-    local value=$2
-    local desc=$3
+    reg=$1
+    value=$2
+    desc=$3
 
-    echo -n "Writing 0x${value} to serializer reg 0x${reg} (${desc})... "
+    printf "Writing 0x${value} to serializer reg 0x${reg} (${desc})... "
     if i2cset -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x${reg} 0x${value} 2>/dev/null; then
-        echo -e "${GREEN}OK${NC}"
+        printf "${GREEN}OK${NC}\n"
         return 0
     else
-        echo -e "${RED}FAILED${NC}"
+        printf "${RED}FAILED${NC}\n"
         return 1
     fi
 }
 
 # Function to read from serializer register
 read_ser_reg() {
-    local reg=$1
-    local desc=$2
+    reg=$1
+    desc=$2
 
-    local value=$(i2cget -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x${reg} 2>/dev/null)
+    value=$(i2cget -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x${reg} 2>/dev/null)
     if [ $? -eq 0 ]; then
-        echo -e "Read serializer reg 0x${reg} (${desc}): ${GREEN}${value}${NC}"
+        printf "Read serializer reg 0x${reg} (${desc}): ${GREEN}${value}${NC}\n"
         return 0
     else
-        echo -e "${RED}Failed to read reg 0x${reg}${NC}"
+        printf "${RED}Failed to read reg 0x${reg}${NC}\n"
         return 1
     fi
 }
 
 # Function to write to deserializer register
 write_deser_reg() {
-    local reg=$1
-    local value=$2
-    local desc=$3
+    reg=$1
+    value=$2
+    desc=$3
 
-    echo -n "Writing 0x${value} to deserializer reg 0x${reg} (${desc})... "
+    printf "Writing 0x${value} to deserializer reg 0x${reg} (${desc})... "
     if i2cset -y ${I2C_BUS} 0x${DESERIALIZER_ADDR} 0x${reg} 0x${value} 2>/dev/null; then
-        echo -e "${GREEN}OK${NC}"
+        printf "${GREEN}OK${NC}\n"
         return 0
     else
-        echo -e "${RED}FAILED${NC}"
+        printf "${RED}FAILED${NC}\n"
         return 1
     fi
 }
 
 # Function to read from deserializer register
 read_deser_reg() {
-    local reg=$1
-    local desc=$2
+    reg=$1
+    desc=$2
 
-    local value=$(i2cget -y ${I2C_BUS} 0x${DESERIALIZER_ADDR} 0x${reg} 2>/dev/null)
+    value=$(i2cget -y ${I2C_BUS} 0x${DESERIALIZER_ADDR} 0x${reg} 2>/dev/null)
     if [ $? -eq 0 ]; then
-        echo -e "Read deserializer reg 0x${reg} (${desc}): ${GREEN}${value}${NC}"
+        printf "Read deserializer reg 0x${reg} (${desc}): ${GREEN}${value}${NC}\n"
         return 0
     else
-        echo -e "${RED}Failed to read reg 0x${reg}${NC}"
+        printf "${RED}Failed to read reg 0x${reg}${NC}\n"
         return 1
     fi
 }
@@ -105,7 +104,7 @@ read_deser_reg() {
 echo "=== Step 1: Enable I2C Passthrough ==="
 write_ser_reg "07" "d8" "I2C Passthrough"
 echo "Waiting for passthrough to stabilize..."
-sleep 0.01
+sleep 1
 echo ""
 
 echo "=== Step 2: Configure REM_INTB on Serializer ==="
@@ -113,12 +112,10 @@ echo "=== Step 2: Configure REM_INTB on Serializer ==="
 # Enable REM_INT in interrupt control register (0xC6 = 0x21)
 # Bits [5] and [0] = 1
 write_ser_reg "c6" "21" "Enable REM_INT"
-sleep 0.001
 
 # Configure GPIO4 for Port 0 REM_INT forwarding (0x1B = 0x88)
 # Use 0x98 for Port 1 if needed in dual-port configurations
 write_ser_reg "1b" "88" "GPIO4 Port 0 REM_INT"
-sleep 0.001
 
 # Enable global INTB and FPD_TX interrupts (0x51 = 0x83)
 # Bit [7] = 1, Bits [1:0] = 0b11
@@ -137,9 +134,9 @@ read_ser_reg "51" "Global Interrupt"
 read_deser_reg "44" "Deserializer INTB"
 echo ""
 
-echo -e "${GREEN}========================================"
+printf "${GREEN}========================================\n"
 echo "HH983 Initialization Completed!"
-echo "========================================${NC}"
+printf "========================================${NC}\n"
 echo ""
 echo "REM_INTB pin is ready to mirror deserializer INTB_IN"
 echo ""
