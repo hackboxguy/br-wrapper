@@ -1,250 +1,352 @@
-// hh983_serializer.c
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * HH983 FPDLink Serializer Driver
+ *
+ * Supports two configurations:
+ *   Mode 0: DS90UH983 + DS90UH984 (REM_INTB forwarding)
+ *   Mode 1: DS90UH983 + DS90UH988 (I2C passthrough for TDDI + REM_INTB)
+ *
+ * Author: Albert David
+ */
+
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/of.h>
 #include <linux/delay.h>
 
-/* Register definitions */
-#define HH983_I2C_PASSTHROUGH_REG    0x07
-#define HH983_ENABLE_PASSTHROUGH     0xD8
+/* Configuration mode: 0=983+984, 1=983+988 */
+static int config_mode = 0;
+module_param(config_mode, int, 0444);
+MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default: 0)");
 
-/* REM_INTB configuration registers */
-#define HH983_INTERRUPT_CTRL_REG     0xC6
-#define HH983_GPIO4_CONFIG_REG       0x1B
-#define HH983_GLOBAL_INT_REG         0x51
+/* Common serializer registers */
+#define SER_I2C_CONTROL          0x07
+#define SER_GPIO4_CONFIG         0x1B
+#define SER_GLOBAL_INT           0x51
+#define SER_TARGET_ID0           0x70
+#define SER_TARGET_ID1           0x71
+#define SER_TARGET_ALIAS0        0x78
+#define SER_TARGET_ALIAS1        0x79
+#define SER_TARGET_DEST0         0x88
+#define SER_TARGET_DEST1         0x89
+#define SER_INTERRUPT_CTRL       0xC6
 
-/* REM_INTB configuration values */
-#define HH983_ENABLE_REM_INT         0x21  /* Set bits [5] and [0] */
-#define HH983_GPIO4_PORT0_REM_INT    0x88  /* Configure GPIO4 for Port 0 REM_INT */
-#define HH983_GPIO4_PORT1_REM_INT    0x98  /* Configure GPIO4 for Port 1 REM_INT */
-#define HH983_ENABLE_GLOBAL_INT      0x83  /* Set bit [7] and bits [1:0] = 0b11 */
+/* Serializer configuration values */
+#define SER_ENABLE_PASSTHROUGH   0xD8
+#define SER_ENABLE_REM_INT       0x21
+#define SER_GPIO4_PORT0_REM_INT  0x88
+#define SER_GPIO4_PORT1_REM_INT  0x98
+#define SER_ENABLE_GLOBAL_INT    0x83
+
+/* 984 Deserializer registers */
+#define DES984_INTB_ENABLE       0x44
+#define DES984_INTB_VALUE        0x81
+
+/* 988 Deserializer registers */
+#define DES988_I2C_CONTROL       0x04
+#define DES988_RX_LOCK_STATUS    0x53
+#define DES988_RX_INTN_CTL       0x44  /* INTB_IN enable register (datasheet 7.3.9) */
+
+/* 988 Deserializer configuration values */
+#define DES988_ENABLE_PASSTHROUGH 0xD9
+#define DES988_INTB_IN_ENABLE    0x80  /* Bit 7 = 1: Enable INTB_IN -> REM_INTB forwarding */
+
+/* TDDI I2C targets (7-bit addresses) */
+#define TDDI_ADDR_1              0x48
+#define TDDI_ADDR_2              0x49
+
+/* TARGET_ID/ALIAS format: (7-bit addr << 1) */
+#define MAKE_TARGET_ID(addr)     ((addr) << 1)
+
+/* TARGET_DEST format: [7:5]=port, [1:0]=depth */
+#define TARGET_DEST_PORT0        0x00
+#define TARGET_DEST_PORT1        0x20
 
 struct hh983_data {
-    struct i2c_client *client;
-    bool rem_intb_enabled;
+	struct i2c_client *client;
+	u8 deser_addr;
+	int mode;
+	bool initialized;
 };
 
-static int hh983_write_deserializer_reg(struct i2c_client *client, u8 deser_addr, u8 reg, u8 value)
+static int hh983_write_reg(struct i2c_client *client, u8 reg, u8 value)
 {
-    int ret;
-    struct i2c_msg msgs[1];
-    u8 buf[2];
+	int ret;
 
-    /* Prepare I2C message for deserializer */
-    buf[0] = reg;
-    buf[1] = value;
-
-    msgs[0].addr = deser_addr >> 1;  /* Convert to 7-bit address */
-    msgs[0].flags = 0;               /* Write operation */
-    msgs[0].len = 2;
-    msgs[0].buf = buf;
-
-    /* Send via back-channel through serializer */
-    ret = i2c_transfer(client->adapter, msgs, 1);
-    if (ret != 1) {
-        dev_err(&client->dev, "Failed to write deserializer reg 0x%02X: %d\n", reg, ret);
-        return ret < 0 ? ret : -EIO;
-    }
-
-    dev_info(&client->dev, "Wrote 0x%02X to deserializer[0x%02X] reg 0x%02X\n",
-             value, deser_addr, reg);
-    return 0;
+	ret = i2c_smbus_write_byte_data(client, reg, value);
+	if (ret < 0) {
+		dev_err(&client->dev, "Failed to write reg 0x%02X: %d\n", reg, ret);
+		return ret;
+	}
+	dev_dbg(&client->dev, "SER 0x%02X <- 0x%02X\n", reg, value);
+	return 0;
 }
 
-static int hh983_configure_deserializer_intb(struct i2c_client *client)
+static int hh983_read_reg(struct i2c_client *client, u8 reg)
 {
-    int ret;
+	int ret;
 
-    dev_info(&client->dev, "Configuring deserializer INTB functionality\n");
-
-    /* Enable INTB on DS90UH984 deserializer */
-    ret = hh983_write_deserializer_reg(client, 0x58, 0x44, 0x81);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to enable deserializer INTB: %d\n", ret);
-        return ret;
-    }
-
-    dev_info(&client->dev, "Deserializer INTB enabled successfully\n");
-    return 0;
+	ret = i2c_smbus_read_byte_data(client, reg);
+	if (ret < 0)
+		dev_err(&client->dev, "Failed to read reg 0x%02X: %d\n", reg, ret);
+	else
+		dev_dbg(&client->dev, "SER 0x%02X = 0x%02X\n", reg, ret);
+	return ret;
 }
 
-static int hh983_configure_rem_intb(struct i2c_client *client)
+static int hh983_write_deser_reg(struct i2c_client *client, u8 deser_addr, u8 reg, u8 value)
 {
-    int ret;
+	struct i2c_msg msg;
+	u8 buf[2];
+	int ret;
 
-    dev_info(&client->dev, "Configuring REM_INTB functionality\n");
+	buf[0] = reg;
+	buf[1] = value;
 
-    /* Step 1: Enable REM_INT in FPD-Link Transmitter interrupt
-     * Set Main Page Reg 0xC6[5] = 1, 0xC6[0] = 1
-     */
-    ret = i2c_smbus_write_byte_data(client, HH983_INTERRUPT_CTRL_REG,
-                                   HH983_ENABLE_REM_INT);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to enable REM_INT: %d\n", ret);
-        return ret;
-    }
-    dev_dbg(&client->dev, "REM_INT enabled in interrupt control register\n");
+	msg.addr = deser_addr;
+	msg.flags = 0;
+	msg.len = 2;
+	msg.buf = buf;
 
-    /* Small delay between register writes */
-    usleep_range(1000, 2000);
-
-    /* Step 2: Configure GPIO4 Output and forward REM_INT
-     * Writing 0x1B = 0x88 for Port 0 (standard configuration)
-     * Use 0x98 for Port 1 if needed in dual-port configurations
-     */
-    ret = i2c_smbus_write_byte_data(client, HH983_GPIO4_CONFIG_REG,
-                                   HH983_GPIO4_PORT0_REM_INT);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to configure GPIO4 for REM_INT: %d\n", ret);
-        return ret;
-    }
-    dev_dbg(&client->dev, "GPIO4 configured for Port 0 REM_INT forwarding\n");
-
-    /* Small delay between register writes */
-    usleep_range(1000, 2000);
-
-    /* Step 3: Enable Global INTB and FPD_TX Interrupts
-     * Set Main Page Reg 0x51[7] = 1, 0x51[1:0] = 0b11
-     */
-    ret = i2c_smbus_write_byte_data(client, HH983_GLOBAL_INT_REG,
-                                   HH983_ENABLE_GLOBAL_INT);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to enable global interrupts: %d\n", ret);
-        return ret;
-    }
-    dev_dbg(&client->dev, "Global INTB and FPD_TX interrupts enabled\n");
-
-    dev_info(&client->dev, "REM_INTB configuration completed successfully\n");
-    return 0;
+	ret = i2c_transfer(client->adapter, &msg, 1);
+	if (ret != 1) {
+		dev_err(&client->dev, "Failed to write DES[0x%02X] reg 0x%02X: %d\n",
+			deser_addr, reg, ret);
+		return ret < 0 ? ret : -EIO;
+	}
+	dev_dbg(&client->dev, "DES[0x%02X] 0x%02X <- 0x%02X\n", deser_addr, reg, value);
+	return 0;
 }
 
-static int hh983_verify_configuration(struct i2c_client *client)
+static int hh983_read_deser_reg(struct i2c_client *client, u8 deser_addr, u8 reg)
 {
-    int ret;
-    u8 reg_val;
+	struct i2c_msg msgs[2];
+	u8 reg_buf = reg;
+	u8 val_buf;
+	int ret;
 
-    /* Verify interrupt control register */
-    ret = i2c_smbus_read_byte_data(client, HH983_INTERRUPT_CTRL_REG);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to read interrupt control register: %d\n", ret);
-        return ret;
-    }
-    reg_val = (u8)ret;
-    dev_info(&client->dev, "Interrupt control reg (0xC6): 0x%02X\n", reg_val);
+	msgs[0].addr = deser_addr;
+	msgs[0].flags = 0;
+	msgs[0].len = 1;
+	msgs[0].buf = &reg_buf;
 
-    /* Verify GPIO4 configuration */
-    ret = i2c_smbus_read_byte_data(client, HH983_GPIO4_CONFIG_REG);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to read GPIO4 config register: %d\n", ret);
-        return ret;
-    }
-    reg_val = (u8)ret;
-    dev_info(&client->dev, "GPIO4 config reg (0x1B): 0x%02X\n", reg_val);
+	msgs[1].addr = deser_addr;
+	msgs[1].flags = I2C_M_RD;
+	msgs[1].len = 1;
+	msgs[1].buf = &val_buf;
 
-    /* Verify global interrupt register */
-    ret = i2c_smbus_read_byte_data(client, HH983_GLOBAL_INT_REG);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to read global interrupt register: %d\n", ret);
-        return ret;
-    }
-    reg_val = (u8)ret;
-    dev_info(&client->dev, "Global interrupt reg (0x51): 0x%02X\n", reg_val);
+	ret = i2c_transfer(client->adapter, msgs, 2);
+	if (ret != 2) {
+		dev_err(&client->dev, "Failed to read DES[0x%02X] reg 0x%02X: %d\n",
+			deser_addr, reg, ret);
+		return ret < 0 ? ret : -EIO;
+	}
+	dev_dbg(&client->dev, "DES[0x%02X] 0x%02X = 0x%02X\n", deser_addr, reg, val_buf);
+	return val_buf;
+}
 
-    return 0;
+/* Configure REM_INTB on serializer (common to both modes) */
+static int hh983_configure_rem_intb(struct i2c_client *client, int port)
+{
+	int ret;
+	u8 gpio4_val = (port == 0) ? SER_GPIO4_PORT0_REM_INT : SER_GPIO4_PORT1_REM_INT;
+
+	dev_info(&client->dev, "Configuring REM_INTB for Port %d\n", port);
+
+	/* Enable REM_INT in interrupt control */
+	ret = hh983_write_reg(client, SER_INTERRUPT_CTRL, SER_ENABLE_REM_INT);
+	if (ret < 0)
+		return ret;
+	usleep_range(1000, 2000);
+
+	/* Configure GPIO4 for REM_INT forwarding */
+	ret = hh983_write_reg(client, SER_GPIO4_CONFIG, gpio4_val);
+	if (ret < 0)
+		return ret;
+	usleep_range(1000, 2000);
+
+	/* Enable global INTB */
+	ret = hh983_write_reg(client, SER_GLOBAL_INT, SER_ENABLE_GLOBAL_INT);
+	if (ret < 0)
+		return ret;
+
+	return 0;
+}
+
+/* Mode 0: 983 + 984 configuration */
+static int hh983_init_mode_984(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int ret;
+
+	dev_info(&client->dev, "Initializing Mode 0: 983 + 984\n");
+
+	/* Enable I2C passthrough on serializer */
+	ret = hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
+	if (ret < 0)
+		return ret;
+	msleep(10);
+
+	/* Configure REM_INTB for Port 0 */
+	ret = hh983_configure_rem_intb(client, 0);
+	if (ret < 0)
+		return ret;
+
+	/* Enable INTB on 984 deserializer */
+	ret = hh983_write_deser_reg(client, data->deser_addr, DES984_INTB_ENABLE, DES984_INTB_VALUE);
+	if (ret < 0) {
+		dev_err(&client->dev, "Failed to configure 984 INTB\n");
+		return ret;
+	}
+
+	dev_info(&client->dev, "Mode 0 (983+984) initialization complete\n");
+	return 0;
+}
+
+/* Mode 1: 983 + 988 configuration */
+static int hh983_init_mode_988(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int ret;
+
+	dev_info(&client->dev, "Initializing Mode 1: 983 + 988 (TDDI passthrough)\n");
+
+	/* Step 1: Enable I2C passthrough on serializer */
+	ret = hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
+	if (ret < 0)
+		return ret;
+	msleep(10);
+
+	/* Step 2: Enable I2C passthrough on 988 deserializer */
+	ret = hh983_write_deser_reg(client, data->deser_addr, DES988_I2C_CONTROL, DES988_ENABLE_PASSTHROUGH);
+	if (ret < 0) {
+		dev_err(&client->dev, "Failed to enable 988 passthrough\n");
+		return ret;
+	}
+	usleep_range(5000, 10000);
+
+	/* Step 3: Check link status */
+	ret = hh983_read_deser_reg(client, data->deser_addr, DES988_RX_LOCK_STATUS);
+	if (ret >= 0)
+		dev_info(&client->dev, "988 RX Lock Status: 0x%02X\n", ret);
+
+	/* Step 4: Configure TARGET_ID/ALIAS/DEST for TDDI 0x48 -> Port 1 */
+	ret = hh983_write_reg(client, SER_TARGET_ID0, MAKE_TARGET_ID(TDDI_ADDR_1));
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_TARGET_ALIAS0, MAKE_TARGET_ID(TDDI_ADDR_1));
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_TARGET_DEST0, TARGET_DEST_PORT1);
+	if (ret < 0)
+		return ret;
+
+	/* Step 5: Configure TARGET_ID/ALIAS/DEST for TDDI 0x49 -> Port 1 */
+	ret = hh983_write_reg(client, SER_TARGET_ID1, MAKE_TARGET_ID(TDDI_ADDR_2));
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_TARGET_ALIAS1, MAKE_TARGET_ID(TDDI_ADDR_2));
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_TARGET_DEST1, TARGET_DEST_PORT1);
+	if (ret < 0)
+		return ret;
+
+	/* Step 6: Configure REM_INTB for Port 1 (TDDI touch_int -> 988 INTB_IN -> 983 REM_INTB) */
+	ret = hh983_configure_rem_intb(client, 1);
+	if (ret < 0)
+		return ret;
+
+	/* Step 7: Enable INTB_IN forwarding on 988 deserializer (datasheet 7.3.9)
+	 * RX_INTN_CTL (0x44) bit 7 = 1 enables INTB_IN -> back channel -> REM_INTB
+	 * Signal path: TDDI touch_int -> 988 INTB_IN (pin 45) -> BCC -> 983 REM_INTB -> Host GPIO
+	 */
+	ret = hh983_write_deser_reg(client, data->deser_addr, DES988_RX_INTN_CTL, DES988_INTB_IN_ENABLE);
+	if (ret < 0) {
+		dev_warn(&client->dev, "Failed to configure 988 INTB_IN forwarding\n");
+		/* Don't fail - passthrough may still work */
+	}
+
+	dev_info(&client->dev, "Mode 1 (983+988) initialization complete\n");
+	dev_info(&client->dev, "TDDI 0x%02X and 0x%02X should be visible on I2C bus\n",
+		 TDDI_ADDR_1, TDDI_ADDR_2);
+	return 0;
 }
 
 static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
-    struct hh983_data *data;
-    int ret;
+	struct hh983_data *data;
+	int ret;
 
-    dev_info(&client->dev, "Initializing HH983 FPDLink serializer\n");
+	dev_info(&client->dev, "HH983 FPDLink serializer probe (config_mode=%d)\n", config_mode);
 
-    /* Allocate driver data */
-    data = devm_kzalloc(&client->dev, sizeof(*data), GFP_KERNEL);
-    if (!data)
-        return -ENOMEM;
+	data = devm_kzalloc(&client->dev, sizeof(*data), GFP_KERNEL);
+	if (!data)
+		return -ENOMEM;
 
-    data->client = client;
-    i2c_set_clientdata(client, data);
+	data->client = client;
+	data->deser_addr = 0x2C;  /* Default deserializer address */
+	data->mode = config_mode;
+	i2c_set_clientdata(client, data);
 
-    /* Step 1: Enable I2C passthrough */
-    ret = i2c_smbus_write_byte_data(client, HH983_I2C_PASSTHROUGH_REG,
-                                   HH983_ENABLE_PASSTHROUGH);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to enable I2C passthrough: %d\n", ret);
-        return ret;
-    }
-    dev_info(&client->dev, "HH983 I2C passthrough enabled\n");
+	switch (data->mode) {
+	case 0:
+		ret = hh983_init_mode_984(data);
+		break;
+	case 1:
+		ret = hh983_init_mode_988(data);
+		break;
+	default:
+		dev_err(&client->dev, "Invalid config_mode %d (use 0 or 1)\n", data->mode);
+		return -EINVAL;
+	}
 
-    /* Allow some time for passthrough to stabilize */
-    msleep(10);
+	if (ret < 0) {
+		dev_err(&client->dev, "Initialization failed: %d\n", ret);
+		return ret;
+	}
 
-    /* Step 2: Configure REM_INTB functionality */
-    ret = hh983_configure_rem_intb(client);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to configure REM_INTB: %d\n", ret);
-        return ret;
-    }
-    data->rem_intb_enabled = true;
-
-    /* Step 3: Configure deserializer INTB */
-    ret = hh983_configure_deserializer_intb(client);
-    if (ret < 0) {
-        dev_err(&client->dev, "Failed to configure deserializer INTB: %d\n", ret);
-        return ret;
-    }
-
-    /* Step 4: Verify configuration (optional, for debugging) */
-    ret = hh983_verify_configuration(client);
-    if (ret < 0) {
-        dev_warn(&client->dev, "Configuration verification failed: %d\n", ret);
-        /* Don't fail probe on verification failure */
-    }
-
-    dev_info(&client->dev, "HH983 initialization completed successfully\n");
-    dev_info(&client->dev, "REM_INTB pin ready to mirror deserializer INTB_IN\n");
-
-    return 0;
+	data->initialized = true;
+	dev_info(&client->dev, "HH983 initialization successful\n");
+	return 0;
 }
 
 static void hh983_remove(struct i2c_client *client)
 {
-    struct hh983_data *data = i2c_get_clientdata(client);
+	struct hh983_data *data = i2c_get_clientdata(client);
 
-    dev_info(&client->dev, "Removing HH983 FPDLink serializer driver\n");
+	dev_info(&client->dev, "HH983 driver removed\n");
 
-    /* Optional: Disable REM_INTB on removal */
-    if (data && data->rem_intb_enabled) {
-        i2c_smbus_write_byte_data(client, HH983_GPIO4_CONFIG_REG, 0x00);
-        dev_info(&client->dev, "REM_INTB functionality disabled\n");
-    }
+	if (data && data->initialized) {
+		/* Disable GPIO4 REM_INT forwarding */
+		hh983_write_reg(client, SER_GPIO4_CONFIG, 0x00);
+	}
 }
 
 static const struct i2c_device_id hh983_id[] = {
-    { "hh983-serializer", 0 },
-    { }
+	{ "hh983-serializer", 0 },
+	{ }
 };
 MODULE_DEVICE_TABLE(i2c, hh983_id);
 
 static const struct of_device_id hh983_of_match[] = {
-    { .compatible = "ti,hh983-serializer" },
-    { }
+	{ .compatible = "ti,hh983-serializer" },
+	{ }
 };
 MODULE_DEVICE_TABLE(of, hh983_of_match);
 
 static struct i2c_driver hh983_driver = {
-    .probe = hh983_probe,
-    .remove = hh983_remove,
-    .id_table = hh983_id,
-    .driver = {
-        .name = "hh983-serializer",
-        .of_match_table = hh983_of_match,
-    },
+	.probe = hh983_probe,
+	.remove = hh983_remove,
+	.id_table = hh983_id,
+	.driver = {
+		.name = "hh983-serializer",
+		.of_match_table = hh983_of_match,
+	},
 };
 
 module_i2c_driver(hh983_driver);
 
-MODULE_DESCRIPTION("HH983 FPDLink Serializer Driver with REM_INTB support");
+MODULE_DESCRIPTION("HH983 FPDLink Serializer Driver (983+984 / 983+988)");
 MODULE_AUTHOR("Albert David");
 MODULE_LICENSE("GPL");
