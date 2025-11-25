@@ -1,0 +1,9 @@
+config BR2_PACKAGE_HIMAX_TOUCH
+	bool "himax-touch"
+	depends on BR2_LINUX_KERNEL
+	select BR2_PACKAGE_HH983_SERIALIZER
+	help
+	  Himax TDDI touchscreen driver (I2C) supporting HX83180,
+	  HX83181, HX83192, HX83193 chips. Auto-detects connected
+	  TDDI chip. Includes debug and self-test functions.
+	  Installs DT overlay for RPi4.
