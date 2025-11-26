@@ -11,7 +11,7 @@ arm_boost=1
 dtoverlay=vc4-fkms-v3d
 disable_fw_kms_setup=1
 max_framebuffers=2
-
+dtoverlay=himax-touch
 display_auto_detect=1
 
 [cm4]
