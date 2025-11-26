@@ -261,8 +261,14 @@ static int hh983_init_mode_988(struct hh983_data *data)
 	if (ret < 0)
 		return ret;
 
-	/* Step 6: Configure REM_INTB for Port 1 (TDDI touch_int -> 988 INTB_IN -> 983 REM_INTB) */
-	ret = hh983_configure_rem_intb(client, 1);
+	/* Step 6: Configure REM_INTB for Port 0
+	 * IMPORTANT: Use Port 0, NOT Port 1!
+	 * - TARGET_DEST_PORT1 routes I2C to the 988's I2C Port 1 (where TDDI is connected)
+	 * - But REM_INT comes over the single FPDLink link, which is always Port 0
+	 * - The 983 has only one deserializer (988) connected = FPDLink Port 0
+	 * Signal path: TDDI touch_int -> 988 INTB_IN -> BCC Port 0 -> 983 REM_INTB -> GPIO4
+	 */
+	ret = hh983_configure_rem_intb(client, 0);
 	if (ret < 0)
 		return ret;
 
