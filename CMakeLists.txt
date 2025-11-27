@@ -28,7 +28,7 @@ option(AUTO_UPDATE_CONFIG_PATHS "Automatically update qt-demo-launcher.json path
 
 # Find Qt5 components required by all Qt apps
 # We find all components here to avoid redundant searches in subdirectories
-find_package(Qt5 COMPONENTS Core Gui Widgets Network Qml Quick QUIET)
+find_package(Qt5 COMPONENTS Core Gui Widgets Network Qml Quick QuickControls2 QUIET)
 
 if(Qt5_FOUND)
     message(STATUS "Qt5 found: ${Qt5_VERSION}")
@@ -64,6 +64,7 @@ add_subdirectory(package/hh983-serializer/src)
 if(Qt5_FOUND)
     add_subdirectory(package/qt-demo-launcher)
     add_subdirectory(package/disp-tester)
+    add_subdirectory(package/disp-settings)
     add_subdirectory(package/touch-gallery)
     add_subdirectory(package/qt-mpv-wrapper)
 else()
@@ -162,6 +163,7 @@ message(STATUS "  - hh983-serializer (FPDLink initialization)")
 if(Qt5_FOUND)
     message(STATUS "  - qt-demo-launcher (Qt Widgets)")
     message(STATUS "  - disp-tester (Qt Quick)")
+    message(STATUS "  - disp-settings (Qt Quick)")
     message(STATUS "  - touch-gallery (Qt Quick)")
     message(STATUS "  - qt-mpv-wrapper (Qt Quick)")
 endif()

@@ -1,7 +1,7 @@
 {
   "launcher": {
     "title": {
-      "text": "Display Demonstrator",
+      "text": "Display-Diagnostic-Tool",
       "logo": "/usr/share/icons/company-logo-large.png",
       "logo_size": {
         "width": 200,
@@ -17,7 +17,7 @@
     },
     "layout": {
       "type": "grid",
-      "columns": 2,
+      "columns": 3,
       "rows": 3,
       "spacing": 30,
       "margins": {
@@ -60,7 +60,7 @@
         "text": "Slideshow",
         "icon": "/usr/share/icons/slideshow-large.png",
         "program": "/usr/bin/touch-gallery",
-        "arguments": ["/Pictures", "slideshow", "5"],
+        "arguments": ["/Pictures", "--slideshow", "5"],
         "working_directory": "/Pictures",
         "position": {
           "row": 0,
@@ -78,6 +78,32 @@
         "font_size": 30,
         "background_color": "#27AE60",
         "hover_color": "#229954",
+        "border_radius": 20
+      },
+      {
+        "id": "test-pictures",
+        "enabled": true,
+        "text": "Test Pictures",
+        "icon": "/usr/share/icons/gallery-large.png",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": ["/Patterns"],
+        "working_directory": "/Patterns",
+        "position": {
+          "row": 0,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#8E4450",
+        "hover_color": "#2C3E50",
         "border_radius": 20
       },
       {
@@ -133,15 +159,15 @@
         "border_radius": 20
       },
       {
-        "id": "test-pictures",
+        "id": "video-player",
         "enabled": true,
-        "text": "Test Pictures",
-        "icon": "/usr/share/icons/gallery-large.png",
-        "program": "/usr/bin/touch-gallery",
-        "arguments": ["/Patterns"],
-        "working_directory": "/Patterns",
+        "text": "Video Player",
+        "icon": "/usr/share/icons/video-large.png",
+        "program": "/usr/bin/qt-mpv-wrapper.sh",
+        "arguments": ["/Videos", "--port", "8084"],
+        "working_directory": "/tmp",
         "position": {
-          "row": 0,
+          "row": 1,
           "column": 2
         },
         "size": {
@@ -154,8 +180,34 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
-        "background_color": "#8E4450",
-        "hover_color": "#2C3E50",
+        "background_color": "#E67E22",
+        "hover_color": "#D35400",
+        "border_radius": 20
+      },
+      {
+        "id": "disp-settings",
+        "enabled": true,
+        "text": "Display Settings",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-settings",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 2,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#16A085",
+        "hover_color": "#1ABC9C",
         "border_radius": 20
       },
       {
@@ -165,7 +217,7 @@
         "icon": "/usr/share/icons/power-off.png",
         "action": "quit",
         "position": {
-          "row": 1,
+          "row": 2,
           "column": 2
         },
         "size": {
@@ -181,7 +233,7 @@
         "background_color": "#8E4000",
         "hover_color": "#D32F2F",
         "border_radius": 12
-      } 
+      }
     ]
   }
 }

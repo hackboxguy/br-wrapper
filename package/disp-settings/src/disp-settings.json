@@ -1,0 +1,17 @@
+{
+  "als_dimmer": {
+    "socket_path": "/tmp/als-dimmer.sock",
+    "poll_interval_ms": 500
+  },
+  "fpga": {
+    "i2c_bus": "/dev/i2c-1",
+    "i2c_address": "0x1D"
+  },
+  "temperature": {
+    "poll_interval_ms": 1000
+  },
+  "network": {
+    "enabled": true,
+    "port": 8087
+  }
+}
