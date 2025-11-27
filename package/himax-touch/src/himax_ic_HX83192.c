@@ -383,9 +383,9 @@ static bool hx83192_chip_detect(void)
 			(tmp_data[1] == 0x2AU)) {
 
 			if (tmp_data[0] == 0x05U) {
-				strlcpy(private_ts->chip_name, HX_83192D_PWON, 30);
+				strscpy(private_ts->chip_name, HX_83192D_PWON, 30);
 			} else {
-				strlcpy(private_ts->chip_name, HX_83192A_PWON, 30);
+				strscpy(private_ts->chip_name, HX_83192A_PWON, 30);
 			}
 
 			ic_data->HX_FW_SIZE = FW_SIZE_128k;

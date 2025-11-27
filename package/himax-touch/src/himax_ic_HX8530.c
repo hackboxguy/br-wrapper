@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0
 /*  Himax Android Driver Sample Code for hx8530 chipset
  *
  *  Copyright (C) 2024 Himax Corporation.
@@ -773,7 +773,7 @@ static bool HX8530_chip_detect(void)
 			if ((tmp_data[3] == 0x85U) && (tmp_data[2] == 0x30U) &&
 				((tmp_data[1] == 0x0AU) || (tmp_data[1] == 0x0BU))) {
 
-				strlcpy(private_ts->chip_name, HX_8530_PWON, 30);
+				strscpy(private_ts->chip_name, HX_8530_PWON, 30);
 				ic_data->HX_FW_SIZE = FW_SIZE_255k;
 				ret_data = true;
 				break;

@@ -13,6 +13,7 @@
  *  GNU General Public License for more details.
  */
 
+#include <linux/version.h>
 #include "himax_platform.h"
 #include "himax_common.h"
 
@@ -1170,13 +1171,31 @@ int drm_notifier_callback(struct notifier_block *self, unsigned long event,
 }
 #endif
 
-int himax_chip_common_probe(struct i2c_client *client,
-			    const struct i2c_device_id *id)
+/* Kernel 6.3+ changed I2C probe signature - handle both versions */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+int himax_chip_common_probe(struct i2c_client *client)
+#else
+int himax_chip_common_probe(struct i2c_client *client, const struct i2c_device_id *id)
+#endif
 {
 	int ret = 0;
 	struct himax_ts_data *ts;
+	uint8_t test_buf[4];
+	struct i2c_msg test_msg;
 
-	UNUSED(id);
+	/* Early I2C connectivity test - if FPDLink passthrough isn't ready,
+	 * defer probe so kernel retries after hh983-serializer initializes.
+	 * This is the standard Linux pattern for handling device dependencies.
+	 */
+	test_msg.addr = client->addr;
+	test_msg.flags = I2C_M_RD;
+	test_msg.len = 1;
+	test_msg.buf = test_buf;
+	ret = i2c_transfer(client->adapter, &test_msg, 1);
+	if (ret < 0) {
+		dev_info(&client->dev, "I2C not ready (FPDLink?), deferring probe\n");
+		return -EPROBE_DEFER;
+	}
 
 	gp_rw_buf = kcalloc(BUS_RW_MAX_LEN, sizeof(uint8_t), GFP_KERNEL);
 	if (gp_rw_buf == NULL) {
@@ -1296,3 +1315,7 @@ module_exit(himax_common_exit);
 
 MODULE_DESCRIPTION("Himax_common driver");
 MODULE_LICENSE("GPL");
+/* Note: If using with FPDLink (hh983-serializer), add to /etc/modprobe.d/:
+ *   softdep himax_mmi pre: hh983-serializer
+ * The driver handles probe ordering via -EPROBE_DEFER automatically.
+ */

@@ -10,6 +10,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/version.h>
 #include <linux/i2c.h>
 #include <linux/of.h>
 #include <linux/delay.h>
@@ -285,10 +286,23 @@ static int hh983_init_mode_988(struct hh983_data *data)
 	dev_info(&client->dev, "Mode 1 (983+988) initialization complete\n");
 	dev_info(&client->dev, "TDDI 0x%02X and 0x%02X should be visible on I2C bus\n",
 		 TDDI_ADDR_1, TDDI_ADDR_2);
+
+	/* Allow FPDLink I2C passthrough to fully stabilize before returning.
+	 * The himax touch driver may probe during this delay via deferred probe.
+	 * Initial I2C commands work but touch reporting can be degraded if the
+	 * link isn't fully stable. 100ms provides adequate stabilization.
+	 */
+	msleep(100);
+
 	return 0;
 }
 
+/* Kernel 6.3+ changed I2C probe signature - handle both versions */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
+static int hh983_probe(struct i2c_client *client)
+#else
 static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id)
+#endif
 {
 	struct hh983_data *data;
 	int ret;

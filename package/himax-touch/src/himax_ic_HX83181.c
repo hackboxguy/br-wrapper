@@ -836,7 +836,7 @@ static bool hx83181_chip_detect(void)
 				W("%s: @Unknown Type\n");
 			}
 
-			strlcpy(private_ts->chip_name, HX_83181A_PWON, 30);
+			strscpy(private_ts->chip_name, HX_83181A_PWON, 30);
 			ic_data->HX_FW_SIZE = FW_SIZE_255k;
 			ret_data = true;
 			break;

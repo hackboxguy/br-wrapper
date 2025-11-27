@@ -29,6 +29,10 @@ Environment="QT_QPA_EGLFS_PHYSICAL_WIDTH=155"
 Environment="QT_QPA_EGLFS_PHYSICAL_HEIGHT=86"
 Environment="QT_QPA_FONTDIR=/usr/share/fonts/dejavu/"
 Environment="QT_LOGGING_RULES=*.debug=false"
+# Disable libinput plugin to use direct evdev for touch - prevents touch event filtering
+# that can cause thin/dotted lines in drawing applications
+Environment="QT_QPA_FB_NO_LIBINPUT=1"
+Environment="QT_QPA_EGLFS_NO_LIBINPUT=1"
 
 # Runtime directory
 Environment="XDG_RUNTIME_DIR=/tmp/runtime-root-pi"
