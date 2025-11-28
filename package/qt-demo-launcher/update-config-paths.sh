@@ -25,6 +25,7 @@ echo "Backup saved as $CONFIG_FILE.backup"
 # Binaries are in ${BASE_PATH}/bin/
 sed -i "s|/usr/bin/touch-gallery|$BASE_PATH/bin/touch-gallery|g" "$CONFIG_FILE"
 sed -i "s|/usr/bin/disp-tester|$BASE_PATH/bin/disp-tester|g" "$CONFIG_FILE"
+sed -i "s|/usr/bin/disp-settings|$BASE_PATH/bin/disp-settings|g" "$CONFIG_FILE"
 
 # Update fingerpaint to system Qt examples location (not part of our build)
 # Detect architecture and use appropriate path

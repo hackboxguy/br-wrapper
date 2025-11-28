@@ -291,6 +291,9 @@ void AlsDimmerController::processBrightnessUpdate()
 
     m_brightnessUpdatePending = false;
 
+    // Request immediate status update for instant UI feedback
+    pollStatus();
+
     // If there might be more updates coming, restart the throttle timer
     m_brightnessThrottle->start();
 }
@@ -311,6 +314,9 @@ void AlsDimmerController::setAdaptiveMode(bool enabled)
     cmd["params"] = params;
 
     sendCommand(cmd);
+
+    // Request immediate status update for instant UI feedback
+    pollStatus();
 }
 
 void AlsDimmerController::adjustBrightness(int delta)
@@ -329,4 +335,7 @@ void AlsDimmerController::adjustBrightness(int delta)
     cmd["params"] = params;
 
     sendCommand(cmd);
+
+    // Request immediate status update for instant UI feedback
+    pollStatus();
 }
