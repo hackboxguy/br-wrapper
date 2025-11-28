@@ -28,7 +28,8 @@ option(AUTO_UPDATE_CONFIG_PATHS "Automatically update qt-demo-launcher.json path
 
 # Find Qt5 components required by all Qt apps
 # We find all components here to avoid redundant searches in subdirectories
-find_package(Qt5 COMPONENTS Core Gui Widgets Network Qml Quick QuickControls2 QUIET)
+# Note: QuickControls2 is found separately in packages that need it (disp-settings)
+find_package(Qt5 COMPONENTS Core Gui Widgets Network Qml Quick QUIET)
 
 if(Qt5_FOUND)
     message(STATUS "Qt5 found: ${Qt5_VERSION}")
