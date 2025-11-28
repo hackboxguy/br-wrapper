@@ -175,12 +175,13 @@ Window {
                             enabled: alsDimmer.connected
                             stepSize: 1
 
-                            // Update from controller when not dragging
+                            // Only sync from controller in auto mode (not manual)
+                            // In manual mode, slider is "fire and forget"
                             Binding {
                                 target: brightnessSlider
                                 property: "value"
                                 value: alsDimmer.brightness
-                                when: !userDraggingBrightness
+                                when: !userDraggingBrightness && alsDimmer.mode === "auto"
                             }
 
                             background: Rectangle {
