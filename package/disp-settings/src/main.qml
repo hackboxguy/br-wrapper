@@ -14,6 +14,15 @@ Window {
 
     // Track if user is dragging the brightness slider
     property bool userDraggingBrightness: false
+    // Cooldown period after releasing slider - ignore brightness updates during this time
+    property bool brightnessSetCooldown: false
+
+    // Timer to clear cooldown after user releases slider
+    Timer {
+        id: brightnessCooldownTimer
+        interval: 500  // 500ms cooldown
+        onTriggered: brightnessSetCooldown = false
+    }
 
     // Track user's preference for adaptive mode (separate from actual als-dimmer mode)
     // This allows the switch to stay ON even when user temporarily adjusts brightness
@@ -30,15 +39,32 @@ Window {
             }
         }
         function onModeChanged() {
-            // On first real mode update, sync user preference from actual mode
+            // On first real mode update, sync user preference and slider from actual values
             if (!initialSyncDone && alsDimmer.mode !== "unknown") {
                 userPreferAdaptive = (alsDimmer.mode === "auto");
+                brightnessSlider.value = alsDimmer.brightness;  // Sync slider value on connect
                 initialSyncDone = true;
-                console.log("Initial sync: userPreferAdaptive =", userPreferAdaptive, "from mode:", alsDimmer.mode);
+                console.log("Initial sync: userPreferAdaptive =", userPreferAdaptive,
+                            "brightness =", alsDimmer.brightness, "from mode:", alsDimmer.mode);
             }
             // If als-dimmer switches to full auto (e.g., user toggled switch), update preference
             else if (alsDimmer.mode === "auto") {
                 userPreferAdaptive = true;
+            }
+            // When switching to manual mode (not temporary), sync slider to actual brightness
+            // als-dimmer may restore a different manual brightness value
+            else if (alsDimmer.mode === "manual" && !userDraggingBrightness) {
+                brightnessSlider.value = alsDimmer.brightness;
+                console.log("Manual mode sync (mode): slider =", alsDimmer.brightness);
+            }
+        }
+        function onBrightnessChanged() {
+            // Also sync slider when brightness changes in manual mode
+            // This catches the case where brightness updates after mode change
+            // Skip during cooldown period (right after user released slider)
+            if (alsDimmer.mode === "manual" && !userDraggingBrightness && !brightnessSetCooldown && initialSyncDone) {
+                brightnessSlider.value = alsDimmer.brightness;
+                console.log("Manual mode sync (brightness): slider =", alsDimmer.brightness);
             }
         }
     }
@@ -198,14 +224,14 @@ Window {
                             id: brightnessSlider
                             Layout.fillWidth: true
                             Layout.preferredHeight: 48  // Touch-friendly height
-                            from: 0
+                            from: 2    // Minimum 2% to prevent completely black screen
                             to: 100
-                            value: alsDimmer.brightness
+                            value: 50  // Initial default, will be set on connect
                             enabled: alsDimmer.connected
                             stepSize: 1
 
-                            // Only sync from controller in auto mode (not manual)
-                            // In manual mode, slider is "fire and forget"
+                            // Only sync from controller in auto mode
+                            // In manual mode, slider stays where user put it (no binding)
                             Binding {
                                 target: brightnessSlider
                                 property: "value"
@@ -245,6 +271,9 @@ Window {
                                 if (!pressed) {
                                     // Final update on release
                                     alsDimmer.setBrightness(Math.round(value));
+                                    // Start cooldown to ignore brightness feedback briefly
+                                    brightnessSetCooldown = true;
+                                    brightnessCooldownTimer.restart();
                                 }
                             }
 
@@ -543,37 +572,43 @@ Window {
                             Text {
                                 text: "Privacy Mode:"
                                 font.pixelSize: 22
-                                color: fpga.connected ? "#cccccc" : "#666666"
+                                // TODO: Re-enable after testing: fpga.connected ? "#cccccc" : "#666666"
+                                color: "#666666"
                             }
                             Switch {
                                 id: privacySwitch
-                                checked: fpga.privacyMode
-                                enabled: fpga.connected
+                                // TODO: Re-enable after testing: fpga.privacyMode
+                                checked: false
+                                // TODO: Re-enable after testing: fpga.connected
+                                enabled: false
 
                                 indicator: Rectangle {
                                     implicitWidth: 60
                                     implicitHeight: 32
                                     radius: 16
-                                    color: privacySwitch.checked ? "#27ae60" : "#2c3e50"
-                                    opacity: privacySwitch.enabled ? 1.0 : 0.5
+                                    // TODO: Re-enable after testing: privacySwitch.checked ? "#27ae60" : "#2c3e50"
+                                    color: "#1a1a2e"
+                                    opacity: 0.5
 
                                     Rectangle {
-                                        x: privacySwitch.checked ? parent.width - width - 2 : 2
+                                        x: 2
                                         y: 2
                                         width: 28
                                         height: 28
                                         radius: 14
-                                        color: "#ffffff"
-
-                                        Behavior on x {
-                                            NumberAnimation { duration: 150 }
-                                        }
+                                        color: "#666666"
                                     }
                                 }
 
                                 onClicked: {
-                                    fpga.setPrivacyMode(checked);
+                                    // TODO: Re-enable after testing
+                                    // fpga.setPrivacyMode(checked);
                                 }
+                            }
+                            Text {
+                                text: "(Disabled)"
+                                font.pixelSize: 16
+                                color: "#666666"
                             }
                         }
 
@@ -586,18 +621,18 @@ Window {
                             }
                             Switch {
                                 id: localDimmingSwitch
-                                checked: false
+                                checked: true  // Show as ON (but disabled)
                                 enabled: false
 
                                 indicator: Rectangle {
                                     implicitWidth: 60
                                     implicitHeight: 32
                                     radius: 16
-                                    color: "#1a1a2e"
+                                    color: "#1a5c3a"  // Dimmed green to indicate ON but disabled
                                     opacity: 0.5
 
                                     Rectangle {
-                                        x: 2
+                                        x: parent.width - width - 2  // ON position
                                         y: 2
                                         width: 28
                                         height: 28
