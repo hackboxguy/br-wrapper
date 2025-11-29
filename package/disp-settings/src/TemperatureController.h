@@ -5,12 +5,22 @@
 #include <QTimer>
 #include <QString>
 #include <QStringList>
+#include <QFutureWatcher>
 
 /**
  * TemperatureController - DS18B20 1-wire temperature sensor reader
  *
  * Reads temperature from /sys/bus/w1/devices/28-XXXX/w1_slave
+ * Uses QtConcurrent for non-blocking I/O to keep UI responsive.
  */
+
+struct SensorReading {
+    QString sensorId;
+    double temperature;
+    bool healthy;
+    bool valid;
+};
+
 class TemperatureController : public QObject
 {
     Q_OBJECT
@@ -54,8 +64,13 @@ signals:
     void sensor2HealthyChanged();
     void errorOccurred(const QString &message);
 
+private slots:
+    void onSensor1ReadFinished();
+    void onSensor2ReadFinished();
+
 private:
-    bool readTemperature(const QString &sensorId, double &temp);
+    // Static function for thread-safe reading (runs in thread pool)
+    static SensorReading readTemperatureAsync(const QString &basePath, const QString &sensorId);
     QStringList findSensors();
 
 private:
@@ -71,6 +86,11 @@ private:
     bool m_sensor2Available;
     bool m_sensor1Healthy;
     bool m_sensor2Healthy;
+
+    // Future watchers for async reads
+    QFutureWatcher<SensorReading> *m_sensor1Watcher;
+    QFutureWatcher<SensorReading> *m_sensor2Watcher;
+    bool m_readInProgress;
 };
 
 #endif // TEMPERATURECONTROLLER_H

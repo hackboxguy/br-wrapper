@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Find required Qt5 components
-find_package(Qt5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network)
+find_package(Qt5 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 Network Concurrent)
 
 # Enable automoc for Qt meta-object compilation
 set(CMAKE_AUTOMOC ON)
@@ -47,6 +47,7 @@ target_link_libraries(disp-settings
         Qt5::Quick
         Qt5::QuickControls2
         Qt5::Network
+        Qt5::Concurrent
 )
 
 # Include directories

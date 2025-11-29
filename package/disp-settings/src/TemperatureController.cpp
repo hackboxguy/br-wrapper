@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QTextStream>
 #include <QRegularExpression>
+#include <QtConcurrent/QtConcurrent>
 
 TemperatureController::TemperatureController(QObject *parent)
     : QObject(parent)
@@ -17,20 +18,37 @@ TemperatureController::TemperatureController(QObject *parent)
     , m_sensor2Available(false)
     , m_sensor1Healthy(false)
     , m_sensor2Healthy(false)
+    , m_sensor1Watcher(new QFutureWatcher<SensorReading>(this))
+    , m_sensor2Watcher(new QFutureWatcher<SensorReading>(this))
+    , m_readInProgress(false)
 {
-    // Refresh temperatures every 400ms
+    // Refresh temperatures every 2 seconds (async, non-blocking)
     connect(m_refreshTimer, &QTimer::timeout, this, &TemperatureController::refresh);
-    m_refreshTimer->setInterval(400);
+    m_refreshTimer->setInterval(2000);
 
     // Scan for new sensors every 30 seconds
     connect(m_scanTimer, &QTimer::timeout, this, &TemperatureController::scanSensors);
     m_scanTimer->setInterval(30000);
+
+    // Connect future watchers to result handlers
+    connect(m_sensor1Watcher, &QFutureWatcher<SensorReading>::finished,
+            this, &TemperatureController::onSensor1ReadFinished);
+    connect(m_sensor2Watcher, &QFutureWatcher<SensorReading>::finished,
+            this, &TemperatureController::onSensor2ReadFinished);
 }
 
 TemperatureController::~TemperatureController()
 {
     m_refreshTimer->stop();
     m_scanTimer->stop();
+
+    // Wait for any pending reads to complete
+    if (m_sensor1Watcher->isRunning()) {
+        m_sensor1Watcher->waitForFinished();
+    }
+    if (m_sensor2Watcher->isRunning()) {
+        m_sensor2Watcher->waitForFinished();
+    }
 }
 
 void TemperatureController::setBasePath(const QString &path)
@@ -115,30 +133,37 @@ void TemperatureController::scanSensors()
     refresh();
 }
 
-bool TemperatureController::readTemperature(const QString &sensorId, double &temp)
+// Static function that runs in thread pool - does blocking I/O
+SensorReading TemperatureController::readTemperatureAsync(const QString &basePath, const QString &sensorId)
 {
-    temp = 0.0;
+    SensorReading result;
+    result.sensorId = sensorId;
+    result.temperature = 0.0;
+    result.healthy = false;
+    result.valid = false;
 
     if (sensorId.isEmpty()) {
-        return false;
+        return result;
     }
 
-    QString slavePath = m_basePath + "/" + sensorId + "/w1_slave";
+    QString slavePath = basePath + "/" + sensorId + "/w1_slave";
     QFile file(slavePath);
 
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         qWarning() << "TemperatureController: Failed to open" << slavePath;
-        return false;
+        return result;
     }
 
     QTextStream in(&file);
     QString content = in.readAll();
     file.close();
 
+    result.valid = true;  // We successfully read the file
+
     // Check for valid CRC (first line ends with "YES")
     if (!content.contains("YES")) {
         qWarning() << "TemperatureController: CRC check failed for" << sensorId;
-        return false;
+        return result;
     }
 
     // Extract temperature from second line (format: "t=xxxxx" where xxxxx is millidegrees)
@@ -147,62 +172,98 @@ bool TemperatureController::readTemperature(const QString &sensorId, double &tem
 
     if (match.hasMatch()) {
         int millidegrees = match.captured(1).toInt();
-        temp = millidegrees / 1000.0;
+        result.temperature = millidegrees / 1000.0;
 
         // 85.0°C is the power-on default - often indicates communication issue
-        if (qAbs(temp - 85.0) < 0.1) {
-            qWarning() << "TemperatureController: Sensor" << sensorId << "returned power-on default (85°C)";
-            return false;
+        if (qAbs(result.temperature - 85.0) < 0.1) {
+            qWarning() << "TemperatureController: Sensor" << sensorId << "returned power-on default (85C)";
+            return result;
         }
 
-        return true;
+        result.healthy = true;
+        return result;
     }
 
     qWarning() << "TemperatureController: Failed to parse temperature for" << sensorId;
-    return false;
+    return result;
 }
 
 void TemperatureController::refresh()
 {
-    // Sensor 1
+    // Don't start new reads if previous ones are still running
+    if (m_readInProgress) {
+        return;
+    }
+
+    m_readInProgress = true;
+
+    // Start async reads for available sensors
     if (m_sensor1Available && !m_sensor1Id.isEmpty()) {
-        double temp;
-        bool healthy = readTemperature(m_sensor1Id, temp);
-
-        if (healthy != m_sensor1Healthy) {
-            m_sensor1Healthy = healthy;
-            emit sensor1HealthyChanged();
-        }
-
-        if (healthy && qAbs(temp - m_sensor1Temp) > 0.05) {
-            m_sensor1Temp = temp;
-            emit sensor1TempChanged();
-        }
+        QFuture<SensorReading> future = QtConcurrent::run(
+            readTemperatureAsync, m_basePath, m_sensor1Id);
+        m_sensor1Watcher->setFuture(future);
     } else {
+        // No sensor 1, check if we need to update health
         if (m_sensor1Healthy) {
             m_sensor1Healthy = false;
             emit sensor1HealthyChanged();
         }
     }
 
-    // Sensor 2
     if (m_sensor2Available && !m_sensor2Id.isEmpty()) {
-        double temp;
-        bool healthy = readTemperature(m_sensor2Id, temp);
-
-        if (healthy != m_sensor2Healthy) {
-            m_sensor2Healthy = healthy;
-            emit sensor2HealthyChanged();
-        }
-
-        if (healthy && qAbs(temp - m_sensor2Temp) > 0.05) {
-            m_sensor2Temp = temp;
-            emit sensor2TempChanged();
-        }
+        QFuture<SensorReading> future = QtConcurrent::run(
+            readTemperatureAsync, m_basePath, m_sensor2Id);
+        m_sensor2Watcher->setFuture(future);
     } else {
+        // No sensor 2, check if we need to update health
         if (m_sensor2Healthy) {
             m_sensor2Healthy = false;
             emit sensor2HealthyChanged();
         }
+    }
+
+    // If no sensors available, clear the in-progress flag
+    if (!m_sensor1Available && !m_sensor2Available) {
+        m_readInProgress = false;
+    }
+}
+
+void TemperatureController::onSensor1ReadFinished()
+{
+    SensorReading result = m_sensor1Watcher->result();
+
+    if (result.healthy != m_sensor1Healthy) {
+        m_sensor1Healthy = result.healthy;
+        emit sensor1HealthyChanged();
+    }
+
+    if (result.healthy && qAbs(result.temperature - m_sensor1Temp) > 0.05) {
+        m_sensor1Temp = result.temperature;
+        emit sensor1TempChanged();
+    }
+
+    // Check if all reads are complete
+    if (!m_sensor2Watcher->isRunning()) {
+        m_readInProgress = false;
+    }
+}
+
+void TemperatureController::onSensor2ReadFinished()
+{
+    SensorReading result = m_sensor2Watcher->result();
+
+    if (result.healthy != m_sensor2Healthy) {
+        m_sensor2Healthy = result.healthy;
+        emit sensor2HealthyChanged();
+    }
+
+    if (result.healthy && qAbs(result.temperature - m_sensor2Temp) > 0.05) {
+        m_sensor2Temp = result.temperature;
+        emit sensor2TempChanged();
+    }
+
+    // Check if all reads are complete
+    if (!m_sensor1Watcher->isRunning()) {
+        m_readInProgress = false;
     }
 }
