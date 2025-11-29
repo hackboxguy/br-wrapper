@@ -124,29 +124,29 @@ Window {
                 Layout.leftMargin: 10
             }
 
-            Button {
+            Rectangle {
                 id: exitButton
-                text: "Exit"
                 Layout.preferredWidth: 80
                 Layout.preferredHeight: 40
                 Layout.alignment: Qt.AlignVCenter
+                radius: 5
+                color: exitMouseArea.pressed ? "#c0392b" : "#2c3e50"
 
-                background: Rectangle {
-                    color: exitButton.pressed ? "#c0392b" : (exitButton.hovered ? "#e74c3c" : "#2c3e50")
-                    radius: 5
-                }
-
-                contentItem: Text {
-                    text: exitButton.text
+                Text {
+                    anchors.centerIn: parent
+                    text: "Exit"
                     font.pixelSize: 24
                     color: "#ffffff"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
                 }
 
-                onClicked: {
-                    console.log("Exit button clicked");
-                    Qt.quit();
+                MouseArea {
+                    id: exitMouseArea
+                    anchors.fill: parent
+                    // Trigger quit on press for 100% reliability (no release event needed)
+                    onPressed: {
+                        console.log("Exit button pressed - quitting");
+                        Qt.quit();
+                    }
                 }
             }
         }
