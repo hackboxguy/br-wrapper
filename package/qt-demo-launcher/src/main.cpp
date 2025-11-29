@@ -937,7 +937,9 @@ private:
 
         button->setStyleSheet(buttonStyle);
 
-        connect(button, &QPushButton::clicked, this, &TouchAppLauncher::buttonClicked);
+        // Use pressed signal instead of clicked for reliable touch response
+        // clicked fires on release which can miss short touches on touchscreens
+        connect(button, &QPushButton::pressed, this, &TouchAppLauncher::buttonClicked);
 
         return button;
     }
