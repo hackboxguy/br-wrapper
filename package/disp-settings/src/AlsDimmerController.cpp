@@ -194,13 +194,16 @@ void AlsDimmerController::handleStatusResponse(const QJsonObject &data)
         }
     }
 
-    // Update lux value
+    // Update lux value - always update if present in response
     if (data.contains("lux")) {
         double newLux = data["lux"].toDouble();
         if (qAbs(newLux - m_luxValue) > 0.1) {
             m_luxValue = newLux;
             emit luxValueChanged();
+            qDebug() << "AlsDimmerController: Lux updated to" << newLux;
         }
+    } else {
+        qDebug() << "AlsDimmerController: Status response missing 'lux' field";
     }
 
     // Update mode

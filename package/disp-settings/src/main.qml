@@ -15,6 +15,34 @@ Window {
     // Track if user is dragging the brightness slider
     property bool userDraggingBrightness: false
 
+    // Track user's preference for adaptive mode (separate from actual als-dimmer mode)
+    // This allows the switch to stay ON even when user temporarily adjusts brightness
+    property bool userPreferAdaptive: true
+    property bool initialSyncDone: false
+
+    // Sync user preference when we first receive the actual mode from als-dimmer
+    Connections {
+        target: alsDimmer
+        function onConnectedChanged() {
+            if (!alsDimmer.connected) {
+                // Reset sync flag on disconnect so we re-sync on reconnect
+                initialSyncDone = false;
+            }
+        }
+        function onModeChanged() {
+            // On first real mode update, sync user preference from actual mode
+            if (!initialSyncDone && alsDimmer.mode !== "unknown") {
+                userPreferAdaptive = (alsDimmer.mode === "auto");
+                initialSyncDone = true;
+                console.log("Initial sync: userPreferAdaptive =", userPreferAdaptive, "from mode:", alsDimmer.mode);
+            }
+            // If als-dimmer switches to full auto (e.g., user toggled switch), update preference
+            else if (alsDimmer.mode === "auto") {
+                userPreferAdaptive = true;
+            }
+        }
+    }
+
     // Header with title and exit button
     Rectangle {
         id: header
@@ -31,7 +59,7 @@ Window {
 
             Text {
                 text: "Display Settings"
-                font.pixelSize: 24
+                font.pixelSize: 28
                 font.bold: true
                 color: "#ffffff"
                 Layout.alignment: Qt.AlignVCenter
@@ -64,7 +92,7 @@ Window {
 
             Text {
                 text: "v" + appVersion
-                font.pixelSize: 14
+                font.pixelSize: 22
                 color: "#888888"
                 Layout.alignment: Qt.AlignVCenter
                 Layout.leftMargin: 10
@@ -84,7 +112,7 @@ Window {
 
                 contentItem: Text {
                     text: exitButton.text
-                    font.pixelSize: 16
+                    font.pixelSize: 24
                     color: "#ffffff"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
@@ -114,7 +142,7 @@ Window {
             // Brightness Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 160
+                Layout.preferredHeight: 180
                 color: "#0f3460"
                 radius: 10
 
@@ -128,7 +156,7 @@ Window {
 
                         Text {
                             text: "Brightness Control"
-                            font.pixelSize: 18
+                            font.pixelSize: 22
                             font.bold: true
                             color: "#ffffff"
                         }
@@ -137,9 +165,9 @@ Window {
 
                         // Mode indicator
                         Rectangle {
-                            width: modeText.width + 16
-                            height: 24
-                            radius: 12
+                            width: modeText.width + 20
+                            height: 32
+                            radius: 16
                             color: alsDimmer.mode === "auto" ? "#27ae60" :
                                    alsDimmer.mode === "manual_temporary" ? "#f39c12" : "#3498db"
 
@@ -148,7 +176,7 @@ Window {
                                 anchors.centerIn: parent
                                 text: alsDimmer.mode === "auto" ? "AUTO" :
                                       alsDimmer.mode === "manual_temporary" ? "TEMP" : "MANUAL"
-                                font.pixelSize: 11
+                                font.pixelSize: 16
                                 font.bold: true
                                 color: "#ffffff"
                             }
@@ -161,14 +189,15 @@ Window {
 
                         Text {
                             text: "Brightness:"
-                            font.pixelSize: 14
+                            font.pixelSize: 22
                             color: "#cccccc"
-                            Layout.preferredWidth: 100
+                            Layout.preferredWidth: 140
                         }
 
                         Slider {
                             id: brightnessSlider
                             Layout.fillWidth: true
+                            Layout.preferredHeight: 48  // Touch-friendly height
                             from: 0
                             to: 100
                             value: alsDimmer.brightness
@@ -188,27 +217,27 @@ Window {
                                 x: brightnessSlider.leftPadding
                                 y: brightnessSlider.topPadding + brightnessSlider.availableHeight / 2 - height / 2
                                 width: brightnessSlider.availableWidth
-                                height: 8
-                                radius: 4
+                                height: 12
+                                radius: 6
                                 color: "#2c3e50"
 
                                 Rectangle {
                                     width: brightnessSlider.visualPosition * parent.width
                                     height: parent.height
                                     color: brightnessSlider.enabled ? "#3498db" : "#555555"
-                                    radius: 4
+                                    radius: 6
                                 }
                             }
 
                             handle: Rectangle {
                                 x: brightnessSlider.leftPadding + brightnessSlider.visualPosition * (brightnessSlider.availableWidth - width)
                                 y: brightnessSlider.topPadding + brightnessSlider.availableHeight / 2 - height / 2
-                                width: 24
-                                height: 24
-                                radius: 12
+                                width: 40
+                                height: 40
+                                radius: 20
                                 color: brightnessSlider.pressed ? "#2980b9" : (brightnessSlider.enabled ? "#3498db" : "#555555")
                                 border.color: "#ffffff"
-                                border.width: 2
+                                border.width: 3
                             }
 
                             onPressedChanged: {
@@ -227,7 +256,7 @@ Window {
 
                         Text {
                             text: Math.round(brightnessSlider.value) + "%"
-                            font.pixelSize: 14
+                            font.pixelSize: 22
                             font.bold: true
                             color: "#ffffff"
                             Layout.preferredWidth: 50
@@ -240,31 +269,31 @@ Window {
 
                         Text {
                             text: "Adaptive Mode:"
-                            font.pixelSize: 14
+                            font.pixelSize: 22
                             color: "#cccccc"
-                            Layout.preferredWidth: 100
+                            Layout.preferredWidth: 170
                         }
 
                         Switch {
                             id: adaptiveSwitch
-                            checked: alsDimmer.adaptiveEnabled
+                            checked: userPreferAdaptive
                             enabled: alsDimmer.connected
 
                             indicator: Rectangle {
-                                implicitWidth: 50
-                                implicitHeight: 26
+                                implicitWidth: 60
+                                implicitHeight: 32
                                 x: adaptiveSwitch.leftPadding
                                 y: parent.height / 2 - height / 2
-                                radius: 13
+                                radius: 16
                                 color: adaptiveSwitch.checked ? "#27ae60" : "#2c3e50"
                                 opacity: adaptiveSwitch.enabled ? 1.0 : 0.5
 
                                 Rectangle {
                                     x: adaptiveSwitch.checked ? parent.width - width - 2 : 2
                                     y: 2
-                                    width: 22
-                                    height: 22
-                                    radius: 11
+                                    width: 28
+                                    height: 28
+                                    radius: 14
                                     color: "#ffffff"
 
                                     Behavior on x {
@@ -274,6 +303,7 @@ Window {
                             }
 
                             onClicked: {
+                                userPreferAdaptive = checked;
                                 alsDimmer.setAdaptiveMode(checked);
                             }
                         }
@@ -282,13 +312,13 @@ Window {
 
                         Text {
                             text: "ALS: " + (alsDimmer.connected ? alsDimmer.luxValue.toFixed(1) + " lux" : "---")
-                            font.pixelSize: 14
+                            font.pixelSize: 22
                             color: "#888888"
                         }
 
                         Text {
                             text: "Zone: " + (alsDimmer.connected ? alsDimmer.zone : "---")
-                            font.pixelSize: 14
+                            font.pixelSize: 22
                             color: "#888888"
                             Layout.leftMargin: 20
                         }
@@ -299,7 +329,7 @@ Window {
             // Temperature Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 130
+                Layout.preferredHeight: 150
                 color: "#0f3460"
                 radius: 10
 
@@ -310,7 +340,7 @@ Window {
 
                     Text {
                         text: "Temperature Sensors"
-                        font.pixelSize: 18
+                        font.pixelSize: 22
                         font.bold: true
                         color: "#ffffff"
                     }
@@ -322,14 +352,14 @@ Window {
 
                         Text {
                             text: "Sensor 1:"
-                            font.pixelSize: 16
+                            font.pixelSize: 24
                             color: "#888888"
-                            Layout.preferredWidth: 80
+                            Layout.preferredWidth: 110
                         }
 
                         Text {
                             text: tempSensors.sensor1Available ? tempSensors.sensor1Temp.toFixed(1) + " °C" : "N/A"
-                            font.pixelSize: 20
+                            font.pixelSize: 24
                             font.bold: true
                             color: tempSensors.sensor1Available && tempSensors.sensor1Healthy ? "#ffffff" : "#666666"
                             Layout.preferredWidth: 100
@@ -356,7 +386,7 @@ Window {
 
                         Text {
                             text: tempSensors.sensor1Id ? "(" + tempSensors.sensor1Id + ")" : ""
-                            font.pixelSize: 12
+                            font.pixelSize: 16
                             color: "#555555"
                             visible: tempSensors.sensor1Available
                         }
@@ -371,14 +401,14 @@ Window {
 
                         Text {
                             text: "Sensor 2:"
-                            font.pixelSize: 16
+                            font.pixelSize: 24
                             color: "#888888"
-                            Layout.preferredWidth: 80
+                            Layout.preferredWidth: 110
                         }
 
                         Text {
                             text: tempSensors.sensor2Available ? tempSensors.sensor2Temp.toFixed(1) + " °C" : "N/A"
-                            font.pixelSize: 20
+                            font.pixelSize: 24
                             font.bold: true
                             color: tempSensors.sensor2Available && tempSensors.sensor2Healthy ? "#ffffff" : "#666666"
                             Layout.preferredWidth: 100
@@ -405,7 +435,7 @@ Window {
 
                         Text {
                             text: tempSensors.sensor2Id ? "(" + tempSensors.sensor2Id + ")" : ""
-                            font.pixelSize: 12
+                            font.pixelSize: 16
                             color: "#555555"
                             visible: tempSensors.sensor2Available
                         }
@@ -418,7 +448,7 @@ Window {
             // FPGA Info Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 170
+                Layout.preferredHeight: 200
                 color: "#0f3460"
                 radius: 10
 
@@ -432,7 +462,7 @@ Window {
 
                         Text {
                             text: "FPGA Information"
-                            font.pixelSize: 18
+                            font.pixelSize: 22
                             font.bold: true
                             color: "#ffffff"
                         }
@@ -464,23 +494,23 @@ Window {
                         columnSpacing: 30
                         rowSpacing: 5
 
-                        Text { text: "Firmware Version:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.firmwareVersion : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Firmware Version:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: fpga.connected ? fpga.firmwareVersion : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Build Date:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.buildDate : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Build Date:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: fpga.connected ? fpga.buildDate : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Firmware ID:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.firmwareId : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Firmware ID:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: fpga.connected ? fpga.firmwareId : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Board Type:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.boardType : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Board Type:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: fpga.connected ? fpga.boardType : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Display Size:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.displaySize : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Display Size:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: fpga.connected ? fpga.displaySize : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Display Resolution:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.displayResolution : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Display Resolution:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: fpga.connected ? fpga.displayResolution : "N/A"; font.pixelSize: 22; color: "#ffffff" }
                     }
                 }
             }
@@ -488,7 +518,7 @@ Window {
             // FPGA Settings Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 100
+                Layout.preferredHeight: 120
                 color: "#0f3460"
                 radius: 10
 
@@ -499,7 +529,7 @@ Window {
 
                     Text {
                         text: "FPGA Settings"
-                        font.pixelSize: 18
+                        font.pixelSize: 22
                         font.bold: true
                         color: "#ffffff"
                     }
@@ -512,7 +542,7 @@ Window {
                             spacing: 10
                             Text {
                                 text: "Privacy Mode:"
-                                font.pixelSize: 14
+                                font.pixelSize: 22
                                 color: fpga.connected ? "#cccccc" : "#666666"
                             }
                             Switch {
@@ -521,18 +551,18 @@ Window {
                                 enabled: fpga.connected
 
                                 indicator: Rectangle {
-                                    implicitWidth: 50
-                                    implicitHeight: 26
-                                    radius: 13
+                                    implicitWidth: 60
+                                    implicitHeight: 32
+                                    radius: 16
                                     color: privacySwitch.checked ? "#27ae60" : "#2c3e50"
                                     opacity: privacySwitch.enabled ? 1.0 : 0.5
 
                                     Rectangle {
                                         x: privacySwitch.checked ? parent.width - width - 2 : 2
                                         y: 2
-                                        width: 22
-                                        height: 22
-                                        radius: 11
+                                        width: 28
+                                        height: 28
+                                        radius: 14
                                         color: "#ffffff"
 
                                         Behavior on x {
@@ -551,7 +581,7 @@ Window {
                             spacing: 10
                             Text {
                                 text: "Local Dimming:"
-                                font.pixelSize: 14
+                                font.pixelSize: 22
                                 color: "#666666"
                             }
                             Switch {
@@ -560,25 +590,25 @@ Window {
                                 enabled: false
 
                                 indicator: Rectangle {
-                                    implicitWidth: 50
-                                    implicitHeight: 26
-                                    radius: 13
+                                    implicitWidth: 60
+                                    implicitHeight: 32
+                                    radius: 16
                                     color: "#1a1a2e"
                                     opacity: 0.5
 
                                     Rectangle {
                                         x: 2
                                         y: 2
-                                        width: 22
-                                        height: 22
-                                        radius: 11
+                                        width: 28
+                                        height: 28
+                                        radius: 14
                                         color: "#666666"
                                     }
                                 }
                             }
                             Text {
                                 text: "(N/A)"
-                                font.pixelSize: 12
+                                font.pixelSize: 16
                                 color: "#666666"
                             }
                         }
@@ -589,7 +619,7 @@ Window {
             // TDDI Info Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 160
+                Layout.preferredHeight: 220
                 color: "#0f3460"
                 radius: 10
 
@@ -603,7 +633,7 @@ Window {
 
                         Text {
                             text: "Touch Controller (TDDI)"
-                            font.pixelSize: 18
+                            font.pixelSize: 22
                             font.bold: true
                             color: "#ffffff"
                         }
@@ -635,29 +665,29 @@ Window {
                         columnSpacing: 30
                         rowSpacing: 5
 
-                        Text { text: "IC Type:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: tddi.available && tddi.icType ? tddi.icType : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "IC Type:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: tddi.available && tddi.icType ? tddi.icType : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "FW Version:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: tddi.available && tddi.fwVersion ? tddi.fwVersion : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "FW Version:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: tddi.available && tddi.fwVersion ? tddi.fwVersion : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Display Config:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: tddi.available && tddi.displayConfig ? tddi.displayConfig : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Display Config:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: tddi.available && tddi.displayConfig ? tddi.displayConfig : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Touch Config:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: tddi.available && tddi.touchConfig ? tddi.touchConfig : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Touch Config:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: tddi.available && tddi.touchConfig ? tddi.touchConfig : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Customer:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: tddi.available && tddi.customer ? tddi.customer : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Customer:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: tddi.available && tddi.customer ? tddi.customer : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Project:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: tddi.available && tddi.project ? tddi.project : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Project:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: tddi.available && tddi.project ? tddi.project : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Panel Version:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: tddi.available && tddi.panelVersion ? tddi.panelVersion : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Panel Version:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: tddi.available && tddi.panelVersion ? tddi.panelVersion : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
-                        Text { text: "Config Date:"; font.pixelSize: 14; color: "#888888" }
-                        Text { text: tddi.available && tddi.configDate ? tddi.configDate : "N/A"; font.pixelSize: 14; color: "#ffffff" }
+                        Text { text: "Config Date:"; font.pixelSize: 22; color: "#888888" }
+                        Text { text: tddi.available && tddi.configDate ? tddi.configDate : "N/A"; font.pixelSize: 22; color: "#ffffff" }
                     }
                 }
             }
