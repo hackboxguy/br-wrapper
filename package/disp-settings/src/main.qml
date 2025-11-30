@@ -29,6 +29,9 @@ Window {
     property bool userPreferAdaptive: true
     property bool initialSyncDone: false
 
+    // Adaptive layout: use two columns on wide screens (aspect ratio > 2.0)
+    property bool wideScreen: Screen.width / Screen.height > 2.0
+
     // Sync user preference when we first receive the actual mode from als-dimmer
     Connections {
         target: alsDimmer
@@ -152,7 +155,7 @@ Window {
         }
     }
 
-    // Main content area - fixed layout (no scrolling)
+    // Main content area - adaptive layout based on screen aspect ratio
     Item {
         id: contentArea
         anchors.top: header.bottom
@@ -161,9 +164,523 @@ Window {
         anchors.bottom: parent.bottom
         anchors.margins: 20
 
+        // Two-column layout for wide screens (aspect ratio > 2.0)
+        RowLayout {
+            anchors.fill: parent
+            spacing: 20
+            visible: wideScreen
+
+            // Left column: Brightness + Temperature
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 15
+
+                // Brightness Section
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 180
+                    color: "#0f3460"
+                    radius: 10
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 15
+                        spacing: 10
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Text {
+                                text: "Brightness Control"
+                                font.pixelSize: 22
+                                font.bold: true
+                                color: "#ffffff"
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            // Mode indicator
+                            Rectangle {
+                                width: modeTextWide.width + 20
+                                height: 32
+                                radius: 16
+                                color: alsDimmer.mode === "auto" ? "#27ae60" :
+                                       alsDimmer.mode === "manual_temporary" ? "#f39c12" : "#3498db"
+
+                                Text {
+                                    id: modeTextWide
+                                    anchors.centerIn: parent
+                                    text: alsDimmer.mode === "auto" ? "AUTO" :
+                                          alsDimmer.mode === "manual_temporary" ? "TEMP" : "MANUAL"
+                                    font.pixelSize: 16
+                                    font.bold: true
+                                    color: "#ffffff"
+                                }
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 15
+
+                            Text {
+                                text: "Brightness:"
+                                font.pixelSize: 22
+                                color: "#cccccc"
+                                Layout.preferredWidth: 140
+                            }
+
+                            Slider {
+                                id: brightnessSliderWide
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 48
+                                from: 2
+                                to: 100
+                                value: brightnessSlider.value
+                                enabled: alsDimmer.connected
+                                stepSize: 1
+
+                                Binding {
+                                    target: brightnessSliderWide
+                                    property: "value"
+                                    value: alsDimmer.brightness
+                                    when: !userDraggingBrightness && alsDimmer.mode === "auto"
+                                }
+
+                                background: Rectangle {
+                                    x: brightnessSliderWide.leftPadding
+                                    y: brightnessSliderWide.topPadding + brightnessSliderWide.availableHeight / 2 - height / 2
+                                    width: brightnessSliderWide.availableWidth
+                                    height: 12
+                                    radius: 6
+                                    color: "#2c3e50"
+
+                                    Rectangle {
+                                        width: brightnessSliderWide.visualPosition * parent.width
+                                        height: parent.height
+                                        color: brightnessSliderWide.enabled ? "#3498db" : "#555555"
+                                        radius: 6
+                                    }
+                                }
+
+                                handle: Rectangle {
+                                    x: brightnessSliderWide.leftPadding + brightnessSliderWide.visualPosition * (brightnessSliderWide.availableWidth - width)
+                                    y: brightnessSliderWide.topPadding + brightnessSliderWide.availableHeight / 2 - height / 2
+                                    width: 40
+                                    height: 40
+                                    radius: 20
+                                    color: brightnessSliderWide.pressed ? "#2980b9" : (brightnessSliderWide.enabled ? "#3498db" : "#555555")
+                                    border.color: "#ffffff"
+                                    border.width: 3
+                                }
+
+                                onPressedChanged: {
+                                    userDraggingBrightness = pressed;
+                                    if (!pressed) {
+                                        alsDimmer.setBrightness(Math.round(value));
+                                        brightnessSetCooldown = true;
+                                        brightnessCooldownTimer.restart();
+                                    }
+                                    brightnessSlider.value = value;
+                                }
+
+                                onMoved: {
+                                    alsDimmer.setBrightness(Math.round(value));
+                                    brightnessSlider.value = value;
+                                }
+                            }
+
+                            Text {
+                                text: Math.round(brightnessSliderWide.value) + "%"
+                                font.pixelSize: 22
+                                font.bold: true
+                                color: "#ffffff"
+                                Layout.preferredWidth: 50
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 15
+
+                            Text {
+                                text: "Adaptive Mode:"
+                                font.pixelSize: 22
+                                color: "#cccccc"
+                                Layout.preferredWidth: 170
+                            }
+
+                            Switch {
+                                id: adaptiveSwitchWide
+                                checked: userPreferAdaptive
+                                enabled: alsDimmer.connected
+
+                                indicator: Rectangle {
+                                    implicitWidth: 60
+                                    implicitHeight: 32
+                                    x: adaptiveSwitchWide.leftPadding
+                                    y: parent.height / 2 - height / 2
+                                    radius: 16
+                                    color: adaptiveSwitchWide.checked ? "#27ae60" : "#2c3e50"
+                                    opacity: adaptiveSwitchWide.enabled ? 1.0 : 0.5
+
+                                    Rectangle {
+                                        x: adaptiveSwitchWide.checked ? parent.width - width - 2 : 2
+                                        y: 2
+                                        width: 28
+                                        height: 28
+                                        radius: 14
+                                        color: "#ffffff"
+
+                                        Behavior on x {
+                                            NumberAnimation { duration: 150 }
+                                        }
+                                    }
+                                }
+
+                                onClicked: {
+                                    userPreferAdaptive = checked;
+                                    alsDimmer.setAdaptiveMode(checked);
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Text {
+                                text: "ALS: " + (alsDimmer.connected ? alsDimmer.luxValue.toFixed(1) + " lux" : "---")
+                                font.pixelSize: 22
+                                color: "#888888"
+                            }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Item { Layout.fillWidth: true }
+
+                            Text {
+                                text: "Zone: " + (alsDimmer.connected ? alsDimmer.zone : "---")
+                                font.pixelSize: 22
+                                color: "#888888"
+                            }
+                        }
+                    }
+                }
+
+                // Temperature Section
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 150
+                    color: "#0f3460"
+                    radius: 10
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 15
+                        spacing: 8
+
+                        Text {
+                            text: "Temperature Sensors"
+                            font.pixelSize: 22
+                            font.bold: true
+                            color: "#ffffff"
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 15
+
+                            Text {
+                                text: "Sensor 1:"
+                                font.pixelSize: 24
+                                color: "#888888"
+                                Layout.preferredWidth: 110
+                            }
+
+                            Text {
+                                text: tempSensors.sensor1Available ? tempSensors.sensor1Temp.toFixed(1) + " °C" : "N/A"
+                                font.pixelSize: 24
+                                font.bold: true
+                                color: tempSensors.sensor1Available && tempSensors.sensor1Healthy ? "#ffffff" : "#666666"
+                                Layout.preferredWidth: 100
+                            }
+
+                            Rectangle {
+                                width: 14
+                                height: 14
+                                radius: 7
+                                color: !tempSensors.sensor1Available ? "#555555" :
+                                       tempSensors.sensor1Healthy ? "#27ae60" : "#e74c3c"
+
+                                ToolTip.visible: sensor1MouseAreaWide.containsMouse
+                                ToolTip.text: !tempSensors.sensor1Available ? "Sensor not detected" :
+                                              tempSensors.sensor1Healthy ? "Sensor healthy" : "Sensor error"
+
+                                MouseArea {
+                                    id: sensor1MouseAreaWide
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                }
+                            }
+
+                            Text {
+                                text: tempSensors.sensor1Id ? "(" + tempSensors.sensor1Id + ")" : ""
+                                font.pixelSize: 16
+                                color: "#555555"
+                                visible: tempSensors.sensor1Available
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 15
+
+                            Text {
+                                text: "Sensor 2:"
+                                font.pixelSize: 24
+                                color: "#888888"
+                                Layout.preferredWidth: 110
+                            }
+
+                            Text {
+                                text: tempSensors.sensor2Available ? tempSensors.sensor2Temp.toFixed(1) + " °C" : "N/A"
+                                font.pixelSize: 24
+                                font.bold: true
+                                color: tempSensors.sensor2Available && tempSensors.sensor2Healthy ? "#ffffff" : "#666666"
+                                Layout.preferredWidth: 100
+                            }
+
+                            Rectangle {
+                                width: 14
+                                height: 14
+                                radius: 7
+                                color: !tempSensors.sensor2Available ? "#555555" :
+                                       tempSensors.sensor2Healthy ? "#27ae60" : "#e74c3c"
+
+                                ToolTip.visible: sensor2MouseAreaWide.containsMouse
+                                ToolTip.text: !tempSensors.sensor2Available ? "Sensor not detected" :
+                                              tempSensors.sensor2Healthy ? "Sensor healthy" : "Sensor error"
+
+                                MouseArea {
+                                    id: sensor2MouseAreaWide
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                }
+                            }
+
+                            Text {
+                                text: tempSensors.sensor2Id ? "(" + tempSensors.sensor2Id + ")" : ""
+                                font.pixelSize: 16
+                                color: "#555555"
+                                visible: tempSensors.sensor2Available
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+                    }
+                }
+            }
+
+            // Right column: FPGA + TDDI
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 15
+
+                // FPGA Info Section
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 180
+                    color: "#0f3460"
+                    radius: 10
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 15
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Text {
+                                text: "FPGA Information"
+                                font.pixelSize: 22
+                                font.bold: true
+                                color: "#ffffff"
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Rectangle {
+                                width: 12
+                                height: 12
+                                radius: 6
+                                color: fpga.connected ? "#27ae60" : "#e74c3c"
+
+                                ToolTip.visible: fpgaStatusMouseAreaWide.containsMouse
+                                ToolTip.text: fpga.connected ? "FPGA I2C connected" : "FPGA I2C disconnected"
+
+                                MouseArea {
+                                    id: fpgaStatusMouseAreaWide
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onClicked: fpga.refresh()
+                                }
+                            }
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            columnSpacing: 20
+                            rowSpacing: 5
+
+                            Text { text: "Firmware Version:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.firmwareVersion : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+
+                            Text { text: "Build Date:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.buildDate : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+
+                            Text { text: "Firmware ID:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.firmwareId : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+
+                            Text { text: "Board Type:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.boardType : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+
+                            Text { text: "Display:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.displaySize + " " + fpga.displayResolution : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                        }
+                    }
+                }
+
+                // FPGA Settings Section (compact for wide layout)
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 80
+                    color: "#0f3460"
+                    radius: 10
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 15
+                        spacing: 20
+
+                        Text {
+                            text: "Settings:"
+                            font.pixelSize: 20
+                            font.bold: true
+                            color: "#ffffff"
+                        }
+
+                        Text {
+                            text: "Privacy Mode"
+                            font.pixelSize: 18
+                            color: "#666666"
+                        }
+                        Switch {
+                            checked: false
+                            enabled: false
+                            scale: 0.8
+                        }
+
+                        Text {
+                            text: "Local Dimming"
+                            font.pixelSize: 18
+                            color: "#666666"
+                        }
+                        Switch {
+                            checked: true
+                            enabled: false
+                            scale: 0.8
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+
+                // TDDI Info Section
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 180
+                    color: "#0f3460"
+                    radius: 10
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 15
+                        spacing: 8
+
+                        RowLayout {
+                            Layout.fillWidth: true
+
+                            Text {
+                                text: "Touch Controller (TDDI)"
+                                font.pixelSize: 22
+                                font.bold: true
+                                color: "#ffffff"
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Rectangle {
+                                width: 12
+                                height: 12
+                                radius: 6
+                                color: tddi.available ? "#27ae60" : "#e74c3c"
+
+                                ToolTip.visible: tddiStatusMouseAreaWide.containsMouse
+                                ToolTip.text: tddi.available ? "TDDI info available" : "TDDI info not available"
+
+                                MouseArea {
+                                    id: tddiStatusMouseAreaWide
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    onClicked: tddi.refresh()
+                                }
+                            }
+                        }
+
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2
+                            columnSpacing: 20
+                            rowSpacing: 5
+
+                            Text { text: "IC Type:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: tddi.available && tddi.icType ? tddi.icType : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+
+                            Text { text: "FW Version:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: tddi.available && tddi.fwVersion ? tddi.fwVersion : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+
+                            Text { text: "Display Config:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: tddi.available && tddi.displayConfig ? tddi.displayConfig : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+
+                            Text { text: "Touch Config:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: tddi.available && tddi.touchConfig ? tddi.touchConfig : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+
+                            Text { text: "Customer:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: tddi.available && tddi.customer ? tddi.customer : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+
+                            Text { text: "Project:"; font.pixelSize: 20; color: "#888888" }
+                            Text { text: tddi.available && tddi.project ? tddi.project : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Single-column layout for normal screens (original layout)
         ColumnLayout {
             anchors.fill: parent
             spacing: 15
+            visible: !wideScreen
 
             // Brightness Section
             Rectangle {
@@ -738,5 +1255,6 @@ Window {
     Component.onCompleted: {
         console.log("disp-settings UI loaded");
         console.log("Screen size:", Screen.width, "x", Screen.height);
+        console.log("Aspect ratio:", (Screen.width / Screen.height).toFixed(2), "- using", wideScreen ? "two-column" : "single-column", "layout");
     }
 }
