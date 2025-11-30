@@ -22,6 +22,7 @@
 #include <QPixmap>
 #include <QIcon>
 #include <QFileSystemWatcher>
+#include <QScreen>
 #include "NetworkInterface.h"
 
 struct ButtonConfig {
@@ -73,6 +74,7 @@ struct LayoutConfig {
     int bottomMargin = 50;
     int leftMargin = 50;
     int rightMargin = 50;
+    bool dynamicLayout = true;  // Dynamic sizing to fill screen (can be disabled)
 };
 
 struct LauncherConfig {
@@ -88,12 +90,17 @@ class TouchAppLauncher : public QMainWindow
     Q_OBJECT
 
 public:
-    TouchAppLauncher(const QString &configPath = QString(), int networkPort = DEFAULT_LAUNCHER_PORT, QWidget *parent = nullptr)
+    TouchAppLauncher(const QString &configPath = QString(), int networkPort = DEFAULT_LAUNCHER_PORT,
+                     bool forceFixedLayout = false, QWidget *parent = nullptr)
       : QMainWindow(parent), m_configWatcher(nullptr), m_currentConfigFile(""),
         m_configPath(configPath), m_networkPort(networkPort),
-        m_networkInterface(nullptr), m_runningProcess(nullptr), m_runningAppId("")
+        m_networkInterface(nullptr), m_runningProcess(nullptr), m_runningAppId(""),
+        m_scaleFactor(1.0), m_forceFixedLayout(forceFixedLayout),
+        m_dynamicButtonWidth(0), m_dynamicButtonHeight(0)
     {
         loadConfig();
+        calculateScaleFactor();
+        calculateDynamicSizes();
         setupUI();
         validatePrograms();
         setupNetworkInterface();
@@ -295,6 +302,121 @@ private:
     NetworkInterface *m_networkInterface;
     QProcess *m_runningProcess;
     QString m_runningAppId;
+    double m_scaleFactor;  // Scale factor for responsive layout
+    bool m_forceFixedLayout;  // CLI override to disable dynamic layout
+    int m_dynamicButtonWidth;  // Calculated button width for dynamic layout
+    int m_dynamicButtonHeight; // Calculated button height for dynamic layout
+    int m_titleHeight;  // Estimated title widget height
+
+    void calculateScaleFactor()
+    {
+        // Get actual screen size
+        QScreen *screen = QApplication::primaryScreen();
+        if (!screen) {
+            qWarning() << "Could not get primary screen, using scale factor 1.0";
+            m_scaleFactor = 1.0;
+            return;
+        }
+
+        QSize screenSize = screen->size();
+        int screenWidth = screenSize.width();
+        int screenHeight = screenSize.height();
+
+        // Calculate scale factors based on config window size
+        double scaleX = (double)screenWidth / m_config.windowWidth;
+        double scaleY = (double)screenHeight / m_config.windowHeight;
+
+        // Use the smaller scale to ensure everything fits
+        m_scaleFactor = qMin(scaleX, scaleY);
+
+        // Clamp scale factor to reasonable range (0.3 to 1.5)
+        m_scaleFactor = qBound(0.3, m_scaleFactor, 1.5);
+
+        qDebug() << "Screen size:" << screenWidth << "x" << screenHeight;
+        qDebug() << "Config window size:" << m_config.windowWidth << "x" << m_config.windowHeight;
+        qDebug() << "Scale factors - X:" << scaleX << "Y:" << scaleY << "Using:" << m_scaleFactor;
+    }
+
+    void calculateDynamicSizes()
+    {
+        // Check if dynamic layout is enabled
+        bool useDynamic = m_config.layout.dynamicLayout && !m_forceFixedLayout;
+
+        if (!useDynamic) {
+            qDebug() << "Dynamic layout disabled, using fixed scaled sizes";
+            m_dynamicButtonWidth = 0;
+            m_dynamicButtonHeight = 0;
+            return;
+        }
+
+        // Get screen size
+        QScreen *screen = QApplication::primaryScreen();
+        if (!screen) {
+            qWarning() << "Could not get primary screen for dynamic sizing";
+            return;
+        }
+
+        QSize screenSize = screen->size();
+        int screenWidth = screenSize.width();
+        int screenHeight = screenSize.height();
+
+        // Calculate scaled margins
+        int scaledTopMargin = (int)(m_config.layout.topMargin * m_scaleFactor);
+        int scaledBottomMargin = (int)(m_config.layout.bottomMargin * m_scaleFactor);
+        int scaledLeftMargin = (int)(m_config.layout.leftMargin * m_scaleFactor);
+        int scaledRightMargin = (int)(m_config.layout.rightMargin * m_scaleFactor);
+        int scaledSpacing = (int)(m_config.layout.spacing * m_scaleFactor);
+        int scaledMainSpacing = (int)(20 * m_scaleFactor);
+
+        // Estimate title height (font size + padding)
+        int scaledTitleFontSize = qMax(16, (int)(m_config.title.fontSize * m_scaleFactor));
+        int scaledTitlePadding = qMax(5, (int)(15 * m_scaleFactor));
+        m_titleHeight = scaledTitleFontSize + scaledTitlePadding * 2 + scaledMainSpacing;
+
+        // Calculate available content area
+        int availableWidth = screenWidth - scaledLeftMargin - scaledRightMargin;
+        int availableHeight = screenHeight - scaledTopMargin - scaledBottomMargin - m_titleHeight;
+
+        // For grid layout, calculate button sizes to fill the grid
+        if (m_config.layout.type == "grid") {
+            int cols = m_config.layout.columns;
+            int rows = m_config.layout.rows;
+
+            // Account for spacing between buttons
+            int totalHSpacing = (cols - 1) * scaledSpacing;
+            int totalVSpacing = (rows - 1) * scaledSpacing;
+
+            m_dynamicButtonWidth = (availableWidth - totalHSpacing) / cols;
+            m_dynamicButtonHeight = (availableHeight - totalVSpacing) / rows;
+
+            // Ensure minimum reasonable sizes
+            m_dynamicButtonWidth = qMax(100, m_dynamicButtonWidth);
+            m_dynamicButtonHeight = qMax(60, m_dynamicButtonHeight);
+
+            qDebug() << "Dynamic layout enabled:";
+            qDebug() << "  Available area:" << availableWidth << "x" << availableHeight;
+            qDebug() << "  Grid:" << cols << "x" << rows;
+            qDebug() << "  Dynamic button size:" << m_dynamicButtonWidth << "x" << m_dynamicButtonHeight;
+        } else {
+            // For vertical/horizontal layouts, use available width and distribute height
+            m_dynamicButtonWidth = availableWidth;
+
+            // Count enabled buttons
+            int enabledCount = 0;
+            for (const ButtonConfig &btn : m_config.buttons) {
+                if (btn.enabled) enabledCount++;
+            }
+
+            if (enabledCount > 0) {
+                int totalVSpacing = (enabledCount - 1) * scaledSpacing;
+                m_dynamicButtonHeight = (availableHeight - totalVSpacing) / enabledCount;
+                m_dynamicButtonHeight = qMax(60, m_dynamicButtonHeight);
+            }
+
+            qDebug() << "Dynamic layout (vertical/horizontal):";
+            qDebug() << "  Dynamic button size:" << m_dynamicButtonWidth << "x" << m_dynamicButtonHeight;
+        }
+    }
 
     void setupNetworkInterface()
     {
@@ -503,6 +625,9 @@ private:
         m_config.layout.bottomMargin = margins["bottom"].toInt(50);
         m_config.layout.leftMargin = margins["left"].toInt(50);
         m_config.layout.rightMargin = margins["right"].toInt(50);
+
+        // Parse dynamic layout option (default: true for smart sizing)
+        m_config.layout.dynamicLayout = layout["dynamic_layout"].toBool(true);
 
         // Parse buttons
         QJsonArray buttons = launcher["buttons"].toArray();
@@ -747,10 +872,16 @@ private:
         QWidget *centralWidget = new QWidget;
         setCentralWidget(centralWidget);
 
+        // Apply scaling to margins
+        int scaledTopMargin = (int)(m_config.layout.topMargin * m_scaleFactor);
+        int scaledBottomMargin = (int)(m_config.layout.bottomMargin * m_scaleFactor);
+        int scaledLeftMargin = (int)(m_config.layout.leftMargin * m_scaleFactor);
+        int scaledRightMargin = (int)(m_config.layout.rightMargin * m_scaleFactor);
+
         QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
-        mainLayout->setSpacing(20);
-        mainLayout->setContentsMargins(m_config.layout.leftMargin, m_config.layout.topMargin,
-                                      m_config.layout.rightMargin, m_config.layout.bottomMargin);
+        mainLayout->setSpacing((int)(20 * m_scaleFactor));
+        mainLayout->setContentsMargins(scaledLeftMargin, scaledTopMargin,
+                                      scaledRightMargin, scaledBottomMargin);
 
         // Create title section
         QWidget *titleWidget = createTitleWidget();
@@ -764,8 +895,8 @@ private:
             mainLayout->addLayout(buttonLayout);
         }
 
-        // Set window size
-        setMinimumSize(m_config.windowWidth, m_config.windowHeight);
+        // Don't set minimum size - let it adapt to screen
+        // setMinimumSize(m_config.windowWidth, m_config.windowHeight);
     }
 
     QWidget* createTitleWidget()
@@ -778,26 +909,31 @@ private:
         QHBoxLayout *titleLayout = new QHBoxLayout(titleWidget);
         titleLayout->setContentsMargins(0, 0, 0, 0);
 
-        // Create logo if specified
+        // Create logo if specified - apply scaling to logo size
         QLabel *logoLabel = nullptr;
         if (!m_config.title.logoPath.isEmpty() && QFile::exists(m_config.title.logoPath)
             && m_config.title.layout != "text_only") {
             logoLabel = new QLabel;
             QPixmap logo(m_config.title.logoPath);
-            logo = logo.scaled(m_config.title.logoWidth, m_config.title.logoHeight,
+            int scaledLogoWidth = (int)(m_config.title.logoWidth * m_scaleFactor);
+            int scaledLogoHeight = (int)(m_config.title.logoHeight * m_scaleFactor);
+            logo = logo.scaled(scaledLogoWidth, scaledLogoHeight,
                               Qt::KeepAspectRatio, Qt::SmoothTransformation);
             logoLabel->setPixmap(logo);
             logoLabel->setAlignment(Qt::AlignCenter);
         }
 
-        // Create text label if specified
+        // Create text label if specified - apply scaling to font size and padding
         QLabel *textLabel = nullptr;
         if (!m_config.title.text.isEmpty() && m_config.title.layout != "logo_only") {
             textLabel = new QLabel(m_config.title.text);
             textLabel->setAlignment(Qt::AlignCenter);
 
-            QString style = QString("QLabel { color: %1; font-size: %2px; font-weight: bold; padding: 15px; }")
-                           .arg(m_config.title.color).arg(m_config.title.fontSize);
+            // Title font should remain readable - use higher minimum (28px) and less aggressive scaling
+            int scaledTitleFontSize = qMax(28, (int)(m_config.title.fontSize * qMax(0.8, m_scaleFactor)));
+            int scaledTitlePadding = qMax(10, (int)(15 * m_scaleFactor));
+            QString style = QString("QLabel { color: %1; font-size: %2px; font-weight: bold; padding: %3px; }")
+                           .arg(m_config.title.color).arg(scaledTitleFontSize).arg(scaledTitlePadding);
             textLabel->setStyleSheet(style);
         }
 
@@ -851,7 +987,7 @@ private:
     QGridLayout* createGridLayout(const QList<ButtonConfig> &buttons)
     {
         QGridLayout *gridLayout = new QGridLayout;
-        gridLayout->setSpacing(m_config.layout.spacing);
+        gridLayout->setSpacing((int)(m_config.layout.spacing * m_scaleFactor));
 
         for (const ButtonConfig &config : buttons) {
             QPushButton *button = createButton(config);
@@ -865,7 +1001,7 @@ private:
     QVBoxLayout* createVerticalLayout(const QList<ButtonConfig> &buttons)
     {
         QVBoxLayout *vLayout = new QVBoxLayout;
-        vLayout->setSpacing(m_config.layout.spacing);
+        vLayout->setSpacing((int)(m_config.layout.spacing * m_scaleFactor));
 
         for (const ButtonConfig &config : buttons) {
             QPushButton *button = createButton(config);
@@ -878,7 +1014,7 @@ private:
     QHBoxLayout* createHorizontalLayout(const QList<ButtonConfig> &buttons)
     {
         QHBoxLayout *hLayout = new QHBoxLayout;
-        hLayout->setSpacing(m_config.layout.spacing);
+        hLayout->setSpacing((int)(m_config.layout.spacing * m_scaleFactor));
 
         for (const ButtonConfig &config : buttons) {
             QPushButton *button = createButton(config);
@@ -892,17 +1028,46 @@ private:
     {
         QPushButton *button = new QPushButton;
         button->setProperty("buttonId", config.id);
-        button->setMinimumSize(config.width, config.height);
-        button->setMaximumSize(config.width, config.height);
+
+        // Determine button size: use dynamic if enabled, otherwise use scaled fixed size
+        int buttonWidth, buttonHeight;
+        bool useDynamic = m_config.layout.dynamicLayout && !m_forceFixedLayout
+                          && m_dynamicButtonWidth > 0 && m_dynamicButtonHeight > 0;
+
+        if (useDynamic) {
+            buttonWidth = m_dynamicButtonWidth;
+            buttonHeight = m_dynamicButtonHeight;
+        } else {
+            // Fall back to scaled fixed size from config
+            buttonWidth = (int)(config.width * m_scaleFactor);
+            buttonHeight = (int)(config.height * m_scaleFactor);
+        }
+
+        button->setMinimumSize(buttonWidth, buttonHeight);
+        button->setMaximumSize(buttonWidth, buttonHeight);
+
+        // Calculate icon scale factor based on button size ratio
+        double iconScaleFactor;
+        if (useDynamic) {
+            // Scale icons proportionally to button size change
+            double widthRatio = (double)buttonWidth / config.width;
+            double heightRatio = (double)buttonHeight / config.height;
+            iconScaleFactor = qMin(widthRatio, heightRatio);
+        } else {
+            iconScaleFactor = m_scaleFactor;
+        }
+
+        int scaledIconWidth = (int)(config.iconWidth * iconScaleFactor);
+        int scaledIconHeight = (int)(config.iconHeight * iconScaleFactor);
 
         // Set icon if available
         if (!config.iconPath.isEmpty() && QFile::exists(config.iconPath)
             && config.iconLayout != "text_only") {
             QPixmap iconPixmap(config.iconPath);
-            QPixmap scaledIcon = iconPixmap.scaled(config.iconWidth, config.iconHeight,
+            QPixmap scaledIcon = iconPixmap.scaled(scaledIconWidth, scaledIconHeight,
                                                   Qt::KeepAspectRatio, Qt::SmoothTransformation);
             button->setIcon(QIcon(scaledIcon));
-            button->setIconSize(QSize(config.iconWidth, config.iconHeight));
+            button->setIconSize(QSize(scaledIconWidth, scaledIconHeight));
         }
 
         // Set text based on layout
@@ -910,17 +1075,25 @@ private:
             button->setText(config.text);
         }
 
-        // Set style
+        // Apply scaling to font size, border radius, padding, margin
+        // Use iconScaleFactor for consistent scaling in dynamic mode
+        int scaledFontSize = qMax(12, (int)(config.fontSize * iconScaleFactor));  // Minimum 12px
+        int scaledBorderRadius = (int)(config.borderRadius * iconScaleFactor);
+        int scaledPadding = qMax(5, (int)(10 * iconScaleFactor));
+        int scaledMargin = qMax(2, (int)(5 * iconScaleFactor));
+        int scaledBorder = qMax(1, (int)(3 * iconScaleFactor));
+
+        // Set style with scaled values
         QString buttonStyle = QString(
             "QPushButton { "
             "  background-color: %1; "
             "  color: white; "
-            "  border: 3px solid #606060; "
+            "  border: %5px solid #606060; "
             "  border-radius: %2px; "
-            "  padding: 10px; "
+            "  padding: %6px; "
             "  font-size: %3px; "
             "  font-weight: bold; "
-            "  margin: 5px; "
+            "  margin: %7px; "
             "}"
             "QPushButton:hover { "
             "  background-color: %4; "
@@ -931,9 +1104,12 @@ private:
             "  border-color: #404040; "
             "}")
             .arg(config.backgroundColor)
-            .arg(config.borderRadius)
-            .arg(config.fontSize)
-            .arg(config.hoverColor);
+            .arg(scaledBorderRadius)
+            .arg(scaledFontSize)
+            .arg(config.hoverColor)
+            .arg(scaledBorder)
+            .arg(scaledPadding)
+            .arg(scaledMargin);
 
         button->setStyleSheet(buttonStyle);
 
@@ -1001,6 +1177,7 @@ int main(int argc, char *argv[])
     QString configPath;
     int networkPort = DEFAULT_LAUNCHER_PORT; // Default port
     bool showHelp = false;
+    bool forceFixedLayout = false;
 
     for (int i = 1; i < argc; i++) {
         QString arg = argv[i];
@@ -1028,6 +1205,8 @@ int main(int argc, char *argv[])
                 qWarning() << "Error: --port requires a port number";
                 return 1;
             }
+        } else if (arg == "--fixed-layout") {
+            forceFixedLayout = true;
         } else if (!arg.startsWith("-")) {
             // Assume it's a config file path if no option specified
             configPath = arg;
@@ -1046,6 +1225,7 @@ int main(int argc, char *argv[])
         qDebug() << "Options:";
         qDebug() << "  -c, --config FILE    Use specified JSON configuration file";
         qDebug() << "  -p, --port PORT      Network interface port (default:" << DEFAULT_LAUNCHER_PORT << ")";
+        qDebug() << "  --fixed-layout       Disable dynamic layout (use scaled fixed sizes from config)";
         qDebug() << "  -h, --help           Show this help message";
         qDebug() << "";
         qDebug() << "Examples:";
@@ -1073,7 +1253,7 @@ int main(int argc, char *argv[])
     }
 
     // Create and show launcher
-    TouchAppLauncher launcher(configPath, networkPort);
+    TouchAppLauncher launcher(configPath, networkPort, forceFixedLayout);
     launcher.showMaximized(); // Full screen for embedded device
 
     return app.exec();
