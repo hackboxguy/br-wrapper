@@ -495,22 +495,21 @@ Window {
                 // FPGA Info Section
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: 180
+                    Layout.preferredHeight: 160
                     color: "#0f3460"
                     radius: 10
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 15
-                        spacing: 8
+                        anchors.margins: 12
+                        spacing: 5
 
                         RowLayout {
                             Layout.fillWidth: true
 
                             Text {
                                 text: "FPGA Information"
-                                font.pixelSize: 22
+                                font.pixelSize: 20
                                 font.bold: true
                                 color: "#ffffff"
                             }
@@ -538,23 +537,23 @@ Window {
                         GridLayout {
                             Layout.fillWidth: true
                             columns: 2
-                            columnSpacing: 20
-                            rowSpacing: 5
+                            columnSpacing: 15
+                            rowSpacing: 3
 
-                            Text { text: "Firmware Version:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.firmwareVersion : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "Firmware Version:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.firmwareVersion : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
-                            Text { text: "Build Date:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.buildDate : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "Build Date:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.buildDate : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
-                            Text { text: "Firmware ID:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.firmwareId : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "Firmware ID:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.firmwareId : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
-                            Text { text: "Board Type:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.boardType : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "Board Type:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.boardType : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
-                            Text { text: "Display:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.displaySize + " " + fpga.displayResolution : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "Display:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: fpga.connected ? fpga.displaySize + " " + fpga.displayResolution : "N/A"; font.pixelSize: 18; color: "#ffffff" }
                         }
                     }
                 }
@@ -562,42 +561,64 @@ Window {
                 // FPGA Settings Section (compact for wide layout)
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 80
+                    Layout.preferredHeight: 90
                     color: "#0f3460"
                     radius: 10
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.margins: 15
-                        spacing: 20
+                        anchors.margins: 12
+                        spacing: 8
 
                         Text {
-                            text: "Settings:"
-                            font.pixelSize: 20
+                            text: "FPGA:"
+                            font.pixelSize: 16
                             font.bold: true
                             color: "#ffffff"
                         }
 
                         Text {
-                            text: "Privacy Mode"
-                            font.pixelSize: 18
+                            text: "Privacy"
+                            font.pixelSize: 14
                             color: "#666666"
                         }
                         Switch {
                             checked: false
                             enabled: false
-                            scale: 0.8
+                            scale: 0.7
                         }
 
                         Text {
-                            text: "Local Dimming"
-                            font.pixelSize: 18
+                            text: "Dimming"
+                            font.pixelSize: 14
                             color: "#666666"
                         }
                         Switch {
                             checked: true
                             enabled: false
-                            scale: 0.8
+                            scale: 0.7
+                        }
+
+                        Text {
+                            text: "PixelComp"
+                            font.pixelSize: 14
+                            color: "#666666"
+                        }
+                        Switch {
+                            checked: false
+                            enabled: false
+                            scale: 0.7
+                        }
+
+                        Text {
+                            text: "VisionBoost"
+                            font.pixelSize: 14
+                            color: "#666666"
+                        }
+                        Switch {
+                            checked: false
+                            enabled: false
+                            scale: 0.7
                         }
 
                         Item { Layout.fillWidth: true }
@@ -607,22 +628,21 @@ Window {
                 // TDDI Info Section
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: 180
+                    Layout.fillHeight: true  // Take remaining space
                     color: "#0f3460"
                     radius: 10
 
                     ColumnLayout {
                         anchors.fill: parent
-                        anchors.margins: 15
-                        spacing: 8
+                        anchors.margins: 12
+                        spacing: 5
 
                         RowLayout {
                             Layout.fillWidth: true
 
                             Text {
                                 text: "Touch Controller (TDDI)"
-                                font.pixelSize: 22
+                                font.pixelSize: 20
                                 font.bold: true
                                 color: "#ffffff"
                             }
@@ -650,26 +670,26 @@ Window {
                         GridLayout {
                             Layout.fillWidth: true
                             columns: 2
-                            columnSpacing: 20
-                            rowSpacing: 5
+                            columnSpacing: 15
+                            rowSpacing: 3
 
-                            Text { text: "IC Type:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: tddi.available && tddi.icType ? tddi.icType : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "IC Type:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: tddi.available && tddi.icType ? tddi.icType : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
-                            Text { text: "FW Version:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: tddi.available && tddi.fwVersion ? tddi.fwVersion : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "FW Version:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: tddi.available && tddi.fwVersion ? tddi.fwVersion : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
-                            Text { text: "Display Config:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: tddi.available && tddi.displayConfig ? tddi.displayConfig : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "Display Config:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: tddi.available && tddi.displayConfig ? tddi.displayConfig : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
-                            Text { text: "Touch Config:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: tddi.available && tddi.touchConfig ? tddi.touchConfig : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "Touch Config:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: tddi.available && tddi.touchConfig ? tddi.touchConfig : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
-                            Text { text: "Customer:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: tddi.available && tddi.customer ? tddi.customer : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "Customer:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: tddi.available && tddi.customer ? tddi.customer : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
-                            Text { text: "Project:"; font.pixelSize: 20; color: "#888888" }
-                            Text { text: tddi.available && tddi.project ? tddi.project : "N/A"; font.pixelSize: 20; color: "#ffffff" }
+                            Text { text: "Project:"; font.pixelSize: 18; color: "#888888" }
+                            Text { text: tddi.available && tddi.project ? tddi.project : "N/A"; font.pixelSize: 18; color: "#ffffff" }
                         }
                     }
                 }
@@ -1064,14 +1084,14 @@ Window {
             // FPGA Settings Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 120
+                Layout.preferredHeight: 200
                 color: "#0f3460"
                 radius: 10
 
                 ColumnLayout {
                     anchors.fill: parent
                     anchors.margins: 15
-                    spacing: 10
+                    spacing: 8
 
                     Text {
                         text: "FPGA Settings"
@@ -1160,6 +1180,78 @@ Window {
                             }
                             Text {
                                 text: "(N/A)"
+                                font.pixelSize: 16
+                                color: "#666666"
+                            }
+                        }
+
+                        RowLayout {
+                            spacing: 10
+                            Text {
+                                text: "Pixel Compensation:"
+                                font.pixelSize: 22
+                                color: "#666666"
+                            }
+                            Switch {
+                                id: pixelCompSwitch
+                                checked: false
+                                enabled: false
+
+                                indicator: Rectangle {
+                                    implicitWidth: 60
+                                    implicitHeight: 32
+                                    radius: 16
+                                    color: "#1a1a2e"
+                                    opacity: 0.5
+
+                                    Rectangle {
+                                        x: 2
+                                        y: 2
+                                        width: 28
+                                        height: 28
+                                        radius: 14
+                                        color: "#666666"
+                                    }
+                                }
+                            }
+                            Text {
+                                text: "(Disabled)"
+                                font.pixelSize: 16
+                                color: "#666666"
+                            }
+                        }
+
+                        RowLayout {
+                            spacing: 10
+                            Text {
+                                text: "Vision Booster:"
+                                font.pixelSize: 22
+                                color: "#666666"
+                            }
+                            Switch {
+                                id: visionBoostSwitch
+                                checked: false
+                                enabled: false
+
+                                indicator: Rectangle {
+                                    implicitWidth: 60
+                                    implicitHeight: 32
+                                    radius: 16
+                                    color: "#1a1a2e"
+                                    opacity: 0.5
+
+                                    Rectangle {
+                                        x: 2
+                                        y: 2
+                                        width: 28
+                                        height: 28
+                                        radius: 14
+                                        color: "#666666"
+                                    }
+                                }
+                            }
+                            Text {
+                                text: "(Disabled)"
                                 font.pixelSize: 16
                                 color: "#666666"
                             }
