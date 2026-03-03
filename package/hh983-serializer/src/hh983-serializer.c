@@ -21,8 +21,14 @@ module_param(config_mode, int, 0444);
 MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default: 0)");
 
 /* Common serializer registers */
+#define SER_RESET_CTL            0x01  /* Reset control */
 #define SER_I2C_CONTROL          0x07
+#define SER_GENERAL_STS          0x0C  /* Link status (RO): [6]=RX_LOCK, [4]=LINK_LOST, [0]=LINK_DET */
 #define SER_GPIO4_CONFIG         0x1B
+#define SER_APB_CTL              0x48  /* APB indirect access control */
+#define SER_APB_ADR0             0x49  /* APB address low byte */
+#define SER_APB_ADR1             0x4A  /* APB address high byte */
+#define SER_APB_DATA0            0x4B  /* APB data byte 0 */
 #define SER_GLOBAL_INT           0x51
 #define SER_TARGET_ID0           0x70
 #define SER_TARGET_ID1           0x71
@@ -38,6 +44,13 @@ MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default
 #define SER_GPIO4_PORT0_REM_INT  0x88
 #define SER_GPIO4_PORT1_REM_INT  0x98
 #define SER_ENABLE_GLOBAL_INT    0x83
+#define SER_DIGITAL_RESET_0      0x01  /* bit 0 of RESET_CTL: self-clearing digital reset, preserves regs */
+
+/* APB_CTL field values */
+#define APB_ENABLE               0x01  /* bit 0: enable APB access */
+
+/* APB register addresses (DP RX block, APB_SELECT=0) */
+#define APB_LINK_ENABLE          0x000 /* bit 0: 1=HPD HIGH + RX enabled, 0=HPD LOW */
 
 /* 984 Deserializer registers */
 #define DES984_INTB_ENABLE       0x44
@@ -45,8 +58,9 @@ MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default
 
 /* 988 Deserializer registers */
 #define DES988_I2C_CONTROL       0x04
-#define DES988_RX_LOCK_STATUS    0x53
 #define DES988_RX_INTN_CTL       0x44  /* INTB_IN enable register (datasheet 7.3.9) */
+#define DES988_GP_STATUS_0       0x53  /* [0]=FPD4_LOCK, [1]=FPD3_LOCK, [2]=FPDTX_PLL_LOCK */
+#define DES988_GP_STATUS_1       0x54  /* [0]=LOCK, [1]=SIG_DET, [6]=FPD_PLL_LOCK */
 
 /* 988 Deserializer configuration values */
 #define DES988_ENABLE_PASSTHROUGH 0xD9
@@ -146,6 +160,51 @@ static int hh983_read_deser_reg(struct i2c_client *client, u8 deser_addr, u8 reg
 	return val_buf;
 }
 
+/* Write to 983 APB register (indirect access to DP RX block) */
+static int hh983_apb_write(struct i2c_client *client, u16 apb_addr, u8 data)
+{
+	int ret;
+
+	ret = hh983_write_reg(client, SER_APB_ADR0, apb_addr & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_APB_ADR1, (apb_addr >> 8) & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_APB_DATA0, data);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_APB_CTL, APB_ENABLE);
+	if (ret < 0)
+		return ret;
+
+	dev_dbg(&client->dev, "APB 0x%03X <- 0x%02X\n", apb_addr, data);
+	return 0;
+}
+
+/* Log link status from both serializer and deserializer */
+static void hh983_check_link_status(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int ser_sts, des_sts0, des_sts1;
+
+	ser_sts = hh983_read_reg(client, SER_GENERAL_STS);
+	if (ser_sts >= 0)
+		dev_info(&client->dev, "SER GENERAL_STS=0x%02X [%s%s%s]\n", ser_sts,
+			 (ser_sts & 0x40) ? "RX_LOCK " : "",
+			 (ser_sts & 0x10) ? "LINK_LOST " : "",
+			 (ser_sts & 0x01) ? "LINK_DET" : "NO_LINK");
+
+	des_sts0 = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_0);
+	des_sts1 = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_1);
+	if (des_sts0 >= 0 && des_sts1 >= 0)
+		dev_info(&client->dev, "DES STS0=0x%02X STS1=0x%02X [%s%s%s]\n",
+			 des_sts0, des_sts1,
+			 (des_sts0 & 0x01) ? "FPD4_LOCK " : "",
+			 (des_sts1 & 0x02) ? "SIG_DET " : "",
+			 (des_sts1 & 0x01) ? "LOCK" : "NO_LOCK");
+}
+
 /* Configure REM_INTB on serializer (common to both modes) */
 static int hh983_configure_rem_intb(struct i2c_client *client, int port)
 {
@@ -241,7 +300,7 @@ static int hh983_init_mode_988(struct hh983_data *data)
 	usleep_range(5000, 10000);
 
 	/* Step 3: Check link status */
-	ret = hh983_read_deser_reg(client, data->deser_addr, DES988_RX_LOCK_STATUS);
+	ret = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_0);
 	if (ret >= 0)
 		dev_info(&client->dev, "988 RX Lock Status: 0x%02X\n", ret);
 
@@ -331,6 +390,23 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	data->mode = config_mode;
 	i2c_set_clientdata(client, data);
 
+	/* Force a full digital reset of the 983 serializer.  This resets
+	 * both the FPDLink TX and DP RX pipelines, forcing the FPDLink to
+	 * re-train and the DP source to re-negotiate — equivalent to a
+	 * physical cable replug.  DIGITAL_RESET_0 is self-clearing and
+	 * preserves all register values.
+	 */
+	dev_info(&client->dev, "Digital reset for FPDLink + DP re-init\n");
+	hh983_write_reg(client, SER_RESET_CTL, SER_DIGITAL_RESET_0);
+	msleep(100);  /* Wait for reset to complete */
+
+	/* Toggle HPD LOW→HIGH to force the DP source to re-detect the sink */
+	dev_info(&client->dev, "Toggling HPD for DP link re-negotiation\n");
+	hh983_apb_write(client, APB_LINK_ENABLE, 0x00);
+	msleep(200);
+	hh983_apb_write(client, APB_LINK_ENABLE, 0x01);
+	msleep(500);  /* Wait for DP link training + FPDLink lock */
+
 	switch (data->mode) {
 	case 0:
 		ret = hh983_init_mode_984(data);
@@ -349,6 +425,7 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	}
 
 	data->initialized = true;
+	hh983_check_link_status(data);
 	dev_info(&client->dev, "HH983 initialization successful\n");
 	return 0;
 }
@@ -380,6 +457,13 @@ static void hh983_remove(struct i2c_client *client)
 
 		/* Disable GPIO4 REM_INT forwarding */
 		hh983_write_reg(client, SER_GPIO4_CONFIG, 0x00);
+
+		/* Digital reset to force a clean link state.
+		 * On next probe, another reset + HPD toggle will
+		 * re-establish both FPDLink and DP paths.
+		 */
+		hh983_write_reg(client, SER_RESET_CTL, SER_DIGITAL_RESET_0);
+		dev_info(&client->dev, "Digital reset issued for clean state on next probe\n");
 	}
 }
 
