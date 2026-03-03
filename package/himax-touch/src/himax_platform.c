@@ -933,16 +933,18 @@ static int himax_int_register_trigger(void)
 	struct i2c_client *client = private_ts->client;
 
 	if (ic_data->HX_INT_IS_EDGE) {
-		I("%s edge trigger falling\n", __func__);
-		ret = request_threaded_irq(client->irq, NULL, himax_ts_thread,
-					   IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
-					   client->name, ts);
-	} else {
-		I("%s level trigger low\n", __func__);
-		ret = request_threaded_irq(client->irq, NULL, himax_ts_thread,
-					   IRQF_TRIGGER_LOW | IRQF_ONESHOT,
-					   client->name, ts);
+		/* FPDLink REM_INTB forwarding degrades edge signals — noisy edges
+		 * cause false triggers, checksum errors, and polling fallback.
+		 * Force level trigger for reliable operation through FPDLink.
+		 */
+		I("%s TDDI reports edge trigger, overriding to level trigger low (FPDLink)\n", __func__);
+		ic_data->HX_INT_IS_EDGE = false;
 	}
+
+	I("%s level trigger low\n", __func__);
+	ret = request_threaded_irq(client->irq, NULL, himax_ts_thread,
+				   IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+				   client->name, ts);
 
 	return ret;
 }
