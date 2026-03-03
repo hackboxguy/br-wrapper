@@ -202,7 +202,12 @@ static int hh983_init_mode_984(struct hh983_data *data)
 	if (ret < 0)
 		return ret;
 
-	/* Enable INTB on 984 deserializer */
+	/* Enable INTB on 984 deserializer.
+	 * Clear first to reset any latched interrupt from a previous session.
+	 */
+	hh983_write_deser_reg(client, data->deser_addr, DES984_INTB_ENABLE, 0x00);
+	usleep_range(2000, 3000);
+
 	ret = hh983_write_deser_reg(client, data->deser_addr, DES984_INTB_ENABLE, DES984_INTB_VALUE);
 	if (ret < 0) {
 		dev_err(&client->dev, "Failed to configure 984 INTB\n");
@@ -276,7 +281,15 @@ static int hh983_init_mode_988(struct hh983_data *data)
 	/* Step 7: Enable INTB_IN forwarding on 988 deserializer (datasheet 7.3.9)
 	 * RX_INTN_CTL (0x44) bit 7 = 1 enables INTB_IN -> back channel -> REM_INTB
 	 * Signal path: TDDI touch_int -> 988 INTB_IN (pin 45) -> BCC -> 983 REM_INTB -> Host GPIO
+	 *
+	 * First ensure INTB_IN is disabled to clear any latched interrupt state
+	 * from a previous session. Without this, a stale interrupt can latch
+	 * GPIO4 LOW immediately on enable, causing an All Zero flood in the
+	 * touch driver.
 	 */
+	hh983_write_deser_reg(client, data->deser_addr, DES988_RX_INTN_CTL, 0x00);
+	usleep_range(2000, 3000);
+
 	ret = hh983_write_deser_reg(client, data->deser_addr, DES988_RX_INTN_CTL, DES988_INTB_IN_ENABLE);
 	if (ret < 0) {
 		dev_warn(&client->dev, "Failed to configure 988 INTB_IN forwarding\n");
@@ -347,6 +360,24 @@ static void hh983_remove(struct i2c_client *client)
 	dev_info(&client->dev, "HH983 driver removed\n");
 
 	if (data && data->initialized) {
+		/* Tear down the full interrupt chain in reverse order.
+		 * Just disabling GPIO4 leaves REM_INT and INTB_IN active,
+		 * which can latch an interrupt that persists across
+		 * rmmod/modprobe and holds GPIO4 stuck LOW on next probe.
+		 */
+		if (data->mode == 1) {
+			/* Disable 988 INTB_IN forwarding first (source end) */
+			hh983_write_deser_reg(client, data->deser_addr,
+					      DES988_RX_INTN_CTL, 0x00);
+			usleep_range(2000, 3000);
+		}
+
+		/* Disable global INTB output */
+		hh983_write_reg(client, SER_GLOBAL_INT, 0x00);
+
+		/* Disable REM_INT */
+		hh983_write_reg(client, SER_INTERRUPT_CTRL, 0x00);
+
 		/* Disable GPIO4 REM_INT forwarding */
 		hh983_write_reg(client, SER_GPIO4_CONFIG, 0x00);
 	}

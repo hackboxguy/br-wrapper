@@ -66,6 +66,13 @@ EXPORT_SYMBOL(g_ts_dbg);
 	int g_zero_event_count;
 #endif
 
+/* All Zero event recovery — active regardless of HX_EXCP_RECOVERY.
+ * Counts consecutive all-zero IRQ events and triggers a reset after
+ * the threshold to break interrupt floods caused by FPDLink latches.
+ */
+static int hx_all_zero_count;
+#define HX_ALL_ZERO_RESET_THRESHOLD 5
+
 #if (HX_TP_INSPECT_MODE == 0x01)
 	uint8_t inspect_mode_flag;
 #endif
@@ -2197,6 +2204,29 @@ static void himax_err_ctrl(struct himax_ts_data *ts, uint8_t *buf, int ts_path,
 		g_zero_event_count = 0;
 	}
 #endif
+
+	/* All Zero recovery — breaks interrupt floods from FPDLink latches.
+	 * After N consecutive all-zero events, disable IRQ, reset the TDDI,
+	 * clear the event stack, and re-enable.  This runs in threaded IRQ
+	 * context so sleeping is safe.
+	 */
+	if (*ts_status == HX_CHKSUM_FAIL) {
+		hx_all_zero_count++;
+		if (hx_all_zero_count >= HX_ALL_ZERO_RESET_THRESHOLD) {
+			I("%s: %d consecutive All Zero events, resetting TDDI\n",
+			  __func__, hx_all_zero_count);
+			himax_int_enable(0);
+			g_core_fp.fp_sense_off();
+			g_core_fp.fp_sense_on();
+			msleep(120);
+			hx_all_zero_count = 0;
+			himax_int_enable(1);
+			*ts_status = HX_TS_NORMAL_END;
+		}
+	} else {
+		hx_all_zero_count = 0;
+	}
+
 	if (g_ts_dbg != 0) {
 		I("%s: END, ts_status=%d!\n", __func__, *ts_status);
 	}
@@ -3243,7 +3273,36 @@ int himax_chip_common_init(void)
 		goto err_creat_proc_file_failed;
 	}
 
+	/* Stop TDDI firmware before registering IRQ handler.
+	 * After system_reset() in power_on_init, the TDDI resumes active
+	 * reporting immediately (unlike cold boot where it starts idle).
+	 * Without this, touch events arrive before the handler is ready,
+	 * causing "All Zero event" floods on rmmod/modprobe cycles.
+	 */
+	g_core_fp.fp_sense_off();
+
 	(void)himax_ts_register_interrupt();
+
+	/* Disable IRQ immediately — the line may already be LOW from a
+	 * latched interrupt in the FPDLink 983/988 chain, which causes
+	 * the level-triggered handler to fire before the TDDI is ready.
+	 */
+	himax_int_enable(0);
+
+	/* Restart TDDI firmware and allow it to complete its first scan
+	 * cycle so the event stack contains valid data when interrupts
+	 * are finally enabled.
+	 */
+	g_core_fp.fp_sense_on();
+	msleep(120);
+
+	/* Re-enable IRQ — himax_int_enable(1) clears the event stack
+	 * first, which drains any stale all-zero events and releases
+	 * the interrupt line before the handler starts processing.
+	 */
+	hx_all_zero_count = 0;
+	himax_int_enable(1);
+
 #if (HX_BOOT_UPGRADE == 0x01)
 	if (g_boot_upgrade_flag) {
 		himax_int_enable(0);
@@ -3317,6 +3376,13 @@ err_xfer_buff_fail:
 void himax_chip_common_deinit(void)
 {
 	struct himax_ts_data *ts = private_ts;
+
+	/* Stop TDDI firmware before removing driver.
+	 * Without this, the TDDI continues generating interrupts after rmmod,
+	 * leaving touch_int asserted. On subsequent modprobe, the stuck
+	 * interrupt causes continuous "All Zero event" polling.
+	 */
+	g_core_fp.fp_sense_off();
 
 	(void)himax_ts_unregister_interrupt();
 
