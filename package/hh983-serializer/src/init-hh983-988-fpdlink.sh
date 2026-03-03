@@ -38,7 +38,7 @@ fi
 # Write to serializer register
 write_ser() {
     printf "SER  0x$1 <- 0x$2 ($3)... "
-    if i2cset -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x$1 0x$2 2>/dev/null; then
+    if i2cset -f -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x$1 0x$2 2>/dev/null; then
         printf "${GREEN}OK${NC}\n"
     else
         printf "${RED}FAIL${NC}\n"
@@ -49,7 +49,7 @@ write_ser() {
 # Write to deserializer register
 write_des() {
     printf "DES  0x$1 <- 0x$2 ($3)... "
-    if i2cset -y ${I2C_BUS} 0x${DESERIALIZER_ADDR} 0x$1 0x$2 2>/dev/null; then
+    if i2cset -f -y ${I2C_BUS} 0x${DESERIALIZER_ADDR} 0x$1 0x$2 2>/dev/null; then
         printf "${GREEN}OK${NC}\n"
     else
         printf "${RED}FAIL${NC}\n"
@@ -59,13 +59,13 @@ write_des() {
 
 # Read serializer register
 read_ser() {
-    value=$(i2cget -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x$1 2>/dev/null)
+    value=$(i2cget -f -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x$1 2>/dev/null)
     printf "SER  0x$1 = ${GREEN}${value}${NC} ($2)\n"
 }
 
 # Read deserializer register
 read_des() {
-    value=$(i2cget -y ${I2C_BUS} 0x${DESERIALIZER_ADDR} 0x$1 2>/dev/null)
+    value=$(i2cget -f -y ${I2C_BUS} 0x${DESERIALIZER_ADDR} 0x$1 2>/dev/null)
     printf "DES  0x$1 = ${GREEN}${value}${NC} ($2)\n"
 }
 
@@ -111,17 +111,26 @@ echo ""
 echo "=== Step 4: Configure REM_INTB (TDDI touch_int forwarding) ==="
 # Signal path: TDDI touch_int -> 988 INTB_IN (pin 45) -> BCC -> 983 REM_INTB -> Host GPIO
 #
-# 988 Deserializer: Enable INTB_IN forwarding (datasheet 7.3.9)
+# IMPORTANT: Configure serializer FIRST, then enable 988 INTB_IN forwarding LAST.
+# If INTB_IN is enabled before the 983 is ready to handle interrupts,
+# the REM_INTB line can latch in a stuck-low state.
+
+# 983 Serializer: Configure REM_INTB (must be before DES INTB_IN enable)
+#   0xC6 = 0x21: Enable REM_INT
+#   0x1B = 0x88: GPIO4 for Port 0 REM_INT (BCC is always Port 0)
+#   0x51 = 0x83: Enable global INTB output
+write_ser "c6" "21" "Enable REM_INT"
+usleep 2000 2>/dev/null || sleep 0.01
+write_ser "1b" "88" "GPIO4 = Port 0 REM_INT (BCC is always Port 0)"
+usleep 2000 2>/dev/null || sleep 0.01
+write_ser "51" "83" "Global INTB enable"
+
+# 988 Deserializer: Enable INTB_IN forwarding LAST (datasheet 7.3.9)
 #   RX_INTN_CTL (0x44) bit 7 = 1 enables INTB_IN -> back channel -> serializer
 write_des "44" "81" "INTB_IN enable (0x81 required, not 0x80!)"
 
-# 983 Serializer: Configure REM_INTB
-#   0xC6 = 0x21: Enable REM_INT
-#   0x1B = 0x98: GPIO4 for Port 1 REM_INT forwarding
-#   0x51 = 0x83: Enable global INTB output
-write_ser "c6" "21" "Enable REM_INT"
-write_ser "1b" "98" "GPIO4 = Port 1 REM_INT"
-write_ser "51" "83" "Global INTB enable"
+# Allow FPDLink interrupt path to stabilize
+sleep 0.1
 echo ""
 
 echo "=== Step 5: Verify Configuration ==="
