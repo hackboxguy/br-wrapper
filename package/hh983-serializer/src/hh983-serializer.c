@@ -14,11 +14,17 @@
 #include <linux/i2c.h>
 #include <linux/of.h>
 #include <linux/delay.h>
+#include <linux/workqueue.h>
 
 /* Configuration mode: 0=983+984, 1=983+988 */
 static int config_mode = 0;
 module_param(config_mode, int, 0444);
 MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default: 0)");
+
+/* Link status poll interval (0 = disable monitoring) */
+static int poll_interval_ms = 1000;
+module_param(poll_interval_ms, int, 0644);
+MODULE_PARM_DESC(poll_interval_ms, "Link status poll interval in ms (0=disable, default: 1000)");
 
 /* Common serializer registers */
 #define SER_RESET_CTL            0x01  /* Reset control */
@@ -29,7 +35,7 @@ MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default
 #define SER_APB_ADR0             0x49  /* APB address low byte */
 #define SER_APB_ADR1             0x4A  /* APB address high byte */
 #define SER_APB_DATA0            0x4B  /* APB data byte 0 */
-#define SER_GLOBAL_INT           0x51
+#define SER_INTERRUPT_CTL        0x51  /* Interrupt enable: [7]=INTB_PIN_EN [4]=IE_DP_RX0 */
 #define SER_TARGET_ID0           0x70
 #define SER_TARGET_ID1           0x71
 #define SER_TARGET_ALIAS0        0x78
@@ -43,14 +49,18 @@ MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default
 #define SER_ENABLE_REM_INT       0x21
 #define SER_GPIO4_PORT0_REM_INT  0x88
 #define SER_GPIO4_PORT1_REM_INT  0x98
-#define SER_ENABLE_GLOBAL_INT    0x83
+#define SER_ENABLE_GLOBAL_INT    0x93  /* INTB_PIN_EN + IE_DP_RX0 + IE_FPD_TX1 + IE_FPD_TX0 */
 #define SER_DIGITAL_RESET_0      0x01  /* bit 0 of RESET_CTL: self-clearing digital reset, preserves regs */
 
 /* APB_CTL field values */
 #define APB_ENABLE               0x01  /* bit 0: enable APB access */
+#define APB_READ                 0x02  /* bit 1: start APB read (W1S, self-clears when done) */
 
 /* APB register addresses (DP RX block, APB_SELECT=0) */
 #define APB_LINK_ENABLE          0x000 /* bit 0: 1=HPD HIGH + RX enabled, 0=HPD LOW */
+#define APB_SINK_0_INT_MASK      0x190 /* Sink 0 interrupt mask (default 0x79 = most masked) */
+#define APB_SINK_0_INT_CAUSE     0x194 /* Sink 0 interrupt cause (read-clear):
+                                        *   [2]=NO_VIDEO  [1]=VIDEO_DETECT  [0]=VIDEO_MODE_CHANGE */
 
 /* 984 Deserializer registers */
 #define DES984_INTB_ENABLE       0x44
@@ -58,6 +68,8 @@ MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default
 
 /* 988 Deserializer registers */
 #define DES988_I2C_CONTROL       0x04
+#define DES988_GPIO4_PIN_CTL     0x19  /* GPIO4 pin control (LOCK0 on display driver board) */
+#define DES988_GPIO6_PIN_CTL     0x1B  /* GPIO6 pin control (LOCK_DUAL on display driver board) */
 #define DES988_RX_INTN_CTL       0x44  /* INTB_IN enable register (datasheet 7.3.9) */
 #define DES988_GP_STATUS_0       0x53  /* [0]=FPD4_LOCK, [1]=FPD3_LOCK, [2]=FPDTX_PLL_LOCK */
 #define DES988_GP_STATUS_1       0x54  /* [0]=LOCK, [1]=SIG_DET, [6]=FPD_PLL_LOCK */
@@ -65,6 +77,13 @@ MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default
 /* 988 Deserializer configuration values */
 #define DES988_ENABLE_PASSTHROUGH 0xD9
 #define DES988_INTB_IN_ENABLE    0x81  /* 0x81 required, not 0x80! Enables INTB_IN -> REM_INTB forwarding */
+
+/* 988 GPIO pin modes — GPIO4/GPIO6 drive reset signals on the display driver board.
+ * Toggling LOW then restoring to lock-indicator mode simulates FPDLink cable unplug/replug.
+ */
+#define DES988_GPIO_FORCED_LOW   0xC0  /* Output enabled, forced LOW (resets display driver) */
+#define DES988_GPIO4_RX_LOCK     0x9C  /* Port 0 RX Lock indicator (default) */
+#define DES988_GPIO6_COMBINED_LOCK 0xC2 /* Combined lock indicator (default) */
 
 /* TDDI I2C targets (7-bit addresses) */
 #define TDDI_ADDR_1              0x48
@@ -82,6 +101,12 @@ struct hh983_data {
 	u8 deser_addr;
 	int mode;
 	bool initialized;
+	/* Link monitoring */
+	struct delayed_work link_work;
+	bool link_up;
+	int recovery_count;
+	int recovery_cooldown;  /* poll cycles to skip after recovery */
+	int down_count;         /* consecutive polls with link down */
 };
 
 static int hh983_write_reg(struct i2c_client *client, u8 reg, u8 value)
@@ -182,11 +207,39 @@ static int hh983_apb_write(struct i2c_client *client, u16 apb_addr, u8 data)
 	return 0;
 }
 
+/* Read byte 0 (bits 7:0) from 983 APB register.
+ * Procedure per datasheet Table 7-119:
+ *   1. Set APB_ADR0/ADR1 with target address
+ *   2. Write APB_CTL with APB_ENABLE | APB_READ to start the read
+ *   3. APB_READ bit (W1S) self-clears when read completes
+ *   4. Read result from APB_DATA0
+ */
+static int hh983_apb_read(struct i2c_client *client, u16 apb_addr)
+{
+	int ret;
+
+	ret = hh983_write_reg(client, SER_APB_ADR0, apb_addr & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_APB_ADR1, (apb_addr >> 8) & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_APB_CTL, APB_ENABLE | APB_READ);
+	if (ret < 0)
+		return ret;
+	/* APB_READ self-clears when the internal read completes;
+	 * allow time for the APB transaction to finish.
+	 */
+	usleep_range(100, 200);
+
+	return hh983_read_reg(client, SER_APB_DATA0);
+}
+
 /* Log link status from both serializer and deserializer */
 static void hh983_check_link_status(struct hh983_data *data)
 {
 	struct i2c_client *client = data->client;
-	int ser_sts, des_sts0, des_sts1;
+	int ser_sts;
 
 	ser_sts = hh983_read_reg(client, SER_GENERAL_STS);
 	if (ser_sts >= 0)
@@ -195,14 +248,198 @@ static void hh983_check_link_status(struct hh983_data *data)
 			 (ser_sts & 0x10) ? "LINK_LOST " : "",
 			 (ser_sts & 0x01) ? "LINK_DET" : "NO_LINK");
 
-	des_sts0 = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_0);
-	des_sts1 = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_1);
-	if (des_sts0 >= 0 && des_sts1 >= 0)
-		dev_info(&client->dev, "DES STS0=0x%02X STS1=0x%02X [%s%s%s]\n",
-			 des_sts0, des_sts1,
-			 (des_sts0 & 0x01) ? "FPD4_LOCK " : "",
-			 (des_sts1 & 0x02) ? "SIG_DET " : "",
-			 (des_sts1 & 0x01) ? "LOCK" : "NO_LOCK");
+	if (data->mode == 1) {
+		int des_sts0, des_sts1;
+
+		des_sts0 = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_0);
+		des_sts1 = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_1);
+		if (des_sts0 >= 0 && des_sts1 >= 0)
+			dev_info(&client->dev, "DES STS0=0x%02X STS1=0x%02X [%s%s%s]\n",
+				 des_sts0, des_sts1,
+				 (des_sts0 & 0x01) ? "FPD4_LOCK " : "",
+				 (des_sts1 & 0x02) ? "SIG_DET " : "",
+				 (des_sts1 & 0x01) ? "LOCK" : "NO_LOCK");
+	}
+}
+
+/* Reset the video link: 988 GPIO toggle + digital reset + HPD toggle.
+ * Reusable by both probe() and the link monitor work function.
+ *
+ * Sequence matches recover-983-video.sh:
+ *   1. Ensure I2C passthrough is up (so we can talk to 988)
+ *   2. 988 GPIO4/GPIO6 LOW — hold display driver board in reset
+ *   3. 983 digital reset — clear stale FPDLink TX + DP RX pipelines
+ *   4. 988 GPIO4/GPIO6 restore — un-reset display driver board
+ *   5. Re-enable I2C passthrough (safety measure)
+ *   6. HPD toggle — force DP source to re-read EDID and re-train
+ */
+static void hh983_recover_link(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+
+	dev_info(&client->dev, "Recovering video link (recovery #%d)...\n",
+		 data->recovery_count + 1);
+
+	if (data->mode == 1) {
+		/* Ensure I2C passthrough works so we can reach the 988.
+		 * FPDLink control channel stays up even when DP input is lost,
+		 * so this write goes through even with a black display.
+		 */
+		hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
+		msleep(10);
+
+		/* Force GPIO4/GPIO6 LOW — resets display driver board.
+		 * These pins drive LOCK0/LOCK_DUAL which are reset signals
+		 * on the display driver board's internal circuitry.
+		 */
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES988_GPIO4_PIN_CTL, DES988_GPIO_FORCED_LOW);
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES988_GPIO6_PIN_CTL, DES988_GPIO_FORCED_LOW);
+	}
+
+	/* Digital reset: resets FPDLink TX + DP RX pipelines.
+	 * Self-clearing bit, preserves register configuration.
+	 * Display driver held in reset during this period (GPIOs still LOW).
+	 */
+	hh983_write_reg(client, SER_RESET_CTL, SER_DIGITAL_RESET_0);
+	msleep(500);
+
+	if (data->mode == 1) {
+		/* Restore GPIOs to lock-indicator mode — un-resets display driver */
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES988_GPIO4_PIN_CTL, DES988_GPIO4_RX_LOCK);
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES988_GPIO6_PIN_CTL, DES988_GPIO6_COMBINED_LOCK);
+		msleep(300);
+	}
+
+	/* Re-enable I2C passthrough as safety measure.
+	 * Digital reset preserves regs, but re-enabling ensures clean state.
+	 */
+	hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
+	usleep_range(1000, 2000);
+	if (data->mode == 1) {
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES988_I2C_CONTROL, DES988_ENABLE_PASSTHROUGH);
+		usleep_range(1000, 2000);
+	}
+
+	/* HPD toggle: force DP source to re-read EDID and re-train */
+	hh983_apb_write(client, APB_LINK_ENABLE, 0x00);
+	msleep(200);
+	hh983_apb_write(client, APB_LINK_ENABLE, 0x01);
+	msleep(500);
+
+	hh983_check_link_status(data);
+	data->recovery_count++;
+}
+
+/* Clear pending DP RX events by reading the read-clear cause register. */
+static void hh983_clear_dp_events(struct hh983_data *data)
+{
+	hh983_apb_read(data->client, APB_SINK_0_INT_CAUSE);
+}
+
+/* Periodic link status monitor — detects DP input video loss/return
+ * and triggers automatic video recovery.
+ *
+ * Detection method: APB_SINK_0_INT_CAUSE (0x194) — fires on video events
+ * (NO_VIDEO, VIDEO_DETECT, VIDEO_MODE_CHANGE). This is the only register
+ * empirically confirmed to change when the DP input is interrupted.
+ *
+ * Registers that do NOT work for detection:
+ *   - GENERAL_STS (0x0C): reflects FPDLink back-channel, not DP input
+ *   - APB_PHY_STATUS (0x208): latched, never clears on input loss
+ *   - APB_INTERRUPT_CAUSE (0x188): stuck at 0xFFFF, mask (0x180) not writable
+ *
+ * Fallback: blind recovery after 10+ poll cycles with no events.
+ */
+static void hh983_link_work_fn(struct work_struct *work)
+{
+	struct hh983_data *data = container_of(work, struct hh983_data,
+					       link_work.work);
+	struct i2c_client *client = data->client;
+	int sink_cause;
+
+	/* Skip polling during post-recovery cooldown */
+	if (data->recovery_cooldown > 0) {
+		data->recovery_cooldown--;
+		goto resched;
+	}
+
+	/* Read SINK_0_INTERRUPT_CAUSE — read-clear register.
+	 * Any non-zero value means a video event occurred.
+	 */
+	sink_cause = hh983_apb_read(client, APB_SINK_0_INT_CAUSE);
+	if (sink_cause < 0)
+		goto resched;
+
+	if (sink_cause) {
+		dev_info(&client->dev,
+			 "Video event: SINK_INT=0x%02X [%s%s%s]\n",
+			 sink_cause,
+			 (sink_cause & 0x04) ? "NO_VIDEO " : "",
+			 (sink_cause & 0x02) ? "VIDEO_DETECT " : "",
+			 (sink_cause & 0x01) ? "MODE_CHANGE " : "");
+
+		if (sink_cause & 0x04) {
+			/* NO_VIDEO: DP source stopped sending video */
+			data->link_up = false;
+			data->down_count = 0;
+		}
+
+		if ((sink_cause & 0x02) || (sink_cause & 0x01)) {
+			/* VIDEO_DETECT or MODE_CHANGE: video (re)appeared.
+			 * The 983 saw new video but the pipeline may be stale
+			 * from the interruption — recovery re-trains everything.
+			 */
+			dev_notice(&client->dev,
+				   "Video detected, triggering recovery\n");
+			hh983_recover_link(data);
+			data->link_up = true;
+			data->down_count = 0;
+			data->recovery_cooldown = 5;
+			goto resched;
+		}
+
+		/* Upper bits (0xF0 seen empirically) may indicate
+		 * undocumented video events — treat as recovery trigger
+		 * if we're currently down or if no specific bit matched.
+		 */
+		if (!data->link_up || !(sink_cause & 0x07)) {
+			dev_notice(&client->dev,
+				   "Video event (0x%02X) while %s, recovering\n",
+				   sink_cause,
+				   data->link_up ? "up" : "down");
+			hh983_recover_link(data);
+			data->link_up = true;
+			data->down_count = 0;
+			data->recovery_cooldown = 5;
+			goto resched;
+		}
+	}
+
+	/* Blind recovery fallback: if link has been down for 10+ polls
+	 * with no SINK events, try recovery anyway. Harmless if cable
+	 * is still out (no source to train with).
+	 */
+	if (!data->link_up) {
+		data->down_count++;
+		if (data->down_count >= 10) {
+			dev_notice(&client->dev,
+				   "Link down for %ds, blind recovery\n",
+				   data->down_count * poll_interval_ms / 1000);
+			hh983_recover_link(data);
+			data->down_count = 0;
+			data->recovery_cooldown = 5;
+		}
+	}
+
+resched:
+	if (poll_interval_ms > 0)
+		schedule_delayed_work(&data->link_work,
+				      msecs_to_jiffies(poll_interval_ms));
 }
 
 /* Configure REM_INTB on serializer (common to both modes) */
@@ -235,7 +472,7 @@ static int hh983_configure_rem_intb(struct i2c_client *client, int port)
 		dev_info(&client->dev, "GPIO4_CONFIG verified: 0x%02X\n", readback);
 
 	/* Enable global INTB */
-	ret = hh983_write_reg(client, SER_GLOBAL_INT, SER_ENABLE_GLOBAL_INT);
+	ret = hh983_write_reg(client, SER_INTERRUPT_CTL, SER_ENABLE_GLOBAL_INT);
 	if (ret < 0)
 		return ret;
 
@@ -390,22 +627,8 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	data->mode = config_mode;
 	i2c_set_clientdata(client, data);
 
-	/* Force a full digital reset of the 983 serializer.  This resets
-	 * both the FPDLink TX and DP RX pipelines, forcing the FPDLink to
-	 * re-train and the DP source to re-negotiate — equivalent to a
-	 * physical cable replug.  DIGITAL_RESET_0 is self-clearing and
-	 * preserves all register values.
-	 */
-	dev_info(&client->dev, "Digital reset for FPDLink + DP re-init\n");
-	hh983_write_reg(client, SER_RESET_CTL, SER_DIGITAL_RESET_0);
-	msleep(100);  /* Wait for reset to complete */
-
-	/* Toggle HPD LOW→HIGH to force the DP source to re-detect the sink */
-	dev_info(&client->dev, "Toggling HPD for DP link re-negotiation\n");
-	hh983_apb_write(client, APB_LINK_ENABLE, 0x00);
-	msleep(200);
-	hh983_apb_write(client, APB_LINK_ENABLE, 0x01);
-	msleep(500);  /* Wait for DP link training + FPDLink lock */
+	/* Reset the video link pipeline (digital reset + HPD toggle) */
+	hh983_recover_link(data);
 
 	switch (data->mode) {
 	case 0:
@@ -426,7 +649,25 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 
 	data->initialized = true;
 	hh983_check_link_status(data);
-	dev_info(&client->dev, "HH983 initialization successful\n");
+
+	/* Unmask SINK_0 video interrupts so SINK_0_INT_CAUSE fires on
+	 * NO_VIDEO / VIDEO_DETECT / VIDEO_MODE_CHANGE events.
+	 * Default mask is 0x79 (most events masked).
+	 */
+	hh983_apb_write(client, APB_SINK_0_INT_MASK, 0x00);
+
+	/* Clear any DP events from boot training before starting monitor */
+	hh983_clear_dp_events(data);
+
+	/* Start link monitoring */
+	data->link_up = true;
+	INIT_DELAYED_WORK(&data->link_work, hh983_link_work_fn);
+	if (poll_interval_ms > 0)
+		schedule_delayed_work(&data->link_work,
+				      msecs_to_jiffies(poll_interval_ms));
+
+	dev_info(&client->dev, "HH983 initialization successful (poll=%dms)\n",
+		 poll_interval_ms);
 	return 0;
 }
 
@@ -437,6 +678,9 @@ static void hh983_remove(struct i2c_client *client)
 	dev_info(&client->dev, "HH983 driver removed\n");
 
 	if (data && data->initialized) {
+		/* Stop link monitor before tearing down hardware */
+		cancel_delayed_work_sync(&data->link_work);
+
 		/* Tear down the full interrupt chain in reverse order.
 		 * Just disabling GPIO4 leaves REM_INT and INTB_IN active,
 		 * which can latch an interrupt that persists across
@@ -450,7 +694,7 @@ static void hh983_remove(struct i2c_client *client)
 		}
 
 		/* Disable global INTB output */
-		hh983_write_reg(client, SER_GLOBAL_INT, 0x00);
+		hh983_write_reg(client, SER_INTERRUPT_CTL, 0x00);
 
 		/* Disable REM_INT */
 		hh983_write_reg(client, SER_INTERRUPT_CTRL, 0x00);
