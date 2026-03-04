@@ -21,6 +21,8 @@ define HH983_SERIALIZER_INSTALL_TARGET_CMDS
 	$(MAKE) $(LINUX_MAKE_FLAGS) -C $(LINUX_DIR) M=$(@D) modules_install
 	$(INSTALL) -D -m 0644 $(@D)/hh983-serializer.dtbo \
 		$(BINARIES_DIR)/rpi-firmware/overlays/hh983-serializer.dtbo
+	$(INSTALL) -D -m 0755 $(@D)/scripts/re-init-983-pipeline.sh \
+		$(TARGET_DIR)/usr/bin/re-init-983-pipeline.sh
 endef
 
 $(eval $(kernel-module))
