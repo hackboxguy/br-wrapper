@@ -23,6 +23,10 @@ define HH983_SERIALIZER_INSTALL_TARGET_CMDS
 		$(BINARIES_DIR)/rpi-firmware/overlays/hh983-serializer.dtbo
 	$(INSTALL) -D -m 0755 $(@D)/scripts/re-init-983-pipeline.sh \
 		$(TARGET_DIR)/usr/bin/re-init-983-pipeline.sh
+	$(INSTALL) -D -m 0755 $(@D)/scripts/fpdlink-tool.sh \
+		$(TARGET_DIR)/usr/bin/fpdlink-tool.sh
+	$(INSTALL) -D -m 0755 $(@D)/scripts/toggle-pi-hdmi.sh \
+		$(TARGET_DIR)/usr/bin/toggle-pi-hdmi.sh
 endef
 
 $(eval $(kernel-module))
