@@ -63,8 +63,19 @@ MODULE_PARM_DESC(poll_interval_ms, "Link status poll interval in ms (0=disable, 
                                         *   [2]=NO_VIDEO  [1]=VIDEO_DETECT  [0]=VIDEO_MODE_CHANGE */
 
 /* 984 Deserializer registers */
+#define DES984_GENERAL_CFG       0x04  /* I2C pass-through control (default 0xC1) */
+#define DES984_GPIO4_PIN_CTL     0x19  /* GPIO4 pin control (RX Lock indicator) */
+#define DES984_GPIO6_PIN_CTL     0x1B  /* GPIO6 pin control (Combined Lock indicator) */
 #define DES984_INTB_ENABLE       0x44
+#define DES984_GP_STATUS_0       0x53  /* [0]=FPD4RX_LOCK [1]=FPD3RX_LOCK [2]=FPDTX_PLL_LOCK */
+#define DES984_GP_STATUS_1       0x54  /* [0]=LOCK [6]=FPDRX_PLL_LOCK (no SIG_DET) */
 #define DES984_INTB_VALUE        0x81
+
+/* 984 configuration values */
+#define DES984_ENABLE_PASSTHROUGH 0xC9  /* GENERAL_CFG default 0xC1 | bit[3] I2C_PASS_THROUGH */
+#define DES984_GPIO_FORCED_LOW    0xC0  /* Output enabled, Device Status, fixed output 0 */
+#define DES984_GPIO4_RX_LOCK      0x9C  /* Port 0 RX Lock Detect (default) */
+#define DES984_GPIO6_COMBINED_LOCK 0xC2 /* Mode-dependent Lock indication (default) */
 
 /* 988 Deserializer registers */
 #define DES988_I2C_CONTROL       0x04
@@ -259,17 +270,28 @@ static void hh983_check_link_status(struct hh983_data *data)
 				 (des_sts0 & 0x01) ? "FPD4_LOCK " : "",
 				 (des_sts1 & 0x02) ? "SIG_DET " : "",
 				 (des_sts1 & 0x01) ? "LOCK" : "NO_LOCK");
+	} else if (data->mode == 0) {
+		int des_sts0, des_sts1;
+
+		des_sts0 = hh983_read_deser_reg(client, data->deser_addr, DES984_GP_STATUS_0);
+		des_sts1 = hh983_read_deser_reg(client, data->deser_addr, DES984_GP_STATUS_1);
+		if (des_sts0 >= 0 && des_sts1 >= 0)
+			dev_info(&client->dev, "DES STS0=0x%02X STS1=0x%02X [%s%s%s]\n",
+				 des_sts0, des_sts1,
+				 (des_sts0 & 0x01) ? "FPD4_LOCK " : "",
+				 (des_sts1 & 0x40) ? "PLL_LOCK " : "",
+				 (des_sts1 & 0x01) ? "LOCK" : "NO_LOCK");
 	}
 }
 
-/* Reset the video link: 988 GPIO toggle + digital reset + HPD toggle.
+/* Reset the video link: GPIO toggle + digital reset + HPD toggle.
  * Reusable by both probe() and the link monitor work function.
  *
- * Sequence matches recover-983-video.sh:
- *   1. Ensure I2C passthrough is up (so we can talk to 988)
- *   2. 988 GPIO4/GPIO6 LOW — hold display driver board in reset
+ * Sequence (both mode 0/984 and mode 1/988):
+ *   1. Ensure I2C passthrough is up (so we can talk to deserializer)
+ *   2. Deserializer GPIO4/GPIO6 LOW — hold display driver board in reset
  *   3. 983 digital reset — clear stale FPDLink TX + DP RX pipelines
- *   4. 988 GPIO4/GPIO6 restore — un-reset display driver board
+ *   4. Deserializer GPIO4/GPIO6 restore — un-reset display driver board
  *   5. Re-enable I2C passthrough (safety measure)
  *   6. HPD toggle — force DP source to re-read EDID and re-train
  */
@@ -296,6 +318,17 @@ static void hh983_recover_link(struct hh983_data *data)
 				      DES988_GPIO4_PIN_CTL, DES988_GPIO_FORCED_LOW);
 		hh983_write_deser_reg(client, data->deser_addr,
 				      DES988_GPIO6_PIN_CTL, DES988_GPIO_FORCED_LOW);
+	} else if (data->mode == 0) {
+		/* Same GPIO reset sequence for 984 — registers and values
+		 * are identical to 988 (GPIO4=0x19, GPIO6=0x1B, LOW=0xC0).
+		 */
+		hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
+		msleep(10);
+
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES984_GPIO4_PIN_CTL, DES984_GPIO_FORCED_LOW);
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES984_GPIO6_PIN_CTL, DES984_GPIO_FORCED_LOW);
 	}
 
 	/* Digital reset: resets FPDLink TX + DP RX pipelines.
@@ -312,6 +345,12 @@ static void hh983_recover_link(struct hh983_data *data)
 		hh983_write_deser_reg(client, data->deser_addr,
 				      DES988_GPIO6_PIN_CTL, DES988_GPIO6_COMBINED_LOCK);
 		msleep(300);
+	} else if (data->mode == 0) {
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES984_GPIO4_PIN_CTL, DES984_GPIO4_RX_LOCK);
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES984_GPIO6_PIN_CTL, DES984_GPIO6_COMBINED_LOCK);
+		msleep(300);
 	}
 
 	/* Re-enable I2C passthrough as safety measure.
@@ -322,6 +361,10 @@ static void hh983_recover_link(struct hh983_data *data)
 	if (data->mode == 1) {
 		hh983_write_deser_reg(client, data->deser_addr,
 				      DES988_I2C_CONTROL, DES988_ENABLE_PASSTHROUGH);
+		usleep_range(1000, 2000);
+	} else if (data->mode == 0) {
+		hh983_write_deser_reg(client, data->deser_addr,
+				      DES984_GENERAL_CFG, DES984_ENABLE_PASSTHROUGH);
 		usleep_range(1000, 2000);
 	}
 
@@ -690,6 +733,11 @@ static void hh983_remove(struct i2c_client *client)
 			/* Disable 988 INTB_IN forwarding first (source end) */
 			hh983_write_deser_reg(client, data->deser_addr,
 					      DES988_RX_INTN_CTL, 0x00);
+			usleep_range(2000, 3000);
+		} else if (data->mode == 0) {
+			/* Disable 984 INTB forwarding */
+			hh983_write_deser_reg(client, data->deser_addr,
+					      DES984_INTB_ENABLE, 0x00);
 			usleep_range(2000, 3000);
 		}
 
