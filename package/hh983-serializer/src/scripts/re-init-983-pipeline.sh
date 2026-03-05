@@ -12,6 +12,7 @@
 # Usage:
 #   sudo ./re-init-983-pipeline.sh --mode=988
 #   sudo ./re-init-983-pipeline.sh --mode=984 --skip-hdmi-toggle
+#   sudo ./re-init-983-pipeline.sh --mode=988 --touch-unbind
 #
 
 # --- HDMI toggle via fbdev blank ---
@@ -39,6 +40,7 @@ hdmi_on() {
 MODE=""
 CONFIG_MODE=""
 SKIP_HDMI=0
+TOUCH_UNBIND=0
 
 for arg in "$@"; do
     case $arg in
@@ -53,12 +55,16 @@ for arg in "$@"; do
         --skip-hdmi-toggle)
             SKIP_HDMI=1
             ;;
+        --touch-unbind)
+            TOUCH_UNBIND=1
+            ;;
         --help|-h)
             echo "Usage: $0 --mode={988|984} [--skip-hdmi-toggle]"
             echo ""
             echo "  --mode=988           983+988 deserializer (config_mode=1)"
             echo "  --mode=984           983+984 deserializer (config_mode=0)"
             echo "  --skip-hdmi-toggle   Skip Pi4 HDMI off/on cycle"
+            echo "  --touch-unbind       Unbind himax_tp I2C before rmmod (debug: touch recovery)"
             exit 0
             ;;
         *)
@@ -76,7 +82,7 @@ if [ -z "$MODE" ]; then
 fi
 
 echo "=== Re-initializing 983+${MODE} FPDLink Pipeline ==="
-echo "  config_mode=$CONFIG_MODE  hdmi_toggle=$([ $SKIP_HDMI -eq 0 ] && echo yes || echo skip)"
+echo "  config_mode=$CONFIG_MODE  hdmi_toggle=$([ $SKIP_HDMI -eq 0 ] && echo yes || echo skip)  touch_unbind=$([ $TOUCH_UNBIND -eq 1 ] && echo yes || echo no)"
 echo ""
 
 # Step 1: Stop Qt application (via qt-launcher network command)
@@ -88,6 +94,13 @@ sleep 0.5
 echo "Step 2: Stopping Qt launcher..."
 /etc/init.d/S99qt-launcher stop 2>/dev/null
 sleep 0.5
+
+# Step 2b: Unbind himax_tp I2C driver (optional, for touch recovery debugging)
+if [ $TOUCH_UNBIND -eq 1 ]; then
+    echo "Step 2b: Unbinding himax_tp from 1-0048..."
+    echo "1-0048" > /sys/bus/i2c/drivers/himax_tp/unbind 2>/dev/null
+    sleep 0.3
+fi
 
 # Step 3: Remove touch driver
 echo "Step 3: Removing himax_mmi..."

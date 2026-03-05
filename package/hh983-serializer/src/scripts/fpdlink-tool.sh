@@ -13,6 +13,7 @@
 #   fpdlink-tool.sh --target=984 --timings [--bus=N] [--stream=N]
 #   fpdlink-tool.sh --target=<983|988|984> --pattern [--bus=N]
 #   fpdlink-tool.sh --target=<983|988|984> --pattern=<name> [--bus=N]
+#   fpdlink-tool.sh --touch-diag [--target=988|984] [--bus=N]
 #
 
 # Default I2C addresses
@@ -27,6 +28,7 @@ TIMINGS=0
 PATTERN=""
 PATTERN_SET=0
 STREAM=0
+TOUCH_DIAG=0
 
 # -----------------------------------------------
 # Argument parsing
@@ -38,6 +40,7 @@ for arg in "$@"; do
         --timings)   TIMINGS=1 ;;
         --pattern)   PATTERN_SET=1; PATTERN="" ;;
         --pattern=*) PATTERN_SET=1; PATTERN="${arg#*=}" ;;
+        --touch-diag) TOUCH_DIAG=1 ;;
         --stream=*)  STREAM="${arg#*=}" ;;
         --help|-h)
             echo "Usage: $0 --target=<983|988|984> <action> [options]"
@@ -46,6 +49,8 @@ for arg in "$@"; do
             echo "  --timings              Read video timing registers"
             echo "  --pattern              Read current pattern generator state"
             echo "  --pattern=<name>       Set pattern generator"
+            echo "  --touch-diag           Dump touch interrupt/I2C/BCC registers (983+deser)"
+            echo "                         Use with --target=988 (default) or --target=984"
             echo ""
             echo "Options:"
             echo "  --target=<983|988|984> Target device (required)"
@@ -80,6 +85,9 @@ for arg in "$@"; do
             echo "  $0 --target=988 --pattern=colorbar"
             echo "  $0 --target=984 --pattern=red"
             echo "  $0 --target=983 --pattern=off"
+            echo "  $0 --touch-diag"
+            echo "  $0 --touch-diag --target=984"
+            echo "  $0 --touch-diag --bus=3"
             exit 0
             ;;
         *)
@@ -90,14 +98,15 @@ for arg in "$@"; do
     esac
 done
 
-if [ -z "$TARGET" ]; then
+if [ "$TOUCH_DIAG" -eq 1 ]; then
+    # touch-diag doesn't require --target (reads both 983 + deser)
+    : # proceed
+elif [ -z "$TARGET" ]; then
     echo "Error: --target is required"
     echo "Use --help for usage"
     exit 1
-fi
-
-if [ "$TIMINGS" -eq 0 ] && [ "$PATTERN_SET" -eq 0 ]; then
-    echo "Error: No action specified (use --timings or --pattern)"
+elif [ "$TIMINGS" -eq 0 ] && [ "$PATTERN_SET" -eq 0 ]; then
+    echo "Error: No action specified (use --timings, --pattern, or --touch-diag)"
     echo "Use --help for usage"
     exit 1
 fi
@@ -543,9 +552,367 @@ cmd_983_pattern_set() {
 }
 
 # -----------------------------------------------
+# Touch Interrupt Diagnostic (983 + 988 or 984 deserializer)
+# -----------------------------------------------
+# Dumps all registers in the touch interrupt signal path:
+#   Touch_int -> deser INTB_IN -> BCC backchannel -> 983 REM_INTB -> GPIO4 -> Host IRQ
+# Also dumps I2C passthrough, routing, and BCC health registers.
+#
+# Usage: run after fresh boot (baseline) and after HDMI switch + re-init (broken).
+# Compare the two outputs — any [!!] marker shows a register that lost its config.
+
+# Helper: print [OK] or [!! expected 0xNN] after a register value
+check_reg() {
+    _actual=$(($1)); _expected=$(($2))
+    if [ "$_actual" -eq "$_expected" ]; then
+        printf " [OK]"
+    else
+        printf " [!! expected %s]" "$2"
+    fi
+}
+
+cmd_touch_diag() {
+    # Determine deserializer based on --target (default: 988)
+    case "$TARGET" in
+        984)
+            _deser_addr="$ADDR_984"
+            _deser_label="DS90HH984"
+            _deser_mode=0
+            _passthru_expected="0xC9"
+            ;;
+        *)  # default to 988
+            _deser_addr="$ADDR_988"
+            _deser_label="DS90UH988"
+            _deser_mode=1
+            _passthru_expected="0xD9"
+            ;;
+    esac
+
+    echo "=== FPDLink Touch Interrupt Diagnostic ==="
+    echo "I2C Bus: $I2C_BUS  Serializer: $ADDR_983  Deserializer: $_deser_addr ($_deser_label)"
+    echo "Mode: $_deser_mode (983+${_deser_label#DS90*})"
+    echo ""
+    echo "NOTE: Reading HDCP_ISR (0xC7) and LOCAL_INT_STS (0x45) clears"
+    echo "      latched interrupt status bits (clear-on-read registers)."
+
+    # =============================================
+    # DS90UH983 Serializer
+    # =============================================
+    echo ""
+    echo "==========================================="
+    echo " DS90UH983 Serializer ($ADDR_983)"
+    echo "==========================================="
+
+    # --- Link Status ---
+    echo ""
+    echo "Link Status:"
+    _v=$(i2c_read "$ADDR_983" 0x0C); _r=$(($_v))
+    printf "  0x0C GENERAL_STS:     %-6s RX_LOCK=%d LINK_DET=%d\n" \
+        "$_v" "$((_r >> 6 & 1))" "$((_r & 1))"
+
+    # --- Interrupt Configuration ---
+    echo ""
+    echo "Interrupt Configuration:"
+
+    _v=$(i2c_read "$ADDR_983" 0x2D); _r=$(($_v))
+    printf "  0x2D TX_PORT_SEL:     %-6s READ_PORT=%d (per-port regs below use this port)\n" \
+        "$_v" "$(( (_r >> 4) & 0x03 ))"
+
+    _v=$(i2c_read "$ADDR_983" 0x51); _r=$(($_v))
+    printf "  0x51 INTERRUPT_CTL:   %-6s INTB_PIN_EN=%d IE_DP_RX0=%d IE_FPD_TX0=%d IE_FPD_TX1=%d" \
+        "$_v" "$((_r >> 7 & 1))" "$((_r >> 4 & 1))" "$((_r & 1))" "$((_r >> 1 & 1))"
+    check_reg "$_v" 0x93; echo ""
+
+    _v=$(i2c_read "$ADDR_983" 0x52); _r=$(($_v))
+    printf "  0x52 INTERRUPT_STS:   %-6s GLOBAL=%d IS_DP_RX0=%d IS_FPD_TX0=%d IS_FPD_TX1=%d REMOTE=%d\n" \
+        "$_v" "$((_r >> 7 & 1))" "$((_r >> 4 & 1))" "$((_r & 1))" "$((_r >> 1 & 1))" "$((_r >> 2 & 1))"
+
+    _v=$(i2c_read "$ADDR_983" 0xC6); _r=$(($_v))
+    printf "  0xC6 HDCP_ICR:        %-6s IE_RX_REM_INT=%d INT_EN=%d" \
+        "$_v" "$((_r >> 5 & 1))" "$((_r & 1))"
+    check_reg "$_v" 0x21; echo ""
+
+    _v=$(i2c_read "$ADDR_983" 0xC7); _r=$(($_v))
+    printf "  0xC7 HDCP_ISR:        %-6s IS_RX_REM_INT=%d INT=%d  (clear-on-read!)\n" \
+        "$_v" "$((_r >> 5 & 1))" "$((_r & 1))"
+
+    _v=$(i2c_read "$ADDR_983" 0xC4); _r=$(($_v))
+    printf "  0xC4 HDCP_STS:        %-6s RX_INT=%d(live,1=idle) RX_LOCK_DET=%d RX_DETECT=%d\n" \
+        "$_v" "$((_r >> 6 & 1))" "$((_r >> 5 & 1))" "$((_r >> 3 & 1))"
+
+    # --- GPIO4 (REM_INTB) ---
+    echo ""
+    echo "GPIO4 (REM_INTB pin):"
+
+    _v=$(i2c_read "$ADDR_983" 0x1B); _r=$(($_v))
+    _g4_sel=$((_r & 0x0F))
+    case $_g4_sel in
+        0) _fn="LOW" ;; 1) _fn="HIGH" ;; 2) _fn="RemoteGPIO" ;; 8) _fn="RX_INTN(REM_INTB)" ;; *) _fn="sel=$_g4_sel" ;;
+    esac
+    printf "  0x1B GPIO4_PIN_CTL:   %-6s OUT_EN=%d SRC=Port%d SEL=%s" \
+        "$_v" "$((_r >> 7 & 1))" "$(( (_r >> 4) & 0x07 ))" "$_fn"
+    check_reg "$_v" 0x88; echo ""
+
+    _v=$(i2c_read "$ADDR_983" 0x25); _r=$(($_v))
+    printf "  0x25 GPI_PIN_STS1:    %-6s GPIO4_pin=%d (0=INT asserted, 1=idle)\n" \
+        "$_v" "$(( (_r >> 4) & 1 ))"
+
+    # --- I2C Passthrough ---
+    echo ""
+    echo "I2C Passthrough:"
+
+    _v=$(i2c_read "$ADDR_983" 0x07); _r=$(($_v))
+    printf "  0x07 GENERAL_CFG:     %-6s I2C_PASS_ALL=%d I2C_PASS_THROUGH=%d" \
+        "$_v" "$((_r >> 4 & 1))" "$((_r >> 3 & 1))"
+    check_reg "$_v" 0xD8; echo ""
+
+    # --- I2C Routing (Touch Controller) ---
+    echo ""
+    if [ "$_deser_mode" -eq 1 ]; then
+        echo "I2C Routing (TDDI Touch 0x48/0x49 — configured by driver for mode 1):"
+    else
+        echo "I2C Routing (raw TARGET_ID/ALIAS/DEST — not configured by driver for mode 0):"
+    fi
+
+    _tid0=$(i2c_read "$ADDR_983" 0x70)
+    _tid1=$(i2c_read "$ADDR_983" 0x71)
+    _ta0=$(i2c_read "$ADDR_983" 0x78)
+    _ta1=$(i2c_read "$ADDR_983" 0x79)
+    _td0=$(i2c_read "$ADDR_983" 0x88)
+    _td1=$(i2c_read "$ADDR_983" 0x89)
+
+    printf "  0x70 TARGET_ID0:      %-6s phys=0x%02x" "$_tid0" "$(( ($(($_tid0)) >> 1) & 0x7F ))"
+    [ "$_deser_mode" -eq 1 ] && check_reg "$_tid0" 0x90; echo ""
+    printf "  0x71 TARGET_ID1:      %-6s phys=0x%02x" "$_tid1" "$(( ($(($_tid1)) >> 1) & 0x7F ))"
+    [ "$_deser_mode" -eq 1 ] && check_reg "$_tid1" 0x92; echo ""
+    printf "  0x78 TARGET_ALIAS0:   %-6s alias=0x%02x" "$_ta0" "$(( ($(($_ta0)) >> 1) & 0x7F ))"
+    [ "$_deser_mode" -eq 1 ] && check_reg "$_ta0" 0x90; echo ""
+    printf "  0x79 TARGET_ALIAS1:   %-6s alias=0x%02x" "$_ta1" "$(( ($(($_ta1)) >> 1) & 0x7F ))"
+    [ "$_deser_mode" -eq 1 ] && check_reg "$_ta1" 0x92; echo ""
+    printf "  0x88 TARGET_DEST0:    %-6s dest_port=%d" "$_td0" "$(( ($(($_td0)) >> 5) & 0x07 ))"
+    [ "$_deser_mode" -eq 1 ] && check_reg "$_td0" 0x20; echo ""
+    printf "  0x89 TARGET_DEST1:    %-6s dest_port=%d" "$_td1" "$(( ($(($_td1)) >> 5) & 0x07 ))"
+    [ "$_deser_mode" -eq 1 ] && check_reg "$_td1" 0x20; echo ""
+
+    # --- Back Channel ---
+    echo ""
+    echo "Back Channel:"
+
+    _v=$(i2c_read "$ADDR_983" 0x28); _r=$(($_v))
+    _bc_en=$((_r & 0x03))
+    case $_bc_en in
+        0) _bc="4 GPIOs" ;; 1) _bc="8 GPIOs" ;; 2) _bc="16 GPIOs" ;; 3) _bc="HS single" ;;
+    esac
+    printf "  0x28 GPIO_EN_BC:      %-6s BC_GPIO_slots=%s\n" "$_v" "$_bc"
+
+    _v=$(i2c_read "$ADDR_983" 0x47); _r=$(($_v))
+    printf "  0x47 BCC_CONFIG:      %-6s I2C_CTLR_DIS=%d ENH_ERROR=%d\n" \
+        "$_v" "$((_r >> 5 & 1))" "$((_r & 1))"
+
+    # --- GPIO Interrupt (alternative path, driver doesn't use) ---
+    echo ""
+    echo "GPIO Interrupt Path (alternative, driver uses HDCP_ICR instead):"
+    _v=$(i2c_read "$ADDR_983" 0xA4)
+    printf "  0xA4 GPIO_INT_CTL0:   %-6s (BC GPIO[7:0] INT enables)\n" "$_v"
+    _v=$(i2c_read "$ADDR_983" 0xA5)
+    printf "  0xA5 GPIO_INT_CTL1:   %-6s (BC GPIO[13:8] INT enables)\n" "$_v"
+
+    # =============================================
+    # Deserializer (988 or 984)
+    # =============================================
+    echo ""
+    echo "==========================================="
+    echo " $_deser_label Deserializer ($_deser_addr)"
+    echo "==========================================="
+
+    # --- Link Status ---
+    echo ""
+    echo "Link Status:"
+    _s0=$(i2c_read "$_deser_addr" 0x53); _r0=$(($_s0))
+    _s1=$(i2c_read "$_deser_addr" 0x54); _r1=$(($_s1))
+    printf "  0x53 GP_STATUS_0:     %-6s FPD4_LOCK=%d FPD3_LOCK=%d FPDTX_PLL=%d\n" \
+        "$_s0" "$((_r0 & 1))" "$((_r0 >> 1 & 1))" "$((_r0 >> 2 & 1))"
+    if [ "$_deser_mode" -eq 1 ]; then
+        printf "  0x54 GP_STATUS_1:     %-6s LOCK=%d SIG_DET=%d PLL_LOCK=%d\n" \
+            "$_s1" "$((_r1 & 1))" "$((_r1 >> 1 & 1))" "$((_r1 >> 6 & 1))"
+    else
+        printf "  0x54 GP_STATUS_1:     %-6s LOCK=%d PLL_LOCK=%d  (no SIG_DET on 984)\n" \
+            "$_s1" "$((_r1 & 1))" "$((_r1 >> 6 & 1))"
+    fi
+
+    # --- Interrupt Configuration ---
+    echo ""
+    echo "Interrupt Configuration:"
+
+    _v=$(i2c_read "$_deser_addr" 0x44); _r=$(($_v))
+    printf "  0x44 RX_INT_CTL:      %-6s IE_EN=%d IE_INTB_P0=%d" \
+        "$_v" "$((_r >> 7 & 1))" "$((_r & 1))"
+    check_reg "$_v" 0x81; echo ""
+
+    _v=$(i2c_read "$_deser_addr" 0x43); _r=$(($_v))
+    printf "  0x43 RX_INT_STS:      %-6s RX_INT=%d IS_DOWNSTRM_INTB=%d\n" \
+        "$_v" "$((_r >> 7 & 1))" "$((_r & 1))"
+
+    _v=$(i2c_read "$_deser_addr" 0x45); _r=$(($_v))
+    printf "  0x45 LOCAL_INT_STS:   %-6s IS_LCL_INTB=%d  (clear-on-read!)\n" \
+        "$_v" "$((_r & 1))"
+
+    _v=$(i2c_read "$_deser_addr" 0x51); _r=$(($_v))
+    printf "  0x51 INTERRUPT_STS:   %-6s GLOBAL_INT=%d IS_LOCAL_INT=%d\n" \
+        "$_v" "$((_r >> 7 & 1))" "$((_r & 1))"
+
+    _v=$(i2c_read "$_deser_addr" 0x52); _r=$(($_v))
+    printf "  0x52 INTERRUPT_CTL:   %-6s IE_GLOBAL=%d IE_INTB_IN=%d" \
+        "$_v" "$((_r >> 7 & 1))" "$((_r & 1))"
+    check_reg "$_v" 0xFF; echo ""
+
+    # --- I2C Passthrough ---
+    echo ""
+    echo "I2C Passthrough:"
+
+    _v=$(i2c_read "$_deser_addr" 0x04); _r=$(($_v))
+    printf "  0x04 GENERAL_CFG:     %-6s I2C_PASS_ALL=%d I2C_PASS_THROUGH=%d" \
+        "$_v" "$((_r >> 4 & 1))" "$((_r >> 3 & 1))"
+    check_reg "$_v" "$_passthru_expected"; echo ""
+
+    # --- I2C Timing ---
+    echo ""
+    echo "I2C Timing:"
+
+    _v=$(i2c_read "$_deser_addr" 0x02); _r=$(($_v))
+    _arb_to=$(( (_r >> 5) & 0x03 ))
+    case $_arb_to in
+        0) _arb="80us" ;; 1) _arb="160us" ;; 2) _arb="2.4ms" ;; 3) _arb="10ms" ;;
+    esac
+    printf "  0x02 I2C_CTLR_CFG:   %-6s ARB_TIMEOUT=%s BUS_TIMER_DIS=%d\n" \
+        "$_v" "$_arb" "$((_r & 1))"
+
+    _v=$(i2c_read "$_deser_addr" 0x2A); _r=$(($_v))
+    printf "  0x2A I2C_CONTROL:     %-6s SDA_HOLD=%d FILTER_DEPTH=%d\n" \
+        "$_v" "$(( (_r >> 4) & 0x07 ))" "$((_r & 0x0F))"
+
+    # --- BCC Status ---
+    echo ""
+    echo "BCC Status (clear-on-read error flags):"
+
+    _v=$(i2c_read "$_deser_addr" 0x08); _r=$(($_v))
+    printf "  0x08 TX_BCC_STATUS:   %-6s" "$_v"
+    if [ "$_r" -eq 0 ]; then printf " (no errors)"; else
+        [ $((_r >> 5 & 1)) -eq 1 ] && printf " I2C_DIS"
+        [ $((_r >> 4 & 1)) -eq 1 ] && printf " DATA_ERR"
+        [ $((_r >> 3 & 1)) -eq 1 ] && printf " SEQ_ERR"
+        [ $((_r >> 1 & 1)) -eq 1 ] && printf " CTRL_ERR"
+        [ $((_r & 1)) -eq 1 ] && printf " TIMEOUT"
+    fi; echo ""
+
+    _v=$(i2c_read "$_deser_addr" 0x09); _r=$(($_v))
+    printf "  0x09 RX_BCC_STATUS:   %-6s" "$_v"
+    if [ "$_r" -eq 0 ]; then printf " (no errors)"; else
+        [ $((_r >> 6 & 1)) -eq 1 ] && printf " CRC_ERR"
+        [ $((_r >> 5 & 1)) -eq 1 ] && printf " I2C_DIS"
+        [ $((_r >> 4 & 1)) -eq 1 ] && printf " DATA_ERR"
+        [ $((_r >> 3 & 1)) -eq 1 ] && printf " SEQ_ERR"
+        [ $((_r >> 1 & 1)) -eq 1 ] && printf " CTRL_ERR"
+        [ $((_r & 1)) -eq 1 ] && printf " TIMEOUT"
+    fi; echo ""
+
+    _v=$(i2c_read "$_deser_addr" 0x0A); _r=$(($_v))
+    printf "  0x0A TRGT_BCC_STS:    %-6s" "$_v"
+    if [ "$_r" -eq 0 ]; then printf " (no errors)"; else
+        [ $((_r >> 2 & 1)) -eq 1 ] && printf " BCC_ERR"
+        [ $((_r >> 1 & 1)) -eq 1 ] && printf " TIMEOUT"
+        [ $((_r & 1)) -eq 1 ] && printf " DATA_ERR"
+    fi; echo ""
+
+    _v=$(i2c_read "$_deser_addr" 0x0B); _r=$(($_v))
+    printf "  0x0B BCC_CONFIG:      %-6s RX_ENH_ERROR=%d TERM_ON_ERR=%d\n" \
+        "$_v" "$((_r >> 1 & 1))" "$((_r & 1))"
+
+    _v=$(i2c_read "$_deser_addr" 0x29); _r=$(($_v))
+    _wdog_ms=$(( ((_r >> 1) & 0x7F) * 2 ))
+    printf "  0x29 BCC_WDOG_CTL:    %-6s timeout=%dms disabled=%d\n" \
+        "$_v" "$_wdog_ms" "$((_r & 1))"
+
+    # --- GPIO Configuration ---
+    echo ""
+    echo "GPIO Configuration (display driver board signals):"
+
+    _v=$(i2c_read "$_deser_addr" 0x19); _r=$(($_v))
+    printf "  0x19 GPIO4_PIN_CTL:   %-6s OUT_EN=%d SRC=%d SEL=0x%02x" \
+        "$_v" "$((_r >> 7 & 1))" "$(( (_r >> 5) & 3 ))" "$((_r & 0x1F))"
+    check_reg "$_v" 0x9C; echo ""
+
+    _v=$(i2c_read "$_deser_addr" 0x1A)
+    printf "  0x1A GPIO5_PIN_CTL:   %-6s\n" "$_v"
+
+    _v=$(i2c_read "$_deser_addr" 0x1B); _r=$(($_v))
+    printf "  0x1B GPIO6_PIN_CTL:   %-6s OUT_EN=%d SRC=%d SEL=0x%02x" \
+        "$_v" "$((_r >> 7 & 1))" "$(( (_r >> 5) & 3 ))" "$((_r & 0x1F))"
+    check_reg "$_v" 0xC2; echo ""
+
+    echo ""
+    echo "GPIO Pin Status:"
+    _v=$(i2c_read "$_deser_addr" 0x10)
+    printf "  0x10 GPI_PIN_STS1:    %-6s GPIO[7:0] pin levels\n" "$_v"
+    _v=$(i2c_read "$_deser_addr" 0x11)
+    printf "  0x11 GPI_PIN_STS2:    %-6s GPIO[13:8] pin levels\n" "$_v"
+    _v=$(i2c_read "$_deser_addr" 0x13)
+    printf "  0x13 GPIO_IN_EN0:     %-6s GPIO[7:0] input enables\n" "$_v"
+    _v=$(i2c_read "$_deser_addr" 0x12)
+    printf "  0x12 GPIO_IN_EN1:     %-6s GPIO[13:8] input enables\n" "$_v"
+
+    # --- IO Control ---
+    echo ""
+    echo "IO Control:"
+    _v=$(i2c_read "$_deser_addr" 0x2F); _r=$(($_v))
+    printf "  0x2F IO_CTL:          %-6s INTB_3V3=%d I2C_3V3=%d\n" \
+        "$_v" "$((_r >> 5 & 1))" "$((_r >> 7 & 1))"
+
+    # =============================================
+    # Summary
+    # =============================================
+    echo ""
+    echo "==========================================="
+    echo " Diagnostic Hints"
+    echo "==========================================="
+    echo ""
+    echo "Any [!!] markers above show registers that differ from expected"
+    echo "boot-time values set by the hh983-serializer driver."
+    echo ""
+    echo "Touch interrupt signal path:"
+    echo "  Touch controller -> $_deser_label INTB_IN pin"
+    echo "    -> $_deser_label RX_INT_CTL(0x44) forwards over BCC backchannel"
+    echo "    -> 983 HDCP_ICR(0xC6) IE_RX_REM_INT cascades to INTERRUPT_STS"
+    echo "    -> 983 INTERRUPT_CTL(0x51) INTB_PIN_EN drives INTB pin to host"
+    echo "    -> 983 GPIO4(0x1B) mirrors REM_INTB to GPIO4 pin"
+    echo ""
+    echo "I2C touch data path:"
+    echo "  Host -> 983 GENERAL_CFG(0x07) I2C passthrough"
+    if [ "$_deser_mode" -eq 1 ]; then
+        echo "    -> 983 TARGET_ID/ALIAS(0x70-0x79) routes 0x48/0x49 to Port 1"
+    fi
+    echo "    -> BCC backchannel -> $_deser_label GENERAL_CFG(0x04) passthrough"
+    echo "    -> Touch controller on $_deser_label local I2C bus"
+    echo ""
+    echo "To find root cause: run --touch-diag after fresh boot (touch OK)"
+    echo "and again after HDMI switch + re-init (touch sluggish)."
+    echo "Diff the two outputs to find which register(s) changed."
+}
+
+# -----------------------------------------------
 # Dispatch
 # -----------------------------------------------
+# Handle touch-diag first (doesn't require --target)
+if [ "$TOUCH_DIAG" -eq 1 ]; then
+    cmd_touch_diag
+    # If no other actions requested, exit
+    if [ -z "$TARGET" ]; then
+        exit 0
+    fi
+fi
+
 case "$TARGET" in
+    "") exit 0 ;;  # touch-diag only, already handled above
     983)
         if [ "$TIMINGS" -eq 1 ]; then
             cmd_983_timings
