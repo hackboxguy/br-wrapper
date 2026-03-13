@@ -183,13 +183,18 @@ int himax_bus_write(uint8_t command, uint8_t *data, uint32_t length,
 {
 	uint8_t retry;
 	int ret = 0;
-	struct i2c_client *client = private_ts->client;
-	struct i2c_msg msg[] = { {
-		.addr = client->addr,
-		.flags = 0,
-		.len = length + 2U,
-		.buf = gp_rw_buf,
-	} };
+	struct i2c_client *client;
+	struct i2c_msg msg[] = { { 0 } };
+
+	if (private_ts == NULL || private_ts->client == NULL || gp_rw_buf == NULL) {
+		E("%s: not initialized\n", __func__);
+		return -EIO;
+	}
+	client = private_ts->client;
+	msg[0].addr = client->addr;
+	msg[0].flags = 0;
+	msg[0].len = length + 2U;
+	msg[0].buf = gp_rw_buf;
 
 	mutex_lock(&private_ts->rw_lock);
 	gp_rw_buf[0] = 0xC0U;
@@ -225,13 +230,18 @@ int himax_bus_write_slave(uint8_t device, uint8_t command, uint8_t *data, uint32
 {
 	uint8_t retry;
 	int ret = 0;
-	struct i2c_client *client = private_ts->client;
-	struct i2c_msg msg[] = { {
-		.addr = client->addr,
-		.flags = 0,
-		.len = length + 2U,
-		.buf = gp_rw_buf,
-	} };
+	struct i2c_client *client;
+	struct i2c_msg msg[] = { { 0 } };
+
+	if (private_ts == NULL || private_ts->client == NULL || gp_rw_buf == NULL) {
+		E("%s: not initialized\n", __func__);
+		return -EIO;
+	}
+	client = private_ts->client;
+	msg[0].addr = client->addr;
+	msg[0].flags = 0;
+	msg[0].len = length + 2U;
+	msg[0].buf = gp_rw_buf;
 
 	mutex_lock(&private_ts->rw_lock);
 	gp_rw_buf[0] = (0xC0U | device);
@@ -268,19 +278,23 @@ int himax_bus_read(uint8_t command, uint8_t *data, uint32_t length,
 	uint8_t retry;
 	int ret = 0;
 	uint8_t SID_cmd[2] = {0xC0U, command};
-	struct i2c_client *client = private_ts->client;
-	struct i2c_msg msg[] = { {
-					 .addr = client->addr,
-					 .flags = 0,
-					 .len = 2U,
-					 .buf = SID_cmd,
-				},
-				{
-					 .addr = client->addr,
-					 .flags = I2C_M_RD,
-					 .len = length,
-					 .buf = gp_rw_buf,
-				} };
+	struct i2c_client *client;
+	struct i2c_msg msg[2];
+
+	if (private_ts == NULL || private_ts->client == NULL || gp_rw_buf == NULL) {
+		E("%s: not initialized\n", __func__);
+		return -EIO;
+	}
+	client = private_ts->client;
+	msg[0].addr = client->addr;
+	msg[0].flags = 0;
+	msg[0].len = 2U;
+	msg[0].buf = SID_cmd;
+	msg[1].addr = client->addr;
+	msg[1].flags = I2C_M_RD;
+	msg[1].len = length;
+	msg[1].buf = gp_rw_buf;
+
 	mutex_lock(&private_ts->rw_lock);
 
 	for (retry = 0; retry < toRetry; retry++) {
@@ -312,19 +326,23 @@ int himax_bus_read_slave(uint8_t device, uint8_t command, uint8_t *data, uint32_
 	uint8_t retry;
 	int ret = 0;
 	uint8_t SID_cmd[2] = {(0xC0U | device), command};
-	struct i2c_client *client = private_ts->client;
-	struct i2c_msg msg[] = { {
-					 .addr = client->addr,
-					 .flags = 0,
-					 .len = 1,
-					 .buf = SID_cmd,
-				},
-				{
-					 .addr = client->addr,
-					 .flags = I2C_M_RD,
-					 .len = length,
-					 .buf = gp_rw_buf,
-				} };
+	struct i2c_client *client;
+	struct i2c_msg msg[2];
+
+	if (private_ts == NULL || private_ts->client == NULL || gp_rw_buf == NULL) {
+		E("%s: not initialized\n", __func__);
+		return -EIO;
+	}
+	client = private_ts->client;
+	msg[0].addr = client->addr;
+	msg[0].flags = 0;
+	msg[0].len = 1;
+	msg[0].buf = SID_cmd;
+	msg[1].addr = client->addr;
+	msg[1].flags = I2C_M_RD;
+	msg[1].len = length;
+	msg[1].buf = gp_rw_buf;
+
 	mutex_lock(&private_ts->rw_lock);
 
 	for (retry = 0; retry < toRetry; retry++) {
@@ -360,13 +378,18 @@ int himax_bus_write(uint8_t command, uint8_t *data, uint32_t length,
 {
 	uint8_t retry;
 	int ret = 0;
-	struct i2c_client *client = private_ts->client;
-	struct i2c_msg msg[] = { {
-		.addr = client->addr,
-		.flags = 0,
-		.len = length + 1U,
-		.buf = gp_rw_buf,
-	} };
+	struct i2c_client *client;
+	struct i2c_msg msg[] = { { 0 } };
+
+	if (private_ts == NULL || private_ts->client == NULL || gp_rw_buf == NULL) {
+		E("%s: not initialized\n", __func__);
+		return -EIO;
+	}
+	client = private_ts->client;
+	msg[0].addr = client->addr;
+	msg[0].flags = 0;
+	msg[0].len = length + 1U;
+	msg[0].buf = gp_rw_buf;
 
 	mutex_lock(&private_ts->rw_lock);
 	gp_rw_buf[0] = command;
@@ -401,13 +424,18 @@ int himax_bus_write_slave(uint8_t device, uint8_t command, uint8_t *data, uint32
 {
 	uint8_t retry;
 	int ret = 0;
-	struct i2c_client *client = private_ts->client;
-	struct i2c_msg msg[] = { {
-		.addr = (client->addr+device),
-		.flags = 0,
-		.len = length + 1U,
-		.buf = gp_rw_buf,
-	} };
+	struct i2c_client *client;
+	struct i2c_msg msg[] = { { 0 } };
+
+	if (private_ts == NULL || private_ts->client == NULL || gp_rw_buf == NULL) {
+		E("%s: not initialized\n", __func__);
+		return -EIO;
+	}
+	client = private_ts->client;
+	msg[0].addr = (client->addr+device);
+	msg[0].flags = 0;
+	msg[0].len = length + 1U;
+	msg[0].buf = gp_rw_buf;
 
 	mutex_lock(&private_ts->rw_lock);
 	gp_rw_buf[0] = command;
@@ -442,19 +470,23 @@ int himax_bus_read(uint8_t command, uint8_t *data, uint32_t length,
 {
 	uint8_t retry;
 	int ret = 0;
-	struct i2c_client *client = private_ts->client;
-	struct i2c_msg msg[] = { {
-					 .addr = client->addr,
-					 .flags = 0,
-					 .len = 1,
-					 .buf = &command,
-				},
-				{
-					 .addr = client->addr,
-					 .flags = I2C_M_RD,
-					 .len = length,
-					 .buf = gp_rw_buf,
-				} };
+	struct i2c_client *client;
+	struct i2c_msg msg[2];
+
+	if (private_ts == NULL || private_ts->client == NULL || gp_rw_buf == NULL) {
+		E("%s: not initialized\n", __func__);
+		return -EIO;
+	}
+	client = private_ts->client;
+	msg[0].addr = client->addr;
+	msg[0].flags = 0;
+	msg[0].len = 1;
+	msg[0].buf = &command;
+	msg[1].addr = client->addr;
+	msg[1].flags = I2C_M_RD;
+	msg[1].len = length;
+	msg[1].buf = gp_rw_buf;
+
 	mutex_lock(&private_ts->rw_lock);
 
 	for (retry = 0; retry < toRetry; retry++) {
@@ -485,19 +517,23 @@ int himax_bus_read_slave(uint8_t device, uint8_t command, uint8_t *data, uint32_
 {
 	uint8_t retry;
 	int ret = 0;
-	struct i2c_client *client = private_ts->client;
-	struct i2c_msg msg[] = { {
-					 .addr = (client->addr+device),
-					 .flags = 0,
-					 .len = 1,
-					 .buf = &command,
-				},
-				{
-					 .addr = (client->addr+device),
-					 .flags = I2C_M_RD,
-					 .len = length,
-					 .buf = gp_rw_buf,
-				} };
+	struct i2c_client *client;
+	struct i2c_msg msg[2];
+
+	if (private_ts == NULL || private_ts->client == NULL || gp_rw_buf == NULL) {
+		E("%s: not initialized\n", __func__);
+		return -EIO;
+	}
+	client = private_ts->client;
+	msg[0].addr = (client->addr+device);
+	msg[0].flags = 0;
+	msg[0].len = 1;
+	msg[0].buf = &command;
+	msg[1].addr = (client->addr+device);
+	msg[1].flags = I2C_M_RD;
+	msg[1].len = length;
+	msg[1].buf = gp_rw_buf;
+
 	mutex_lock(&private_ts->rw_lock);
 
 	for (retry = 0; retry < toRetry; retry++) {

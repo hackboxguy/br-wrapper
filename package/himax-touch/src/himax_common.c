@@ -2314,6 +2314,15 @@ static void himax_parse_report_points(struct himax_ts_data *ts, int ts_path)
 		I("%s: start!\n", __func__);
 	}
 
+	if (g_target_report_data == NULL ||
+	    g_target_report_data->x == NULL ||
+	    g_target_report_data->y == NULL ||
+	    g_target_report_data->w == NULL ||
+	    g_target_report_data->finger_id == NULL) {
+		E("%s: report data not initialized\n", __func__);
+		return;
+	}
+
 	ts->old_finger = ts->pre_finger_mask;
 	if (ts->hx_point_num == 0U) {
 		if (g_ts_dbg != 0) {
@@ -2905,8 +2914,13 @@ AP_recovery:
 #endif
 }
 
+#define HX_MAX_RESET_RETRIES   5
+#define HX_RESET_BACKOFF_MS    1000
+#define HX_RECOVERY_INTERVAL   50
+
 void himax_ts_work(struct himax_ts_data *ts)
 {
+	static int consecutive_reset_count;
 	int *ts_status = kzalloc(sizeof(int), GFP_KERNEL);
 	int ts_path = 0;
 
@@ -2937,14 +2951,30 @@ void himax_ts_work(struct himax_ts_data *ts)
 	}
 	if (*ts_status != HX_PATH_FAIL) {
 		if (*ts_status == HX_TS_GET_DATA_FAIL) {
-			I("%s: Now reset the Touch chip.\n", __func__);
+			consecutive_reset_count++;
+			if (consecutive_reset_count <= HX_MAX_RESET_RETRIES) {
+				I("%s: Reset Touch chip (attempt %d/%d)\n",
+				  __func__, consecutive_reset_count,
+				  HX_MAX_RESET_RETRIES);
+				msleep(HX_RESET_BACKOFF_MS);
 #if (HX_RST_PIN_FUNC == 0x01)
-			himax_mcu_hw_reset(true);
+				himax_mcu_hw_reset(true);
 #elif (HX_RST_PIN_FUNC == 0x02)
-			/* Need Customer do TP reset pin */
+				/* Need Customer do TP reset pin */
 #else
-			himax_mcu_system_reset();
+				himax_mcu_system_reset();
 #endif
+			} else if (consecutive_reset_count == HX_MAX_RESET_RETRIES + 1) {
+				E("%s: I2C failed after %d resets, "
+				  "backing off (possible I2C bus contention)\n",
+				  __func__, HX_MAX_RESET_RETRIES);
+			} else if ((consecutive_reset_count % HX_RECOVERY_INTERVAL) == 0) {
+				/* Periodic recovery: retry a reset in case bus freed up */
+				I("%s: Attempting recovery reset\n", __func__);
+				consecutive_reset_count = 0;
+			}
+		} else {
+			consecutive_reset_count = 0;
 		}
 	}
 
