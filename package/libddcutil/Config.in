@@ -1,0 +1,12 @@
+config BR2_PACKAGE_LIBDDCUTIL
+	bool "libddcutil"
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_LIBGLIB2
+	select BR2_PACKAGE_JANSSON
+	select BR2_PACKAGE_UDEV
+	default n
+	help
+	  ddcutil is a program and library for querying and changing
+	  monitor settings using DDC/CI and USB.
+
+	  https://github.com/rockowitz/ddcutil
