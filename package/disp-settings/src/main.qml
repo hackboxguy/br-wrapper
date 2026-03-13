@@ -54,18 +54,18 @@ Window {
             else if (alsDimmer.mode === "auto") {
                 userPreferAdaptive = true;
             }
-            // When switching to manual mode (not temporary), sync slider to actual brightness
+            // When switching to manual mode, sync slider to actual brightness
             // als-dimmer may restore a different manual brightness value
-            else if (alsDimmer.mode === "manual" && !userDraggingBrightness) {
+            else if ((alsDimmer.mode === "manual" || alsDimmer.mode === "manual_temporary") && !userDraggingBrightness) {
                 brightnessSlider.value = alsDimmer.brightness;
                 console.log("Manual mode sync (mode): slider =", alsDimmer.brightness);
             }
         }
         function onBrightnessChanged() {
-            // Also sync slider when brightness changes in manual mode
-            // This catches the case where brightness updates after mode change
+            // Sync slider when brightness changes in manual/manual_temporary mode
+            // This catches external brightness changes (e.g., als-dimmer-client)
             // Skip during cooldown period (right after user released slider)
-            if (alsDimmer.mode === "manual" && !userDraggingBrightness && !brightnessSetCooldown && initialSyncDone) {
+            if ((alsDimmer.mode === "manual" || alsDimmer.mode === "manual_temporary") && !userDraggingBrightness && !brightnessSetCooldown && initialSyncDone) {
                 brightnessSlider.value = alsDimmer.brightness;
                 console.log("Manual mode sync (brightness): slider =", alsDimmer.brightness);
             }
