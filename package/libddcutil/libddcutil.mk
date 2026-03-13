@@ -4,7 +4,7 @@
 #
 ################################################################################
 
-LIBDDCUTIL_VERSION = v2.2.6
+LIBDDCUTIL_VERSION = v2.2.5
 LIBDDCUTIL_SITE = https://github.com/rockowitz/ddcutil.git
 LIBDDCUTIL_SITE_METHOD = git
 LIBDDCUTIL_LICENSE = GPL-2.0+
