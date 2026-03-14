@@ -621,7 +621,12 @@ cmd_touch_diag() {
     _v=$(i2c_read "$ADDR_983" 0x51); _r=$(($_v))
     printf "  0x51 INTERRUPT_CTL:   %-6s INTB_PIN_EN=%d IE_DP_RX0=%d IE_FPD_TX0=%d IE_FPD_TX1=%d" \
         "$_v" "$((_r >> 7 & 1))" "$((_r >> 4 & 1))" "$((_r & 1))" "$((_r >> 1 & 1))"
-    check_reg "$_v" 0x93; echo ""
+    if [ "$_deser_mode" -eq 0 ]; then
+        check_reg "$_v" 0x83  # Mode 0 (984): no IE_DP_RX0 to avoid INTB contention
+    else
+        check_reg "$_v" 0x93  # Mode 1 (988): IE_DP_RX0 enabled
+    fi
+    echo ""
 
     _v=$(i2c_read "$ADDR_983" 0x52); _r=$(($_v))
     printf "  0x52 INTERRUPT_STS:   %-6s GLOBAL=%d IS_DP_RX0=%d IS_FPD_TX0=%d IS_FPD_TX1=%d REMOTE=%d\n" \

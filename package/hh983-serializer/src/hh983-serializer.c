@@ -50,6 +50,7 @@ MODULE_PARM_DESC(poll_interval_ms, "Link status poll interval in ms (0=disable, 
 #define SER_GPIO4_PORT0_REM_INT  0x88
 #define SER_GPIO4_PORT1_REM_INT  0x98
 #define SER_ENABLE_GLOBAL_INT    0x93  /* INTB_PIN_EN + IE_DP_RX0 + IE_FPD_TX1 + IE_FPD_TX0 */
+#define SER_ENABLE_GLOBAL_INT_NO_DP 0x83  /* INTB_PIN_EN + IE_FPD_TX1 + IE_FPD_TX0 (no DP RX int) */
 #define SER_DIGITAL_RESET_0      0x01  /* bit 0 of RESET_CTL: self-clearing digital reset, preserves regs */
 
 /* APB_CTL field values */
@@ -486,12 +487,14 @@ resched:
 }
 
 /* Configure REM_INTB on serializer (common to both modes) */
-static int hh983_configure_rem_intb(struct i2c_client *client, int port)
+static int hh983_configure_rem_intb(struct i2c_client *client, int port, int mode)
 {
 	int ret, readback;
 	u8 gpio4_val = (port == 0) ? SER_GPIO4_PORT0_REM_INT : SER_GPIO4_PORT1_REM_INT;
+	u8 int_val = (mode == 0) ? SER_ENABLE_GLOBAL_INT_NO_DP : SER_ENABLE_GLOBAL_INT;
 
-	dev_info(&client->dev, "Configuring REM_INTB for Port %d (GPIO4=0x%02X)\n", port, gpio4_val);
+	dev_info(&client->dev, "Configuring REM_INTB for Port %d (GPIO4=0x%02X, INT_CTL=0x%02X)\n",
+		 port, gpio4_val, int_val);
 
 	/* Enable REM_INT in interrupt control */
 	ret = hh983_write_reg(client, SER_INTERRUPT_CTRL, SER_ENABLE_REM_INT);
@@ -514,8 +517,12 @@ static int hh983_configure_rem_intb(struct i2c_client *client, int port)
 	else
 		dev_info(&client->dev, "GPIO4_CONFIG verified: 0x%02X\n", readback);
 
-	/* Enable global INTB */
-	ret = hh983_write_reg(client, SER_INTERRUPT_CTL, SER_ENABLE_GLOBAL_INT);
+	/* Enable global INTB — mode 0 (984) omits IE_DP_RX0 to keep
+	 * DP video interrupts off the shared INTB/GPIO4 line, avoiding
+	 * interference with touch REM_INTB.  The link monitor polls
+	 * APB_SINK_0_INT_CAUSE directly so INTB is not needed for DP.
+	 */
+	ret = hh983_write_reg(client, SER_INTERRUPT_CTL, int_val);
 	if (ret < 0)
 		return ret;
 
@@ -536,8 +543,8 @@ static int hh983_init_mode_984(struct hh983_data *data)
 		return ret;
 	msleep(10);
 
-	/* Configure REM_INTB for Port 0 */
-	ret = hh983_configure_rem_intb(client, 0);
+	/* Configure REM_INTB for Port 0 (no DP RX interrupt for 984) */
+	ret = hh983_configure_rem_intb(client, 0, 0);
 	if (ret < 0)
 		return ret;
 
@@ -613,7 +620,7 @@ static int hh983_init_mode_988(struct hh983_data *data)
 	 * - The 983 has only one deserializer (988) connected = FPDLink Port 0
 	 * Signal path: TDDI touch_int -> 988 INTB_IN -> BCC Port 0 -> 983 REM_INTB -> GPIO4
 	 */
-	ret = hh983_configure_rem_intb(client, 0);
+	ret = hh983_configure_rem_intb(client, 0, 1);
 	if (ret < 0)
 		return ret;
 
@@ -670,8 +677,14 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	data->mode = config_mode;
 	i2c_set_clientdata(client, data);
 
-	/* Reset the video link pipeline (digital reset + HPD toggle) */
-	hh983_recover_link(data);
+	/* Reset the video link pipeline (digital reset + HPD toggle).
+	 * Skip for mode 0 (984): the old driver never did this at probe,
+	 * and the HPD toggle disrupts the DP link that vc4-kms-v3d has
+	 * already established, causing a black screen.  Recovery is only
+	 * needed for mode 1 (988) HDMI-switch scenarios.
+	 */
+	if (data->mode == 1)
+		hh983_recover_link(data);
 
 	switch (data->mode) {
 	case 0:
@@ -693,24 +706,31 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	data->initialized = true;
 	hh983_check_link_status(data);
 
-	/* Unmask SINK_0 video interrupts so SINK_0_INT_CAUSE fires on
-	 * NO_VIDEO / VIDEO_DETECT / VIDEO_MODE_CHANGE events.
-	 * Default mask is 0x79 (most events masked).
+	/* Link monitoring and APB interrupt unmasking are only needed for
+	 * mode 1 (988) where HDMI-switch recovery is supported.  Mode 0
+	 * (984) matches the old driver behavior: configure registers and
+	 * leave the existing DP link undisturbed.
 	 */
-	hh983_apb_write(client, APB_SINK_0_INT_MASK, 0x00);
+	if (data->mode == 1) {
+		/* Unmask SINK_0 video interrupts so SINK_0_INT_CAUSE fires on
+		 * NO_VIDEO / VIDEO_DETECT / VIDEO_MODE_CHANGE events.
+		 * Default mask is 0x79 (most events masked).
+		 */
+		hh983_apb_write(client, APB_SINK_0_INT_MASK, 0x00);
 
-	/* Clear any DP events from boot training before starting monitor */
-	hh983_clear_dp_events(data);
+		/* Clear any DP events from boot training before starting monitor */
+		hh983_clear_dp_events(data);
 
-	/* Start link monitoring */
-	data->link_up = true;
-	INIT_DELAYED_WORK(&data->link_work, hh983_link_work_fn);
-	if (poll_interval_ms > 0)
-		schedule_delayed_work(&data->link_work,
-				      msecs_to_jiffies(poll_interval_ms));
+		/* Start link monitoring */
+		data->link_up = true;
+		INIT_DELAYED_WORK(&data->link_work, hh983_link_work_fn);
+		if (poll_interval_ms > 0)
+			schedule_delayed_work(&data->link_work,
+					      msecs_to_jiffies(poll_interval_ms));
+	}
 
-	dev_info(&client->dev, "HH983 initialization successful (poll=%dms)\n",
-		 poll_interval_ms);
+	dev_info(&client->dev, "HH983 initialization successful (mode=%d, poll=%s)\n",
+		 data->mode, (data->mode == 1 && poll_interval_ms > 0) ? "on" : "off");
 	return 0;
 }
 
