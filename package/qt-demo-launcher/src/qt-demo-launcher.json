@@ -159,12 +159,12 @@
         "border_radius": 20
       },
       {
-        "id": "video-player",
+        "id": "media-player",
         "enabled": true,
-        "text": "Video Player",
+        "text": "Media Player",
         "icon": "/usr/share/icons/video-large.png",
-        "program": "/usr/bin/qt-mpv-wrapper.sh",
-        "arguments": ["/Videos", "--port", "8084"],
+        "program": "/usr/bin/kodi-launcher.sh",
+        "arguments": [],
         "working_directory": "/tmp",
         "position": {
           "row": 1,

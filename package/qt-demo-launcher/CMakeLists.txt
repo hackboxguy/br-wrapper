@@ -66,6 +66,7 @@ install(FILES
 )
 
 install(PROGRAMS
+    src/kodi-launcher.sh
     update-config-paths.sh
     update-service-paths.sh
     DESTINATION ${DATA_DIR}

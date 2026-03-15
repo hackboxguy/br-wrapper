@@ -41,19 +41,12 @@ else
 fi
 sed -i "s|/usr/lib/qt/examples/widgets/touch/fingerpaint/fingerpaint|$FINGERPAINT_PATH|g" "$CONFIG_FILE"
 
-# qt-mpv-wrapper.sh is in ${BASE_PATH}/share/qt-apps/
-sed -i "s|/usr/bin/qt-mpv-wrapper.sh|$BASE_PATH/share/qt-apps/qt-mpv-wrapper.sh|g" "$CONFIG_FILE"
-
-# Update qt-mpv-wrapper path - handle both possible structures:
-# Option 1: /path/to/qt-mpv-wrapper/src/qt-mpv-wrapper.sh (development)
-# Option 2: /path/to/qt-mpv-wrapper.sh (flat deployment)
-sed -i "s|\"program\": \".*/qt-mpv-wrapper/src/qt-mpv-wrapper.sh\"|\"program\": \"$BASE_PATH/share/qt-apps/qt-mpv-wrapper.sh\"|g" "$CONFIG_FILE"
-sed -i "s|\"program\": \".*/qt-mpv-wrapper.sh\"|\"program\": \"$BASE_PATH/share/qt-apps/qt-mpv-wrapper.sh\"|g" "$CONFIG_FILE"
+# kodi-launcher.sh is in ${BASE_PATH}/share/qt-apps/
+sed -i "s|/usr/bin/kodi-launcher.sh|$BASE_PATH/share/qt-apps/kodi-launcher.sh|g" "$CONFIG_FILE"
 
 # Update directory paths in arguments (data is in ${BASE_PATH}/share/qt-apps/)
 sed -i "s|\"arguments\": \\[\"/Pictures\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Pictures\"|g" "$CONFIG_FILE"
 sed -i "s|\"arguments\": \\[\"/Patterns\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Patterns\"|g" "$CONFIG_FILE"
-sed -i "s|\"arguments\": \\[\"/Videos\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Videos\"|g" "$CONFIG_FILE"
 sed -i "s|\"working_directory\": \"/Pictures\"|\"working_directory\": \"$BASE_PATH/share/qt-apps/Pictures\"|g" "$CONFIG_FILE"
 sed -i "s|\"working_directory\": \"/Patterns\"|\"working_directory\": \"$BASE_PATH/share/qt-apps/Patterns\"|g" "$CONFIG_FILE"
 
