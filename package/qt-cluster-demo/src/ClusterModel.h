@@ -64,10 +64,7 @@ private:
     // Startup diagnostic sweep
     bool m_startupActive = false;
     QTimer m_sweepTimer;
-    int m_sweepElapsed = 0;
-    static const int SWEEP_UP_MS = 600;     // time to sweep to max
-    static const int SWEEP_HOLD_MS = 400;   // hold at max
-    static const int SWEEP_DOWN_MS = 600;   // time to sweep back to zero
+    int m_sweepPhase = 0;  // 0=set max, 1=set zero, 2=done
 };
 
 #endif // CLUSTERMODEL_H
