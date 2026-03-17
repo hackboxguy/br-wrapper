@@ -194,11 +194,11 @@ Item {
             ctx.rotate(angle * toRad);
 
             // Needle dimensions
-            var needleLen = radius * 0.88;     // tip reaches near inner tick marks
-            var tailLen = radius * 0.14;       // counterweight tail behind center
-            var baseHalf = radius * 0.04;      // half-width at base (wide)
-            var tipHalf = radius * 0.008;      // half-width at tip (sharp point)
-            var tailHalf = radius * 0.028;     // half-width at tail end
+            var needleLen = radius * 0.92;     // tip reaches into tick marks
+            var tailLen = radius * 0.16;       // counterweight tail behind center
+            var baseHalf = radius * 0.055;     // half-width at base (wide)
+            var tipHalf = radius * 0.012;      // half-width at tip (sharp point)
+            var tailHalf = radius * 0.038;     // half-width at tail end
 
             // Shadow/glow under needle
             ctx.shadowColor = "rgba(255, 80, 0, 0.3)";
