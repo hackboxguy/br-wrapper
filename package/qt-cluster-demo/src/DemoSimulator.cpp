@@ -20,18 +20,18 @@ enum Telltale {
 // Drive cycle phases matching car-can-emulator simulate mode
 //                          dur   spd0 spd1  rpm0  rpm1  tmp0 tmp1  set          clr
 const DemoSimulator::Phase DemoSimulator::s_phases[] = {
-    { 3000,    0,   0,   800,  800,   20,  40,  TT_SEATBELT, 0            },  // Cold start
-    { 5000,    0,   0,   800,  800,   40,  70,  0,           TT_SEATBELT  },  // Warmup idle
-    { 3000,    0,  30,   800, 3500,   70,  75,  TT_LEFT,     0            },  // Accel 1
-    { 3000,   30,  60,  2000, 3500,   75,  80,  0,           TT_LEFT      },  // Accel 2
-    { 4000,   60, 100,  2000, 3500,   80,  85,  0,           0            },  // Accel 3
-    { 15000, 100, 100,  2200, 2200,   85,  90,  TT_HIGHBEAM, 0            },  // Cruise
-    { 4000,  100, 140,  2200, 4000,   90,  90,  0,           TT_HIGHBEAM  },  // Accel 4
-    { 10000, 140, 140,  3000, 3000,   90,  90,  0,           0            },  // High cruise
-    { 5000,  140,  60,  3000, 1500,   90,  88,  TT_BRAKE,    0            },  // Decelerate
-    { 4000,   60,  30,  1500, 1000,   88,  86,  TT_RIGHT,    0            },  // Coast
-    { 4000,   30,   0,  1000,  800,   86,  85,  0,           TT_RIGHT     },  // Stop
-    { 5000,    0,   0,   800,  800,   85,  83,  0,           TT_BRAKE     },  // Idle at stop
+    { 2000,    0,  40,   800, 2500,   70,  75,  TT_LEFT,     0            },  // Pull away
+    { 2000,   40,  80,  2500, 3500,   75,  80,  0,           TT_LEFT      },  // Accel 1
+    { 3000,   80, 120,  2000, 3500,   80,  85,  0,           0            },  // Accel 2
+    { 8000,  120, 120,  2500, 2500,   85,  90,  TT_HIGHBEAM, 0            },  // Cruise
+    { 3000,  120, 160,  2500, 4500,   90,  90,  0,           TT_HIGHBEAM  },  // Accel 3
+    { 6000,  160, 160,  3200, 3200,   90,  90,  0,           0            },  // High cruise
+    { 3000,  160, 200,  3200, 5500,   90,  92,  0,           0            },  // Accel 4
+    { 4000,  200, 200,  4000, 4000,   92,  92,  0,           0            },  // Fast cruise
+    { 4000,  200,  80,  4000, 1800,   92,  88,  TT_BRAKE,    0            },  // Hard brake
+    { 3000,   80,  40,  1800, 1200,   88,  86,  TT_RIGHT,    0            },  // Coast
+    { 3000,   40,   0,  1200,  800,   86,  85,  0,           TT_RIGHT     },  // Stop
+    { 3000,    0,   0,   800,  800,   85,  80,  0,           TT_BRAKE     },  // Idle at stop
 };
 
 const int DemoSimulator::s_phaseCount = sizeof(s_phases) / sizeof(s_phases[0]);
