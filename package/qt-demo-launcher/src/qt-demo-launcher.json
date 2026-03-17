@@ -211,6 +211,32 @@
         "border_radius": 20
       },
       {
+        "id": "cluster-demo",
+        "enabled": true,
+        "text": "Cluster Demo",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/share/qt-apps/cluster-launcher.sh",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 2,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F",
+        "border_radius": 20
+      },
+      {
         "id": "exit",
         "enabled": false,
         "text": "Exit",
