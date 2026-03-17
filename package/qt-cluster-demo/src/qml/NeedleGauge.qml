@@ -158,7 +158,7 @@ Item {
             ctx.fillStyle = "#888888";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
-            ctx.fillText(label, cx, cy + radius * 0.35);
+            ctx.fillText(label, cx, cy + radius * 0.25);
         }
 
         // Center cap
@@ -188,10 +188,10 @@ Item {
     Text {
         visible: showDigitalValue
         anchors.horizontalCenter: parent.horizontalCenter
-        y: parent.height * 0.62
+        y: parent.height * 0.68
         text: root.digitalFormat.arg(Math.round(root.value))
         color: labelColor
-        font.pixelSize: Math.min(parent.width, parent.height) * 0.12
+        font.pixelSize: Math.min(parent.width, parent.height) * 0.10
         font.bold: true
     }
 }

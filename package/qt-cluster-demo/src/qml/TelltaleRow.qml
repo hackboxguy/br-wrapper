@@ -57,8 +57,8 @@ Item {
             ]
 
             delegate: Rectangle {
-                width: root.height * 0.75
-                height: root.height * 0.65
+                width: root.width * 0.065
+                height: root.height * 0.72
                 radius: 4
                 color: (root.telltales & modelData.bit) ? Qt.rgba(
                            modelData.color.r, modelData.color.g, modelData.color.b, 0.15)

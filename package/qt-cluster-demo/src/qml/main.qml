@@ -11,7 +11,7 @@ Window {
     title: "Cluster Demo"
 
     // Gauge area dimensions (between telltale row and info bar)
-    property real topBarHeight: height * 0.06
+    property real topBarHeight: height * 0.09
     property real bottomBarHeight: height * 0.06
     property real gaugeAreaHeight: height - topBarHeight - bottomBarHeight
     property real gaugeDiameter: gaugeAreaHeight * 0.85
@@ -38,9 +38,8 @@ Window {
     // Tachometer (left)
     Tachometer {
         id: tach
-        anchors.left: parent.left
-        anchors.leftMargin: (width * 0.5 - gaugeDiameter * 0.5 - centerWidth * 0.5) * 0.5
         anchors.verticalCenter: gaugeArea.verticalCenter
+        x: centerColumn.x - gaugeDiameter + gaugeDiameter * 0.08
         width: gaugeDiameter
         height: gaugeDiameter
     }
@@ -81,9 +80,8 @@ Window {
     // Speedometer (right)
     Speedometer {
         id: speedo
-        anchors.right: parent.right
-        anchors.rightMargin: (width * 0.5 - gaugeDiameter * 0.5 - centerWidth * 0.5) * 0.5
         anchors.verticalCenter: gaugeArea.verticalCenter
+        x: centerColumn.x + centerColumn.width - gaugeDiameter * 0.08
         width: gaugeDiameter
         height: gaugeDiameter
     }
