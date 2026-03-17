@@ -17,9 +17,10 @@ Item {
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: "BATT: " + cluster.batteryVoltage.toFixed(1) + " V"
-                color: cluster.batteryVoltage < 11.5 ? "#ff4444" : "#aaaaaa"
-                font.pixelSize: root.height * 0.45
+                color: cluster.batteryVoltage < 11.5 ? "#ff2222" : "#dddddd"
+                font.pixelSize: root.height * 0.50
                 font.family: "monospace"
+                font.bold: true
             }
 
             // Separator
@@ -34,9 +35,10 @@ Item {
             Text {
                 anchors.verticalCenter: parent.verticalCenter
                 text: cluster.canConnected ? "CAN: OK" : "CAN: --"
-                color: cluster.canConnected ? "#33cc33" : "#666666"
-                font.pixelSize: root.height * 0.45
+                color: cluster.canConnected ? "#00ff44" : "#666666"
+                font.pixelSize: root.height * 0.50
                 font.family: "monospace"
+                font.bold: true
             }
         }
     }

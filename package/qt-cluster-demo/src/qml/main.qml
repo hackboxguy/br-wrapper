@@ -11,10 +11,10 @@ Window {
     title: "Cluster Demo"
 
     // Gauge area dimensions (between telltale row and info bar)
-    property real topBarHeight: height * 0.09
+    property real topBarHeight: height * 0.12
     property real bottomBarHeight: height * 0.06
     property real gaugeAreaHeight: height - topBarHeight - bottomBarHeight
-    property real gaugeDiameter: gaugeAreaHeight * 0.85
+    property real gaugeDiameter: gaugeAreaHeight * 0.95
     property real centerWidth: width - gaugeDiameter * 2
 
     // Telltale row (top)

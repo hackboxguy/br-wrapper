@@ -35,41 +35,45 @@ Item {
     onLeftActiveChanged: if (!leftActive && !rightActive) blinkVisible = true
     onRightActiveChanged: if (!leftActive && !rightActive) blinkVisible = true
 
+    // Dark background for contrast
+    Rectangle {
+        anchors.fill: parent
+        color: "#050505"
+    }
+
     Row {
         anchors.centerIn: parent
-        spacing: parent.width * 0.015
+        spacing: parent.width * 0.008
 
-        // Helper component for a single telltale indicator
         Repeater {
             model: [
-                { bit: root.bitEngine,   label: "ENG",   color: "#ffaa00", blink: false },
-                { bit: root.bitOil,      label: "OIL",   color: "#ff3333", blink: false },
-                { bit: root.bitBattery,  label: "BATT",  color: "#ff3333", blink: false },
-                { bit: root.bitBrake,    label: "BRAKE", color: "#ff3333", blink: false },
-                { bit: root.bitLeft,     label: "\u25C0", color: "#33cc33", blink: true },
-                { bit: root.bitRight,    label: "\u25B6", color: "#33cc33", blink: true },
-                { bit: root.bitHighbeam, label: "HIGH",  color: "#4488ff", blink: false },
-                { bit: root.bitDoor,     label: "DOOR",  color: "#ffaa00", blink: false },
-                { bit: root.bitSeatbelt, label: "BELT",  color: "#ff3333", blink: false },
-                { bit: root.bitAbs,      label: "ABS",   color: "#ffaa00", blink: false },
-                { bit: root.bitTraction, label: "TC",    color: "#ffaa00", blink: false },
-                { bit: root.bitTpms,     label: "TPMS",  color: "#ffaa00", blink: false }
+                { bit: root.bitEngine,   label: "ENG",   color: "#ffcc00", blink: false },
+                { bit: root.bitOil,      label: "OIL",   color: "#ff2222", blink: false },
+                { bit: root.bitBattery,  label: "BATT",  color: "#ff2222", blink: false },
+                { bit: root.bitBrake,    label: "BRAKE", color: "#ff2222", blink: false },
+                { bit: root.bitLeft,     label: "\u25C0", color: "#00ff44", blink: true },
+                { bit: root.bitRight,    label: "\u25B6", color: "#00ff44", blink: true },
+                { bit: root.bitHighbeam, label: "HIGH",  color: "#44aaff", blink: false },
+                { bit: root.bitDoor,     label: "DOOR",  color: "#ffcc00", blink: false },
+                { bit: root.bitSeatbelt, label: "BELT",  color: "#ff2222", blink: false },
+                { bit: root.bitAbs,      label: "ABS",   color: "#ffcc00", blink: false },
+                { bit: root.bitTraction, label: "TC",    color: "#ffcc00", blink: false },
+                { bit: root.bitTpms,     label: "TPMS",  color: "#ffcc00", blink: false }
             ]
 
             delegate: Rectangle {
-                width: root.width * 0.065
-                height: root.height * 0.72
-                radius: 4
-                color: (root.telltales & modelData.bit) ? Qt.rgba(
-                           modelData.color.r, modelData.color.g, modelData.color.b, 0.15)
-                       : "transparent"
-                border.color: (root.telltales & modelData.bit) ? modelData.color : "#333333"
-                border.width: 1
+                property bool isOn: (root.telltales & modelData.bit) !== 0
 
-                visible: true
+                width: root.width * 0.07
+                height: root.height * 0.78
+                radius: 6
+                color: isOn ? Qt.rgba(modelData.color.r, modelData.color.g,
+                                      modelData.color.b, 0.25) : "#111111"
+                border.color: isOn ? modelData.color : "#2a2a2a"
+                border.width: isOn ? 2.5 : 1
+
                 opacity: {
-                    var isOn = (root.telltales & modelData.bit) !== 0;
-                    if (!isOn) return 0.3;
+                    if (!isOn) return 0.35;
                     if (modelData.blink) return blinkVisible ? 1.0 : 0.0;
                     return 1.0;
                 }
@@ -77,9 +81,10 @@ Item {
                 Text {
                     anchors.centerIn: parent
                     text: modelData.label
-                    color: (root.telltales & modelData.bit) ? modelData.color : "#555555"
-                    font.pixelSize: parent.height * 0.4
+                    color: parent.isOn ? modelData.color : "#444444"
+                    font.pixelSize: parent.height * 0.38
                     font.bold: true
+                    font.weight: parent.isOn ? Font.ExtraBold : Font.Normal
                 }
             }
         }

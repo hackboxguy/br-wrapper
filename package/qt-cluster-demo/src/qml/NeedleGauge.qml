@@ -22,9 +22,9 @@ Item {
     property string label: ""
     property bool showDigitalValue: false
     property string digitalFormat: "%1"
-    property color dialColor: "#1a1a1a"
-    property color tickColor: "#cccccc"
-    property color needleColor: "#ff3333"
+    property color dialColor: "#0a0a0a"
+    property color tickColor: "#ffffff"
+    property color needleColor: "#ff2200"
     property color redlineColor: "#ff0000"
     property color labelColor: "#ffffff"
 
@@ -74,8 +74,8 @@ Item {
         // Outer ring
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
-        ctx.strokeStyle = "#444444";
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#888888";
+        ctx.lineWidth = 3;
         ctx.stroke();
 
         var toRad = Math.PI / 180;
@@ -90,7 +90,7 @@ Item {
                     (redlineStartAngle - 90) * toRad,
                     (endAngle - 90) * toRad);
             ctx.strokeStyle = redlineColor;
-            ctx.lineWidth = radius * 0.06;
+            ctx.lineWidth = radius * 0.08;
             ctx.stroke();
         }
 
@@ -110,14 +110,14 @@ Item {
             ctx.lineTo(cx + outerMajor * Math.cos(angle),
                        cy + outerMajor * Math.sin(angle));
             ctx.strokeStyle = (redlineValue >= 0 && val >= redlineValue) ? redlineColor : tickColor;
-            ctx.lineWidth = 2.5;
+            ctx.lineWidth = 3.5;
             ctx.stroke();
 
             // Label
             var labelRadius = radius * 0.65;
             var labelVal = val / labelDivisor;
             var labelText = Number.isInteger(labelVal) ? labelVal.toString() : labelVal.toFixed(1);
-            ctx.font = Math.round(radius * 0.1) + "px sans-serif";
+            ctx.font = "bold " + Math.round(radius * 0.12) + "px sans-serif";
             ctx.fillStyle = (redlineValue >= 0 && val >= redlineValue) ? redlineColor : labelColor;
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
@@ -146,16 +146,16 @@ Item {
                            cy + innerMinor * Math.sin(minorAngle));
                 ctx.lineTo(cx + outerMinor * Math.cos(minorAngle),
                            cy + outerMinor * Math.sin(minorAngle));
-                ctx.strokeStyle = (redlineValue >= 0 && minorVal >= redlineValue) ? redlineColor : "#666666";
-                ctx.lineWidth = 1;
+                ctx.strokeStyle = (redlineValue >= 0 && minorVal >= redlineValue) ? redlineColor : "#999999";
+                ctx.lineWidth = 1.5;
                 ctx.stroke();
             }
         }
 
         // Unit label
         if (label.length > 0) {
-            ctx.font = Math.round(radius * 0.09) + "px sans-serif";
-            ctx.fillStyle = "#888888";
+            ctx.font = "bold " + Math.round(radius * 0.10) + "px sans-serif";
+            ctx.fillStyle = "#bbbbbb";
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
             ctx.fillText(label, cx, cy + radius * 0.25);
@@ -163,8 +163,8 @@ Item {
 
         // Center cap
         ctx.beginPath();
-        ctx.arc(cx, cy, radius * 0.06, 0, 2 * Math.PI);
-        ctx.fillStyle = "#666666";
+        ctx.arc(cx, cy, radius * 0.07, 0, 2 * Math.PI);
+        ctx.fillStyle = "#999999";
         ctx.fill();
     }
 
