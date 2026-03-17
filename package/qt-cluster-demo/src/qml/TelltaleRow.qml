@@ -82,7 +82,7 @@ Item {
                     anchors.centerIn: parent
                     text: modelData.label
                     color: parent.isOn ? modelData.color : "#444444"
-                    font.pixelSize: parent.height * 0.38
+                    font.pixelSize: modelData.blink ? parent.height * 0.65 : parent.height * 0.45
                     font.bold: true
                     font.weight: parent.isOn ? Font.ExtraBold : Font.Normal
                 }

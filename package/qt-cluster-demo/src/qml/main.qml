@@ -14,7 +14,7 @@ Window {
     property real topBarHeight: height * 0.12
     property real bottomBarHeight: height * 0.06
     property real gaugeAreaHeight: height - topBarHeight - bottomBarHeight
-    property real gaugeDiameter: gaugeAreaHeight * 0.95
+    property real gaugeDiameter: gaugeAreaHeight * 1.0
     property real centerWidth: width - gaugeDiameter * 2
 
     // Telltale row (top)
