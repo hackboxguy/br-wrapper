@@ -1,0 +1,21 @@
+config BR2_PACKAGE_CAR_CAN_EMULATOR
+	bool "car-can-emulator"
+	help
+	  CAN bus OBD2 emulator for testing automotive devices such as
+	  head-up displays, instrument clusters, and car TCUs without
+	  requiring a real vehicle.
+
+	  Emulates standard OBD2 PIDs over CAN bus with a TCP control
+	  interface for setting values at runtime.
+
+	  https://github.com/hackboxguy/car-can-emulator
+
+if BR2_PACKAGE_CAR_CAN_EMULATOR
+
+config BR2_PACKAGE_CAR_CAN_EMULATOR_SYSTEMD
+	bool "install systemd service"
+	depends on BR2_INIT_SYSTEMD
+	help
+	  Install the systemd unit file for automatic startup.
+
+endif
