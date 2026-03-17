@@ -43,7 +43,7 @@ Item {
     property real smoothedRotation: needleRotation
     Behavior on smoothedRotation {
         SmoothedAnimation {
-            velocity: cluster.startupActive ? 250 : 1500
+            velocity: cluster.startupActive ? 200 : 1500
         }
     }
 
