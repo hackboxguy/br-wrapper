@@ -32,6 +32,10 @@ int main(int argc, char *argv[])
         "fullscreen", "Force fullscreen");
     parser.addOption(fullscreenOption);
 
+    QCommandLineOption noSweepOption(
+        "no-sweep", "Skip startup diagnostic sweep");
+    parser.addOption(noSweepOption);
+
     parser.process(app);
 
     ClusterModel model;
@@ -97,14 +101,20 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty())
         return -1;
 
-    // Run startup diagnostic sweep, then start data source
-    QObject::connect(&model, &ClusterModel::startupFinished, [&]() {
+    // Start data source (after sweep if enabled)
+    auto startDataSource = [&]() {
         if (canReader)
             canReader->start();
         if (demoSim)
             demoSim->start();
-    });
-    model.startDiagnosticSweep();
+    };
+
+    if (parser.isSet(noSweepOption)) {
+        startDataSource();
+    } else {
+        QObject::connect(&model, &ClusterModel::startupFinished, startDataSource);
+        model.startDiagnosticSweep();
+    }
 
     int ret = app.exec();
 

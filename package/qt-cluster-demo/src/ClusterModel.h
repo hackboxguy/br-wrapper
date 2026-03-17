@@ -65,9 +65,9 @@ private:
     bool m_startupActive = false;
     QTimer m_sweepTimer;
     int m_sweepElapsed = 0;
-    static const int SWEEP_UP_MS = 800;     // time to sweep to max
-    static const int SWEEP_HOLD_MS = 500;   // hold at max
-    static const int SWEEP_DOWN_MS = 800;   // time to sweep back to zero
+    static const int SWEEP_UP_MS = 600;     // time to sweep to max
+    static const int SWEEP_HOLD_MS = 400;   // hold at max
+    static const int SWEEP_DOWN_MS = 600;   // time to sweep back to zero
 };
 
 #endif // CLUSTERMODEL_H
