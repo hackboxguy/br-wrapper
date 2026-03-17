@@ -42,7 +42,7 @@ Item {
     property real smoothedRotation: needleRotation
     Behavior on smoothedRotation {
         SmoothedAnimation {
-            velocity: 800  // degrees per second
+            velocity: 1500  // degrees per second
         }
     }
 
