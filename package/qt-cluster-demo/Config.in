@@ -1,0 +1,9 @@
+config BR2_PACKAGE_QT_CLUSTER_DEMO
+	bool "qt-cluster-demo"
+	depends on BR2_PACKAGE_QT5BASE
+	select BR2_PACKAGE_QT5BASE_OPENGL
+	select BR2_PACKAGE_QT5DECLARATIVE
+	help
+	  Qt/QML automotive instrument cluster demo.
+	  Reads OBD2 data from CAN bus and renders
+	  speedometer, tachometer, and gauges.
