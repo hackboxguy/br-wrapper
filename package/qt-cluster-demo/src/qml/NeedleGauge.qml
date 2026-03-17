@@ -196,9 +196,9 @@ Item {
             // Needle dimensions
             var needleLen = radius * 0.92;     // tip reaches into tick marks
             var tailLen = radius * 0.16;       // counterweight tail behind center
-            var baseHalf = radius * 0.055;     // half-width at base (wide)
-            var tipHalf = radius * 0.012;      // half-width at tip (sharp point)
-            var tailHalf = radius * 0.038;     // half-width at tail end
+            var baseHalf = radius * 0.045;     // half-width at base (wide)
+            var tipHalf = radius * 0.010;      // half-width at tip (sharp point)
+            var tailHalf = radius * 0.032;     // half-width at tail end
 
             // Shadow/glow under needle
             ctx.shadowColor = "rgba(255, 80, 0, 0.3)";
@@ -241,29 +241,29 @@ Item {
             // Multi-ring center hub (drawn on top of needle)
             // Outer chrome ring
             ctx.beginPath();
-            ctx.arc(cx, cy, radius * 0.09, 0, 2 * Math.PI);
+            ctx.arc(cx, cy, radius * 0.13, 0, 2 * Math.PI);
             var hubGrad = ctx.createRadialGradient(
-                cx - radius * 0.02, cy - radius * 0.02, 0,
-                cx, cy, radius * 0.09);
-            hubGrad.addColorStop(0.0, "#dddddd");
-            hubGrad.addColorStop(0.6, "#aaaaaa");
-            hubGrad.addColorStop(0.85, "#888888");
-            hubGrad.addColorStop(1.0, "#666666");
+                cx - radius * 0.03, cy - radius * 0.03, 0,
+                cx, cy, radius * 0.13);
+            hubGrad.addColorStop(0.0, "#eeeeee");
+            hubGrad.addColorStop(0.5, "#bbbbbb");
+            hubGrad.addColorStop(0.8, "#888888");
+            hubGrad.addColorStop(1.0, "#555555");
             ctx.fillStyle = hubGrad;
             ctx.fill();
 
             // Dark gap ring
             ctx.beginPath();
-            ctx.arc(cx, cy, radius * 0.065, 0, 2 * Math.PI);
-            ctx.fillStyle = "#1a1a1a";
+            ctx.arc(cx, cy, radius * 0.095, 0, 2 * Math.PI);
+            ctx.fillStyle = "#111111";
             ctx.fill();
 
             // Inner bright cap
             ctx.beginPath();
-            ctx.arc(cx, cy, radius * 0.045, 0, 2 * Math.PI);
+            ctx.arc(cx, cy, radius * 0.065, 0, 2 * Math.PI);
             var capGrad = ctx.createRadialGradient(
-                cx - radius * 0.01, cy - radius * 0.01, 0,
-                cx, cy, radius * 0.045);
+                cx - radius * 0.015, cy - radius * 0.015, 0,
+                cx, cy, radius * 0.065);
             capGrad.addColorStop(0.0, "#cccccc");
             capGrad.addColorStop(0.7, "#888888");
             capGrad.addColorStop(1.0, "#555555");

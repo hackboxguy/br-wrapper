@@ -97,11 +97,14 @@ int main(int argc, char *argv[])
     if (engine.rootObjects().isEmpty())
         return -1;
 
-    // Start data source
-    if (canReader)
-        canReader->start();
-    if (demoSim)
-        demoSim->start();
+    // Run startup diagnostic sweep, then start data source
+    QObject::connect(&model, &ClusterModel::startupFinished, [&]() {
+        if (canReader)
+            canReader->start();
+        if (demoSim)
+            demoSim->start();
+    });
+    model.startDiagnosticSweep();
 
     int ret = app.exec();
 

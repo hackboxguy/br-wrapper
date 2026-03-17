@@ -3,6 +3,65 @@
 ClusterModel::ClusterModel(QObject *parent)
     : QObject(parent)
 {
+    connect(&m_sweepTimer, &QTimer::timeout, this, &ClusterModel::sweepTick);
+}
+
+void ClusterModel::startDiagnosticSweep()
+{
+    m_startupActive = true;
+    emit startupActiveChanged(true);
+    m_sweepElapsed = 0;
+
+    // All telltales ON
+    setTelltales(0x0FFF);  // all 12 bits
+    setBatteryVoltage(12.6);
+
+    m_sweepTimer.start(30);  // 30ms tick for smooth animation
+}
+
+void ClusterModel::sweepTick()
+{
+    m_sweepElapsed += 30;
+    int totalMs = SWEEP_UP_MS + SWEEP_HOLD_MS + SWEEP_DOWN_MS;
+
+    if (m_sweepElapsed <= SWEEP_UP_MS) {
+        // Phase 1: sweep up to max
+        double t = (double)m_sweepElapsed / SWEEP_UP_MS;
+        setSpeed((int)(260 * t));
+        setRpm((int)(8000 * t));
+        setCoolantTemp((int)(60 + 70 * t));  // 60 -> 130
+        setFuelLevel((int)(100 * t));
+    }
+    else if (m_sweepElapsed <= SWEEP_UP_MS + SWEEP_HOLD_MS) {
+        // Phase 2: hold at max
+        setSpeed(260);
+        setRpm(8000);
+        setCoolantTemp(130);
+        setFuelLevel(100);
+    }
+    else if (m_sweepElapsed <= totalMs) {
+        // Phase 3: sweep back down
+        double t = (double)(m_sweepElapsed - SWEEP_UP_MS - SWEEP_HOLD_MS) / SWEEP_DOWN_MS;
+        setSpeed((int)(260 * (1.0 - t)));
+        setRpm((int)(8000 * (1.0 - t)));
+        setCoolantTemp((int)(130 - 70 * t));  // 130 -> 60
+        setFuelLevel((int)(100 * (1.0 - t)));
+        // Turn off telltales partway through the down sweep
+        if (t > 0.3)
+            setTelltales(0);
+    }
+    else {
+        // Done
+        m_sweepTimer.stop();
+        setSpeed(0);
+        setRpm(0);
+        setCoolantTemp(20);
+        setFuelLevel(0);
+        setTelltales(0);
+        m_startupActive = false;
+        emit startupActiveChanged(false);
+        emit startupFinished();
+    }
 }
 
 void ClusterModel::setSpeed(int v)
