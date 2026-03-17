@@ -22,8 +22,9 @@ void ClusterModel::startDiagnosticSweep()
     setFuelLevel(100);
 
     // Wait for needles to reach max + hold, then trigger phase 1
+    // At 250 deg/sec, 270 degrees takes ~1.1s + 0.7s hold
     m_sweepTimer.setSingleShot(true);
-    m_sweepTimer.start(1800);  // ~1.2s for needle travel + 0.6s hold
+    m_sweepTimer.start(2500);
 }
 
 void ClusterModel::sweepTick()
@@ -39,7 +40,8 @@ void ClusterModel::sweepTick()
         setTelltales(0);
 
         // Wait for needles to settle at zero, then finish
-        m_sweepTimer.start(1500);  // ~1.2s for needle travel + settle
+        // ~1.1s travel + 0.4s settle
+        m_sweepTimer.start(2500);
     }
     else {
         // Done — start data source

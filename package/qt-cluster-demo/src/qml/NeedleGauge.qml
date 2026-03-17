@@ -39,10 +39,11 @@ Item {
     }
 
     // Smoothed needle angle
+    // Slower during startup sweep for visible travel, faster during normal operation
     property real smoothedRotation: needleRotation
     Behavior on smoothedRotation {
         SmoothedAnimation {
-            velocity: 1500  // degrees per second
+            velocity: cluster.startupActive ? 250 : 1500
         }
     }
 
