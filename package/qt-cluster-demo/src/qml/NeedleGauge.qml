@@ -17,6 +17,7 @@ Item {
     property real majorTickInterval: 10
     property real minorTickInterval: 5
     property real labelDivisor: 1  // divide label values by this (e.g. 1000 for tach)
+    property real labelScale: 1.0  // scale factor for label font size
 
     // Display
     property string label: ""
@@ -117,7 +118,7 @@ Item {
             var labelRadius = radius * 0.65;
             var labelVal = val / labelDivisor;
             var labelText = Number.isInteger(labelVal) ? labelVal.toString() : labelVal.toFixed(1);
-            ctx.font = "bold " + Math.round(radius * 0.12) + "px sans-serif";
+            ctx.font = "bold " + Math.round(radius * 0.12 * labelScale) + "px sans-serif";
             ctx.fillStyle = (redlineValue >= 0 && val >= redlineValue) ? redlineColor : labelColor;
             ctx.textAlign = "center";
             ctx.textBaseline = "middle";
