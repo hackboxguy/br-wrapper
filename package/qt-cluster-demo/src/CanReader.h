@@ -31,8 +31,8 @@ private:
     void pollLoop();
     void sendObd2Request(uint8_t pid);
     bool readFrame(struct can_frame *frame, int timeoutMs);
-    void decodeObd2Response(const uint8_t *data);
-    void decodeTelltales(const uint8_t *data);
+    void decodeObd2Response(const struct can_frame &frame);
+    void decodeTelltales(const struct can_frame &frame);
 
     QString m_interface;
     int m_socket;

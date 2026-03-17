@@ -68,6 +68,14 @@ bool CanReader::open()
         return false;
     }
 
+    // Set kernel-level CAN filter: only receive 0x7E8 and 0x420
+    struct can_filter filters[2];
+    filters[0].can_id   = OBD2_RESPONSE_ID;
+    filters[0].can_mask = CAN_SFF_MASK;
+    filters[1].can_id   = TELLTALE_ID;
+    filters[1].can_mask = CAN_SFF_MASK;
+    setsockopt(m_socket, SOL_CAN_RAW, CAN_RAW_FILTER, &filters, sizeof(filters));
+
     // Set receive timeout to 100ms
     struct timeval tv;
     tv.tv_sec = 0;
@@ -128,35 +136,52 @@ bool CanReader::readFrame(struct can_frame *frame, int timeoutMs)
     return (nbytes == sizeof(struct can_frame));
 }
 
-void CanReader::decodeObd2Response(const uint8_t *data)
+void CanReader::decodeObd2Response(const struct can_frame &frame)
 {
-    // data[0] = length, data[1] = 0x41 (response), data[2] = PID
+    if (frame.can_dlc < 4)
+        return;  // Need at least len + mode + PID + 1 data byte
+
+    const uint8_t *data = frame.data;
+    uint8_t len = data[0];
+
+    // Validate: mode 0x41 (response to mode 0x01)
     if (data[1] != 0x41)
+        return;
+
+    // Check declared length fits within DLC
+    if (len + 1 > frame.can_dlc)
         return;
 
     uint8_t pid = data[2];
     switch (pid) {
     case PID_RPM:
-        emit rpmChanged(((int)data[3] << 8 | data[4]) / 4);
+        if (len >= 4)  // need data[3] and data[4]
+            emit rpmChanged(((int)data[3] << 8 | data[4]) / 4);
         break;
     case PID_SPEED:
-        emit speedChanged(data[3]);
+        if (len >= 3)
+            emit speedChanged(data[3]);
         break;
     case PID_COOLANT_TEMP:
-        emit coolantTempChanged((int)data[3] - 40);
+        if (len >= 3)
+            emit coolantTempChanged((int)data[3] - 40);
         break;
     case PID_FUEL_LEVEL:
-        emit fuelLevelChanged(data[3] * 100 / 255);
+        if (len >= 3)
+            emit fuelLevelChanged(data[3] * 100 / 255);
         break;
     case PID_BATTERY_VOLT:
-        emit batteryVoltageChanged(((int)data[3] << 8 | data[4]) / 1000.0);
+        if (len >= 4)
+            emit batteryVoltageChanged(((int)data[3] << 8 | data[4]) / 1000.0);
         break;
     }
 }
 
-void CanReader::decodeTelltales(const uint8_t *data)
+void CanReader::decodeTelltales(const struct can_frame &frame)
 {
-    quint16 bits = (quint16)data[0] | ((quint16)data[1] << 8);
+    if (frame.can_dlc < 2)
+        return;
+    quint16 bits = (quint16)frame.data[0] | ((quint16)frame.data[1] << 8);
     emit telltalesChanged(bits);
 }
 
@@ -204,11 +229,11 @@ void CanReader::pollLoop()
                     break;
 
                 if (frame.can_id == OBD2_RESPONSE_ID) {
-                    decodeObd2Response(frame.data);
+                    decodeObd2Response(frame);
                     gotResponse = true;
                     break;  // Got the response for this PID
                 } else if (frame.can_id == TELLTALE_ID) {
-                    decodeTelltales(frame.data);
+                    decodeTelltales(frame);
                     // Keep reading for the OBD2 response
                 }
             }

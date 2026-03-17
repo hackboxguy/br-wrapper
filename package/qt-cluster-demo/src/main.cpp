@@ -28,10 +28,6 @@ int main(int argc, char *argv[])
         "demo", "Demo mode (synthetic values, no CAN)");
     parser.addOption(demoOption);
 
-    QCommandLineOption fullscreenOption(
-        "fullscreen", "Force fullscreen");
-    parser.addOption(fullscreenOption);
-
     QCommandLineOption noSweepOption(
         "no-sweep", "Skip startup diagnostic sweep");
     parser.addOption(noSweepOption);
@@ -70,12 +66,23 @@ int main(int argc, char *argv[])
         QObject::connect(canReader, &CanReader::canTimeout, [&model]() {
             model.setCanConnected(false);
         });
-        // Any successful data means connected
+        // Any successful OBD2 response means connected
         QObject::connect(canReader, &CanReader::speedChanged, [&model](int) {
             model.setCanConnected(true);
         });
-
-        model.setCanConnected(true);
+        QObject::connect(canReader, &CanReader::rpmChanged, [&model](int) {
+            model.setCanConnected(true);
+        });
+        QObject::connect(canReader, &CanReader::coolantTempChanged, [&model](int) {
+            model.setCanConnected(true);
+        });
+        QObject::connect(canReader, &CanReader::fuelLevelChanged, [&model](int) {
+            model.setCanConnected(true);
+        });
+        QObject::connect(canReader, &CanReader::batteryVoltageChanged, [&model](double) {
+            model.setCanConnected(true);
+        });
+        // Don't pre-set canConnected — wait for actual data
     }
 
     if (demoMode) {
