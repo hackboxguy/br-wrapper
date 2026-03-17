@@ -20,17 +20,17 @@ enum Telltale {
 // Drive cycle phases matching car-can-emulator simulate mode
 //                          dur   spd0 spd1  rpm0  rpm1  tmp0 tmp1  set          clr
 const DemoSimulator::Phase DemoSimulator::s_phases[] = {
-    { 2000,    0,  40,   800, 2500,   70,  75,  TT_LEFT,     0            },  // Pull away
-    { 2000,   40,  80,  2500, 3500,   75,  80,  0,           TT_LEFT      },  // Accel 1
-    { 3000,   80, 120,  2000, 3500,   80,  85,  0,           0            },  // Accel 2
-    { 8000,  120, 120,  2500, 2500,   85,  90,  TT_HIGHBEAM, 0            },  // Cruise
-    { 3000,  120, 160,  2500, 4500,   90,  90,  0,           TT_HIGHBEAM  },  // Accel 3
-    { 6000,  160, 160,  3200, 3200,   90,  90,  0,           0            },  // High cruise
-    { 3000,  160, 200,  3200, 5500,   90,  92,  0,           0            },  // Accel 4
-    { 4000,  200, 200,  4000, 4000,   92,  92,  0,           0            },  // Fast cruise
-    { 4000,  200,  80,  4000, 1800,   92,  88,  TT_BRAKE,    0            },  // Hard brake
-    { 3000,   80,  40,  1800, 1200,   88,  86,  TT_RIGHT,    0            },  // Coast
-    { 3000,   40,   0,  1200,  800,   86,  85,  0,           TT_RIGHT     },  // Stop
+    { 2000,    0,  40,   800, 2500,   70,  75,  TT_LEFT|TT_SEATBELT, 0       },  // Pull away (seatbelt reminder)
+    { 2000,   40,  80,  2500, 3500,   75,  80,  0,           TT_LEFT|TT_SEATBELT },  // Accel 1 (buckled up)
+    { 3000,   80, 120,  2000, 3500,   80,  85,  TT_ENGINE,   0            },  // Accel 2 (check engine)
+    { 8000,  120, 120,  2500, 2500,   85,  90,  TT_HIGHBEAM, TT_ENGINE    },  // Cruise (engine clears)
+    { 3000,  120, 160,  2500, 4500,   90,  90,  TT_TPMS,     TT_HIGHBEAM  },  // Accel 3 (tire pressure)
+    { 6000,  160, 160,  3200, 3200,   90,  90,  TT_ABS,      TT_TPMS     },  // High cruise (ABS check)
+    { 3000,  160, 200,  3200, 5500,   90,  92,  TT_TRACTION, TT_ABS      },  // Accel 4 (traction)
+    { 4000,  200, 200,  4000, 4000,   92,  92,  TT_OIL|TT_BATTERY, TT_TRACTION },  // Fast cruise (oil + battery)
+    { 4000,  200,  80,  4000, 1800,   92,  88,  TT_BRAKE,    TT_OIL|TT_BATTERY },  // Hard brake
+    { 3000,   80,  40,  1800, 1200,   88,  86,  TT_RIGHT|TT_DOOR, 0      },  // Coast (door ajar)
+    { 3000,   40,   0,  1200,  800,   86,  85,  0,           TT_RIGHT|TT_DOOR },  // Stop
     { 3000,    0,   0,   800,  800,   85,  80,  0,           TT_BRAKE     },  // Idle at stop
 };
 
