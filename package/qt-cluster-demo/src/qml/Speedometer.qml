@@ -9,7 +9,7 @@ NeedleGauge {
     majorTickInterval: 20
     minorTickInterval: 10
     labelDivisor: 1
-    labelScale: 0.75
+    labelScale: 0.85
     label: "km/h"
     showDigitalValue: true
     redlineValue: -1

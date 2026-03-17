@@ -87,11 +87,11 @@ Item {
         if (redlineValue >= 0 && redlineValue < maxValue) {
             var redlineStartAngle = startAngle + ((redlineValue - minValue) / valueRange) * angleRange;
             ctx.beginPath();
-            ctx.arc(cx, cy, radius * 0.85,
+            ctx.arc(cx, cy, radius * 0.95,
                     (redlineStartAngle - 90) * toRad,
                     (endAngle - 90) * toRad);
             ctx.strokeStyle = redlineColor;
-            ctx.lineWidth = radius * 0.08;
+            ctx.lineWidth = radius * 0.07;
             ctx.stroke();
         }
 
@@ -103,8 +103,8 @@ Item {
             var angle = (startAngle + frac * angleRange - 90) * toRad;
 
             // Major tick
-            var innerMajor = radius * 0.75;
-            var outerMajor = radius * 0.85;
+            var innerMajor = radius * 0.87;
+            var outerMajor = radius * 0.98;
             ctx.beginPath();
             ctx.moveTo(cx + innerMajor * Math.cos(angle),
                        cy + innerMajor * Math.sin(angle));
@@ -115,7 +115,7 @@ Item {
             ctx.stroke();
 
             // Label
-            var labelRadius = radius * 0.65;
+            var labelRadius = radius * 0.76;
             var labelVal = val / labelDivisor;
             var labelText = Number.isInteger(labelVal) ? labelVal.toString() : labelVal.toFixed(1);
             ctx.font = "bold " + Math.round(radius * 0.12 * labelScale) + "px sans-serif";
@@ -139,8 +139,8 @@ Item {
 
                 var minorFrac = (minorVal - minValue) / valueRange;
                 var minorAngle = (startAngle + minorFrac * angleRange - 90) * toRad;
-                var innerMinor = radius * 0.80;
-                var outerMinor = radius * 0.85;
+                var innerMinor = radius * 0.92;
+                var outerMinor = radius * 0.98;
 
                 ctx.beginPath();
                 ctx.moveTo(cx + innerMinor * Math.cos(minorAngle),
@@ -194,7 +194,7 @@ Item {
             ctx.rotate(angle * toRad);
 
             // Needle dimensions
-            var needleLen = radius * 0.82;     // tip reaches near inner tick marks
+            var needleLen = radius * 0.88;     // tip reaches near inner tick marks
             var tailLen = radius * 0.14;       // counterweight tail behind center
             var baseHalf = radius * 0.04;      // half-width at base (wide)
             var tipHalf = radius * 0.008;      // half-width at tip (sharp point)
