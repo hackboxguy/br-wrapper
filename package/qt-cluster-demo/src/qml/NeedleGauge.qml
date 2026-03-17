@@ -162,27 +162,114 @@ Item {
             ctx.fillText(label, cx, cy + radius * 0.25);
         }
 
-        // Center cap
-        ctx.beginPath();
-        ctx.arc(cx, cy, radius * 0.07, 0, 2 * Math.PI);
-        ctx.fillStyle = "#999999";
-        ctx.fill();
+        // Center hub is drawn after needle (in needleCanvas) so it covers the needle base
     }
 
-    // Needle (separate item for smooth rotation)
-    Rectangle {
-        id: needle
-        width: Math.min(parent.width, parent.height) * 0.9 * 0.03
-        height: Math.min(parent.width, parent.height) * 0.9 * 0.42
-        color: needleColor
-        radius: width / 2
-        antialiasing: true
+    // Needle + center hub (Canvas for tapered shape, separate item for smooth rotation)
+    Canvas {
+        id: needleCanvas
+        width: parent.width
+        height: parent.height
+        anchors.centerIn: parent
 
-        x: parent.width / 2 - width / 2
-        y: parent.height / 2 - height
+        property real angle: root.smoothedRotation
 
-        transformOrigin: Item.Bottom
-        rotation: root.smoothedRotation
+        onAngleChanged: requestPaint()
+        Component.onCompleted: requestPaint()
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+
+        onPaint: {
+            var ctx = getContext("2d");
+            var w = width;
+            var h = height;
+            var cx = w / 2;
+            var cy = h / 2;
+            var radius = Math.min(cx, cy) * 0.9;
+            var toRad = Math.PI / 180;
+
+            ctx.clearRect(0, 0, w, h);
+            ctx.save();
+            ctx.translate(cx, cy);
+            ctx.rotate(angle * toRad);
+
+            // Needle dimensions
+            var needleLen = radius * 0.72;     // tip length from center
+            var tailLen = radius * 0.12;       // counterweight tail behind center
+            var baseHalf = radius * 0.025;     // half-width at base (wide)
+            var tipHalf = radius * 0.005;      // half-width at tip (sharp point)
+            var tailHalf = radius * 0.018;     // half-width at tail end
+
+            // Shadow/glow under needle
+            ctx.shadowColor = "rgba(255, 80, 0, 0.3)";
+            ctx.shadowBlur = radius * 0.04;
+            ctx.shadowOffsetX = 0;
+            ctx.shadowOffsetY = 0;
+
+            // Draw tapered needle shape
+            // Tip is upward (-Y), tail is downward (+Y) in rotated coords
+            ctx.beginPath();
+            ctx.moveTo(-tipHalf, -needleLen);       // tip left
+            ctx.lineTo(tipHalf, -needleLen);         // tip right
+            ctx.lineTo(baseHalf, 0);                 // base right (at pivot)
+            ctx.lineTo(tailHalf, tailLen);            // tail right
+            ctx.lineTo(-tailHalf, tailLen);           // tail left
+            ctx.lineTo(-baseHalf, 0);                // base left (at pivot)
+            ctx.closePath();
+
+            // Gradient fill: bright orange-red with luminous center line
+            var grad = ctx.createLinearGradient(-baseHalf, 0, baseHalf, 0);
+            grad.addColorStop(0.0, "#cc1800");
+            grad.addColorStop(0.35, "#ff4422");
+            grad.addColorStop(0.5, "#ff6644");       // bright center edge
+            grad.addColorStop(0.65, "#ff4422");
+            grad.addColorStop(1.0, "#cc1800");
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            // Thin bright center line for luminous effect
+            ctx.shadowColor = "transparent";
+            ctx.beginPath();
+            ctx.moveTo(0, -needleLen + radius * 0.02);
+            ctx.lineTo(0, tailLen - radius * 0.01);
+            ctx.strokeStyle = "rgba(255, 150, 100, 0.5)";
+            ctx.lineWidth = 1;
+            ctx.stroke();
+
+            ctx.restore();
+
+            // Multi-ring center hub (drawn on top of needle)
+            // Outer chrome ring
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius * 0.09, 0, 2 * Math.PI);
+            var hubGrad = ctx.createRadialGradient(
+                cx - radius * 0.02, cy - radius * 0.02, 0,
+                cx, cy, radius * 0.09);
+            hubGrad.addColorStop(0.0, "#dddddd");
+            hubGrad.addColorStop(0.6, "#aaaaaa");
+            hubGrad.addColorStop(0.85, "#888888");
+            hubGrad.addColorStop(1.0, "#666666");
+            ctx.fillStyle = hubGrad;
+            ctx.fill();
+
+            // Dark gap ring
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius * 0.065, 0, 2 * Math.PI);
+            ctx.fillStyle = "#1a1a1a";
+            ctx.fill();
+
+            // Inner bright cap
+            ctx.beginPath();
+            ctx.arc(cx, cy, radius * 0.045, 0, 2 * Math.PI);
+            var capGrad = ctx.createRadialGradient(
+                cx - radius * 0.01, cy - radius * 0.01, 0,
+                cx, cy, radius * 0.045);
+            capGrad.addColorStop(0.0, "#cccccc");
+            capGrad.addColorStop(0.7, "#888888");
+            capGrad.addColorStop(1.0, "#555555");
+            ctx.fillStyle = capGrad;
+            ctx.fill();
+        }
     }
 
     // Digital readout
