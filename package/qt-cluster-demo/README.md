@@ -192,7 +192,9 @@ Key rendering details:
 
 ## OBD2 PIDs polled
 
-| PID | Parameter | Decode | Poll rate |
+Poll rates are approximate and depend on ECU response timing. Fast-responding ECUs produce shorter cycles; slow or missing responses stretch the cycle due to socket read timeouts.
+
+| PID | Parameter | Decode | Poll rate (approx) |
 |-----|-----------|--------|-----------|
 | `0x0C` | RPM | `(A<<8\|B) / 4` | Every cycle (~300ms) |
 | `0x0D` | Speed | `A` km/h | Every cycle |
@@ -202,7 +204,7 @@ Key rendering details:
 
 ## Telltale CAN frame (0x420)
 
-Custom broadcast frame (not OBD2), 2 bytes:
+Custom broadcast frame (not OBD2), 2 bytes. This bit layout is a shared contract between `car-can-emulator`, `DemoSimulator.cpp`, `TelltaleRow.qml`, and this documentation. Edits to the bit positions must be synchronized across all four locations.
 
 | Bit | Indicator | Bit | Indicator |
 |-----|-----------|-----|-----------|
@@ -246,6 +248,18 @@ qt-cluster-demo --can vcan0
 
 ```bash
 qt-cluster-demo --demo
+```
+
+Demo mode mirrors the telltale activation and drive-cycle behavior expected from the paired `car-can-emulator` hardware setup. It uses the same signal interface as `CanReader`, so the QML layer is unaware of the data source. Useful for UI development, trade shows, and testing without CAN hardware.
+
+### Fast development commands
+
+```bash
+# Quick iteration — no sweep delay, no CAN
+qt-cluster-demo --demo --no-sweep
+
+# Test with emulator on vcan0 — no sweep delay
+qt-cluster-demo --can vcan0 --no-sweep
 ```
 
 ### Via qt-demo-launcher
@@ -314,3 +328,22 @@ Tested with "OBD Simulator-B-V1.5" (10-pot USB-powered simulator) connected via 
 ```bash
 kill $(pidof disp-can-ctrl) $(pidof car-can-emulator) 2>/dev/null
 ```
+
+## Known limitations
+
+- **Single-ECU only** — the app sends OBD2 requests on `0x7DF` and only accepts responses from `0x7E8`. Alternate ECU response IDs (`0x7E9`-`0x7EF`) are filtered out at the kernel level. Multi-ECU vehicles may not work correctly.
+- **No request/response PID correlation** — the poll loop accepts the first `0x7E8` response after each request without verifying the response PID matches the requested PID. On buses with high latency or multiple responders, stale responses may be decoded in the wrong poll slot.
+- **Fixed PID set** — only 5 PIDs are polled (RPM, speed, coolant temp, fuel level, battery voltage). No support for extended PIDs, ISO-TP multi-frame responses, or DBC file parsing.
+- **Custom telltale protocol** — telltales use a non-standard CAN frame (`0x420`) specific to the paired `car-can-emulator`. Real vehicles do not broadcast telltale state on a single CAN frame.
+- **No runtime CAN fallback** — if the CAN interface goes down after startup, the app shows "CAN: --" but does not automatically switch to demo mode.
+
+## Troubleshooting
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| `module "QtQuick.Window" is not installed` | Missing QML runtime modules on host | `apt install qml-module-qtquick-window2 qml-module-qtquick2` |
+| "CAN: --" stays grey, no gauge movement | CAN interface not up, or no ECU responding | Check `ip link show can0`, verify bitrate, run `candump can0` |
+| `can0` not visible in `ifconfig` | CANable USB adapter not plugged in or driver not loaded | Plug in adapter, check `dmesg` for `gs_usb` |
+| Gauges stuck, CAN goes to ERROR-PASSIVE | Another service (disp-can-ctrl, car-can-emulator) using `can0` | `kill $(pidof disp-can-ctrl) $(pidof car-can-emulator)` |
+| Gauges stuck, ERROR-PASSIVE, no other services | Missing CAN bus termination (120 ohm) | Enable termination jumper on CANable or add 120R resistor |
+| App falls back to demo mode unexpectedly | CAN socket open failed | Check interface name matches `--can` argument |
