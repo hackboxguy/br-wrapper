@@ -27,8 +27,8 @@ Item {
         var w = canvas.width;
         var h = canvas.height;
         var cx = w / 2;
-        var cy = h * 0.55;
-        var radius = Math.min(w, h) * 0.40;
+        var cy = h * 0.40;
+        var radius = Math.min(w, h) * 0.35;
         var toRad = Math.PI / 180;
 
         ctx.clearRect(0, 0, w, h);
@@ -87,9 +87,9 @@ Item {
 
         // Temperature label
         ctx.font = Math.round(radius * 0.22) + "px sans-serif";
-        ctx.fillStyle = "#888888";
+        ctx.fillStyle = "#cccccc";
         ctx.textAlign = "center";
-        ctx.fillText("TEMP", cx, cy - radius * 0.15);
+        ctx.fillText("TEMP", cx, cy - radius * 0.55);
     }
 
     // Overheat warning
