@@ -32,7 +32,7 @@ Qt5/QML automotive instrument cluster that reads vehicle data from a CAN bus via
  │  CANable USB-to-CAN Adapter                                             │
  │  (gs_usb driver → socketcan → can0)                                     │
  └──────────────────────────┬──────────────────────────────────────────────┘
-                            │ /dev/can0 (or vcan0)
+                            │ can0 (socketcan network interface)
  ┌──────────────────────────┴──────────────────────────────────────────────┐
  │  Raspberry Pi 4                                                         │
  │                                                                         │
@@ -229,7 +229,10 @@ qt-cluster-demo [OPTIONS]
 ### With real OBD2 hardware (e.g., OBD Simulator + CANable)
 
 ```bash
-# Ensure can0 is configured (done by can0-setup.service at boot)
+# Ensure can0 is configured
+# On the pi4-touch-demo target image, can0-setup.service (from
+# board/pi4-touch-demo/fs-overlay) does this automatically at boot.
+# On other targets, configure manually:
 ip link set can0 type can bitrate 500000
 ip link set can0 up
 
@@ -240,7 +243,8 @@ qt-cluster-demo --can can0
 ### With car-can-emulator on virtual CAN
 
 ```bash
-# vcan0 is auto-created at boot, car-can-emulator runs on it by default
+# On the pi4-touch-demo target image, vcan0 is auto-created at boot
+# and car-can-emulator runs on it by default (see board/pi4-touch-demo/fs-overlay)
 qt-cluster-demo --can vcan0
 ```
 
@@ -343,7 +347,7 @@ kill $(pidof disp-can-ctrl) $(pidof car-can-emulator) 2>/dev/null
 |---------|-------|-----|
 | `module "QtQuick.Window" is not installed` | Missing QML runtime modules on host | `apt install qml-module-qtquick-window2 qml-module-qtquick2` |
 | "CAN: --" stays grey, no gauge movement | CAN interface not up, or no ECU responding | Check `ip link show can0`, verify bitrate, run `candump can0` |
-| `can0` not visible in `ifconfig` | CANable USB adapter not plugged in or driver not loaded | Plug in adapter, check `dmesg` for `gs_usb` |
+| `can0` not visible in `ip link` | CANable USB adapter not plugged in or driver not loaded | Plug in adapter, check `dmesg` for `gs_usb` |
 | Gauges stuck, CAN goes to ERROR-PASSIVE | Another service (disp-can-ctrl, car-can-emulator) using `can0` | `kill $(pidof disp-can-ctrl) $(pidof car-can-emulator)` |
 | Gauges stuck, ERROR-PASSIVE, no other services | Missing CAN bus termination (120 ohm) | Enable termination jumper on CANable or add 120R resistor |
 | App falls back to demo mode unexpectedly | CAN socket open failed | Check interface name matches `--can` argument |
