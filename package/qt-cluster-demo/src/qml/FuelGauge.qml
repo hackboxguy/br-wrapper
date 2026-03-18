@@ -87,14 +87,14 @@ Item {
         ctx.font = Math.round(radius * 0.22) + "px sans-serif";
         ctx.fillStyle = "#888888";
         ctx.textAlign = "center";
-        ctx.fillText("FUEL", cx, cy + radius * 0.55);
+        ctx.fillText("FUEL", cx, cy - radius * 0.15);
     }
 
     // Low fuel warning blink
     Rectangle {
         visible: root.level < 15
         anchors.horizontalCenter: parent.horizontalCenter
-        y: parent.height * 0.82
+        y: parent.height * 0.90
         width: parent.width * 0.5
         height: parent.height * 0.1
         radius: height / 2
