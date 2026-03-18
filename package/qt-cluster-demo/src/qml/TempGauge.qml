@@ -89,14 +89,14 @@ Item {
         ctx.font = Math.round(radius * 0.22) + "px sans-serif";
         ctx.fillStyle = "#cccccc";
         ctx.textAlign = "center";
-        ctx.fillText("TEMP", cx, cy - radius * 0.55);
+        ctx.fillText("TEMP", cx, cy + radius * 0.20);
     }
 
     // Overheat warning
     Rectangle {
         visible: root.temperature > 110
         anchors.horizontalCenter: parent.horizontalCenter
-        y: parent.height * 0.90
+        y: parent.height * 0.75
         width: parent.width * 0.5
         height: parent.height * 0.1
         radius: height / 2
