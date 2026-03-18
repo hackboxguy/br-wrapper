@@ -23,38 +23,38 @@ Qt5/QML automotive instrument cluster that reads vehicle data from a CAN bus via
 
 ```
  ┌─────────────────────────────────────────────────────────────────────────┐
- │  OBD2 Source                                                           │
- │  (Real vehicle / OBD Simulator / car-can-emulator)                     │
+ │  OBD2 Source                                                            │
+ │  (Real vehicle / OBD Simulator / car-can-emulator)                      │
  └──────────────────────────┬──────────────────────────────────────────────┘
                             │ CAN Bus (500 kbps)
                             │ ISO 15765-4, 11-bit IDs
  ┌──────────────────────────┴──────────────────────────────────────────────┐
- │  CANable USB-to-CAN Adapter                                            │
- │  (gs_usb driver → socketcan → can0)                                    │
+ │  CANable USB-to-CAN Adapter                                             │
+ │  (gs_usb driver → socketcan → can0)                                     │
  └──────────────────────────┬──────────────────────────────────────────────┘
                             │ /dev/can0 (or vcan0)
  ┌──────────────────────────┴──────────────────────────────────────────────┐
- │  Raspberry Pi 4                                                        │
- │                                                                        │
- │  ┌─────────────────────────────────────────────────────────────────┐   │
- │  │  qt-cluster-demo                                                │   │
- │  │                                                                 │   │
- │  │  ┌──────────────────┐     ┌──────────────────┐                  │   │
- │  │  │   CanReader       │     │  DemoSimulator    │                 │   │
- │  │  │   (QThread)       │     │  (QTimer, 50ms)   │                 │   │
- │  │  │                   │     │                    │                 │   │
- │  │  │ PF_CAN/SOCK_RAW  │     │ 12-phase drive    │                 │   │
- │  │  │ CAN_RAW_FILTER:  │     │ cycle with         │                 │   │
- │  │  │  0x7E8 + 0x420   │     │ telltale events    │                 │   │
- │  │  │                   │     │                    │                 │   │
- │  │  │ TX: 0x7DF OBD2   │     │ (activated when    │                 │   │
- │  │  │ RX: 0x7E8 resp   │     │  --demo flag or    │                 │   │
- │  │  │ RX: 0x420 tellt  │     │  CAN open fails)   │                 │   │
- │  │  └────────┬─────────┘     └─────────┬──────────┘                 │   │
- │  │           │ Qt signals               │ Qt signals                │   │
- │  │           │ (cross-thread,           │ (same signals:            │   │
- │  │           │  auto-queued)            │  speedChanged, etc.)      │   │
- │  │           └───────────┬──────────────┘                           │   │
+ │  Raspberry Pi 4                                                         │
+ │                                                                         │
+ │  ┌──────────────────────────────────────────────────────────────────┐   │
+ │  │  qt-cluster-demo                                                 │   │
+ │  │                                                                  │   │
+ │  │  ┌──────────────────┐     ┌──────────────────┐                   │   │
+ │  │  │   CanReader      │     │  DemoSimulator   │                   │   │
+ │  │  │   (QThread)      │     │  (QTimer, 50ms)  │                   │   │
+ │  │  │                  │     │                  │                   │   │
+ │  │  │ PF_CAN/SOCK_RAW  │     │ 12-phase drive   │                   │   │
+ │  │  │ CAN_RAW_FILTER:  │     │ cycle with       │                   │   │
+ │  │  │  0x7E8 + 0x420   │     │ telltale events  │                   │   │
+ │  │  │                  │     │                  │                   │   │
+ │  │  │ TX: 0x7DF OBD2   │     │ (activated when  │                   │   │
+ │  │  │ RX: 0x7E8 resp   │     │  --demo flag or  │                   │   │
+ │  │  │ RX: 0x420 tellt  │     │  CAN open fails) │                   │   │
+ │  │  └────────┬─────────┘     └─────────┬────────┘                   │   │
+ │  │           │ Qt signals              │ Qt signals                 │   │
+ │  │           │ (cross-thread,          │ (same signals:             │   │
+ │  │           │  auto-queued)           │  speedChanged, etc.)       │   │
+ │  │           └───────────┬─────────────┘                            │   │
  │  │                       ▼                                          │   │
  │  │           ┌──────────────────────┐                               │   │
  │  │           │    ClusterModel      │                               │   │
@@ -84,16 +84,16 @@ Qt5/QML automotive instrument cluster that reads vehicle data from a CAN bus via
  │  │           │  │ ┌─────────────────────────────────────┐ │  │      │   │
  │  │           │  │ │ TelltaleRow (12 indicators, blink)  │ │  │      │   │
  │  │           │  │ └─────────────────────────────────────┘ │  │      │   │
- │  │           │  │ ┌───────────┐ ┌────────┐ ┌───────────┐ │  │      │   │
- │  │           │  │ │Tachometer │ │  Fuel  │ │Speedometer│ │  │      │   │
- │  │           │  │ │ 0-8000RPM │ │ Gauge  │ │ 0-260km/h │ │  │      │   │
- │  │           │  │ │ (Canvas)  │ │(Canvas)│ │ (Canvas)  │ │  │      │   │
- │  │           │  │ │           │ ├────────┤ │           │ │  │      │   │
- │  │           │  │ │  Needle:  │ │  Temp  │ │  Needle:  │ │  │      │   │
- │  │           │  │ │  Canvas + │ │ Gauge  │ │  Canvas + │ │  │      │   │
- │  │           │  │ │  Smoothed │ │(Canvas)│ │  Smoothed │ │  │      │   │
- │  │           │  │ │  Anim     │ │        │ │  Anim     │ │  │      │   │
- │  │           │  │ └───────────┘ └────────┘ └───────────┘ │  │      │   │
+ │  │           │  │ ┌───────────┐ ┌────────┐ ┌───────────┐  │  │      │   │
+ │  │           │  │ │Tachometer │ │  Fuel  │ │Speedometer│  │  │      │   │
+ │  │           │  │ │ 0-8000RPM │ │ Gauge  │ │ 0-260km/h │  │  │      │   │
+ │  │           │  │ │ (Canvas)  │ │(Canvas)│ │ (Canvas)  │  │  │      │   │
+ │  │           │  │ │           │ ├────────┤ │           │  │  │      │   │
+ │  │           │  │ │  Needle:  │ │  Temp  │ │  Needle:  │  │  │      │   │
+ │  │           │  │ │  Canvas + │ │ Gauge  │ │  Canvas + │  │  │      │   │
+ │  │           │  │ │  Smoothed │ │(Canvas)│ │  Smoothed │  │  │      │   │
+ │  │           │  │ │  Anim     │ │        │ │  Anim     │  │  │      │   │
+ │  │           │  │ └───────────┘ └────────┘ └───────────┘  │  │      │   │
  │  │           │  │ ┌─────────────────────────────────────┐ │  │      │   │
  │  │           │  │ │ InfoBar (voltage, CAN status)       │ │  │      │   │
  │  │           │  │ └─────────────────────────────────────┘ │  │      │   │
@@ -102,16 +102,16 @@ Qt5/QML automotive instrument cluster that reads vehicle data from a CAN bus via
  │  │           │  │ └─────────────────────────────────────┘ │  │      │   │
  │  │           │  └─────────────────────────────────────────┘  │      │   │
  │  │           └───────────────────────────────────────────────┘      │   │
- │  └─────────────────────────────────────────────────────────────────┘   │
- │                              │                                         │
- │                              ▼                                         │
- │                    ┌───────────────────┐                               │
- │                    │  DRM/KMS (eglfs)  │                               │
- │                    │  OpenGL ES 2.0    │                               │
- │                    │  GPU-accelerated  │                               │
- │                    └─────────┬─────────┘                               │
- │                              │ HDMI                                    │
- └──────────────────────────────┼─────────────────────────────────────────┘
+ │  └──────────────────────────────────────────────────────────────────┘   │
+ │                              │                                          │
+ │                              ▼                                          │
+ │                    ┌───────────────────┐                                │
+ │                    │  DRM/KMS (eglfs)  │                                │
+ │                    │  OpenGL ES 2.0    │                                │
+ │                    │  GPU-accelerated  │                                │
+ │                    └─────────┬─────────┘                                │
+ │                              │ HDMI                                     │
+ └──────────────────────────────┼──────────────────────────────────────────┘
                                 ▼
                     ┌───────────────────────┐
                     │  12.3" Display        │
@@ -154,32 +154,32 @@ Key rendering details:
 
 ```
                        ┌──────────────────────────────┐
-                       │        Startup Sequence       │
-                       │                               │
-                       │  1. Parse CLI (--can/--demo)  │
-                       │  2. Open CAN socket or        │
-                       │     fallback to demo mode     │
-                       │  3. Load QML scene             │
-                       │  4. Run diagnostic sweep       │
-                       │     (all telltales ON,         │
-                       │      needles to max → back)   │
-                       │  5. Start data source          │
+                       │        Startup Sequence      │
+                       │                              │
+                       │  1. Parse CLI (--can/--demo) │
+                       │  2. Open CAN socket or       │
+                       │     fallback to demo mode    │
+                       │  3. Load QML scene           │
+                       │  4. Run diagnostic sweep     │
+                       │     (all telltales ON,       │
+                       │      needles to max → back)  │
+                       │  5. Start data source        │
                        └──────────────┬───────────────┘
                                       ▼
-    ┌─────────────────────────────────────────────────────────────┐
-    │                     Normal Operation                        │
-    │                                                             │
+    ┌──────────────────────────────────────────────────────────────┐
+    │                     Normal Operation                         │
+    │                                                              │
     │  CanReader thread          Main thread          Render thread│
-    │  ┌──────────────┐    ┌──────────────────┐   ┌─────────────┐│
-    │  │ send 0x7DF   │    │ ClusterModel     │   │ QML Scene   ││
-    │  │ read 0x7E8   │───▶│ setSpeed(v)      │──▶│ Graph       ││
-    │  │ read 0x420   │    │ setRpm(v)        │   │             ││
-    │  │ decode PIDs  │    │ emit *Changed()  │   │ Smoothed    ││
-    │  │ 50ms sleep   │    │                  │   │ Animation   ││
-    │  │ repeat       │    │ (no smoothing,   │   │ @60fps      ││
-    │  └──────────────┘    │  raw values)     │   └─────────────┘│
-    │                      └──────────────────┘                   │
-    └─────────────────────────────────────────────────────────────┘
+    │  ┌──────────────┐    ┌──────────────────┐   ┌─────────────┐  │
+    │  │ send 0x7DF   │    │ ClusterModel     │   │ QML Scene   │  │
+    │  │ read 0x7E8   │───▶│ setSpeed(v)      │──▶│ Graph       │  │
+    │  │ read 0x420   │    │ setRpm(v)        │   │             │  │
+    │  │ decode PIDs  │    │ emit *Changed()  │   │ Smoothed    │  │
+    │  │ 50ms sleep   │    │                  │   │ Animation   │  │
+    │  │ repeat       │    │ (no smoothing,   │   │ @60fps      │  │
+    │  └──────────────┘    │  raw values)     │   └─────────────┘  │
+    │                      └──────────────────┘                    │
+    └──────────────────────────────────────────────────────────────┘
 ```
 
 ### Component details
