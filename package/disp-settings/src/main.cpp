@@ -4,11 +4,35 @@
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QScreen>
+#include <QFile>
+#include <QTextStream>
 #include "config.h"
 #include "AlsDimmerController.h"
 #include "FpgaController.h"
 #include "TemperatureController.h"
 #include "TddiController.h"
+
+// Parse VERSION and BUILD_DATE from a key=value version file
+static void parseVersionFile(const QString &path, QString &version, QString &buildDate)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qWarning() << "disp-settings: Cannot open version file:" << path;
+        version = "N/A";
+        buildDate = "N/A";
+        return;
+    }
+    QTextStream in(&file);
+    while (!in.atEnd()) {
+        QString line = in.readLine().trimmed();
+        if (line.startsWith("VERSION="))
+            version = line.mid(8);
+        else if (line.startsWith("BUILD_DATE="))
+            buildDate = line.mid(11);
+    }
+    if (version.isEmpty()) version = "N/A";
+    if (buildDate.isEmpty()) buildDate = "N/A";
+}
 
 int main(int argc, char *argv[])
 {
@@ -70,11 +94,20 @@ int main(int argc, char *argv[])
     TddiController tddiController;
     tddiController.start();
 
+    // Parse OS and application version files
+    QString osVersion, osBuildDate, incVersion, incBuildDate;
+    parseVersionFile("/etc/base-version.txt", osVersion, osBuildDate);
+    parseVersionFile("/etc/incremental-version.txt", incVersion, incBuildDate);
+
     // Setup QML engine
     QQmlApplicationEngine engine;
 
     // Expose application info and controllers to QML
     engine.rootContext()->setContextProperty("appVersion", app.applicationVersion());
+    engine.rootContext()->setContextProperty("osVersion", osVersion);
+    engine.rootContext()->setContextProperty("osBuildDate", osBuildDate);
+    engine.rootContext()->setContextProperty("swVersion", incVersion);
+    engine.rootContext()->setContextProperty("swBuildDate", incBuildDate);
     engine.rootContext()->setContextProperty("alsDimmer", &alsDimmerController);
     engine.rootContext()->setContextProperty("fpga", &fpgaController);
     engine.rootContext()->setContextProperty("tempSensors", &temperatureController);

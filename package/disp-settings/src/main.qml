@@ -625,6 +625,33 @@ Window {
                     }
                 }
 
+                // Version Info Row (compact for wide layout)
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: Math.max(36, Screen.height * 0.035)
+                    color: "#0a2a4a"
+                    radius: 8
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        spacing: Screen.width * 0.01
+
+                        Text { text: "OS:"; font.pixelSize: Math.max(12, Screen.height * 0.018); font.bold: true; color: "#888888" }
+                        Text { text: osVersion; font.pixelSize: Math.max(12, Screen.height * 0.018); color: "#ffffff" }
+                        Text { text: "(" + osBuildDate + ")"; font.pixelSize: Math.max(10, Screen.height * 0.015); color: "#666666" }
+
+                        Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 6; Layout.bottomMargin: 6; color: "#333333" }
+
+                        Text { text: "App:"; font.pixelSize: Math.max(12, Screen.height * 0.018); font.bold: true; color: "#888888" }
+                        Text { text: swVersion; font.pixelSize: Math.max(12, Screen.height * 0.018); color: "#ffffff" }
+                        Text { text: "(" + swBuildDate + ")"; font.pixelSize: Math.max(10, Screen.height * 0.015); color: "#666666" }
+
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+
                 // TDDI Info Section
                 Rectangle {
                     Layout.fillWidth: true
@@ -1257,6 +1284,33 @@ Window {
                             }
                         }
                     }
+                }
+            }
+
+            // Version Info Row
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: Math.max(44, Screen.height * 0.04)
+                color: "#0a2a4a"
+                radius: 8
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 15
+                    anchors.rightMargin: 15
+                    spacing: Screen.width * 0.012
+
+                    Text { text: "OS:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888" }
+                    Text { text: osVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff" }
+                    Text { text: "(" + osBuildDate + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666" }
+
+                    Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 8; Layout.bottomMargin: 8; color: "#333333" }
+
+                    Text { text: "App:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888" }
+                    Text { text: swVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff" }
+                    Text { text: "(" + swBuildDate + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666" }
+
+                    Item { Layout.fillWidth: true }
                 }
             }
 
