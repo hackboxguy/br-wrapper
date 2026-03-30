@@ -629,7 +629,7 @@ Window {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: Math.max(36, Screen.height * 0.035)
-                    color: "#0a2a4a"
+                    color: "#0f3460"
                     radius: 8
 
                     RowLayout {
@@ -1291,7 +1291,7 @@ Window {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.preferredHeight: Math.max(44, Screen.height * 0.04)
-                color: "#0a2a4a"
+                color: "#0f3460"
                 radius: 8
 
                 RowLayout {
