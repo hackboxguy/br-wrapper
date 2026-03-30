@@ -561,7 +561,7 @@ Window {
                 // FPGA Settings Section (compact for wide layout)
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 90
+                    Layout.preferredHeight: 50
                     color: "#0f3460"
                     radius: 10
 
@@ -1111,7 +1111,7 @@ Window {
             // FPGA Settings Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 200
+                Layout.preferredHeight: 150
                 color: "#0f3460"
                 radius: 10
 
