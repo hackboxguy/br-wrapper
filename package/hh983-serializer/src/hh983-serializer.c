@@ -677,14 +677,13 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	data->mode = config_mode;
 	i2c_set_clientdata(client, data);
 
-	/* Reset the video link pipeline (digital reset + HPD toggle).
-	 * Skip for mode 0 (984): the old driver never did this at probe,
-	 * and the HPD toggle disrupts the DP link that vc4-kms-v3d has
-	 * already established, causing a black screen.  Recovery is only
-	 * needed for mode 1 (988) HDMI-switch scenarios.
+	/* Skip probe-time recovery for both modes.
+	 * The HPD toggle + digital reset in hh983_recover_link() tears down
+	 * the DP link that vc4-kms-v3d has already established during boot,
+	 * causing the display to go black seconds after boot messages appear.
+	 * Recovery should only be triggered by the link monitor on actual
+	 * video loss events, not unconditionally at probe.
 	 */
-	if (data->mode == 1)
-		hh983_recover_link(data);
 
 	switch (data->mode) {
 	case 0:
