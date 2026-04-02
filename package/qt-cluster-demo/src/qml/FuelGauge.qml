@@ -3,6 +3,7 @@ import QtQuick 2.12
 Item {
     id: root
     property int level: cluster.fuelLevel
+    property bool hiRes: (Screen.width * Screen.height) >= (1920 * 1080)
 
     property real _smoothLevel: level
     Behavior on _smoothLevel {
@@ -12,6 +13,7 @@ Item {
     Canvas {
         id: canvas
         anchors.fill: parent
+        renderStrategy: root.hiRes ? Canvas.Threaded : Canvas.Immediate
         onPaint: draw()
 
         Component.onCompleted: requestPaint()

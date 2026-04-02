@@ -22,6 +22,8 @@ Item {
     // Display
     property string label: ""
     property bool showDigitalValue: false
+    // Performance: skip expensive effects on high-res displays
+    property bool hiRes: (Screen.width * Screen.height) >= (1920 * 1080)
     property string digitalFormat: "%1"
     property color dialColor: "#0a0a0a"
     property color tickColor: "#ffffff"
@@ -50,6 +52,7 @@ Item {
     Canvas {
         id: dialCanvas
         anchors.fill: parent
+        renderStrategy: root.hiRes ? Canvas.Threaded : Canvas.Immediate
         onPaint: drawDial()
 
         Component.onCompleted: requestPaint()
@@ -172,6 +175,7 @@ Item {
         width: parent.width
         height: parent.height
         anchors.centerIn: parent
+        renderStrategy: root.hiRes ? Canvas.Threaded : Canvas.Immediate
 
         property real angle: root.smoothedRotation
 
@@ -201,11 +205,13 @@ Item {
             var tipHalf = radius * 0.010;      // half-width at tip (sharp point)
             var tailHalf = radius * 0.032;     // half-width at tail end
 
-            // Shadow/glow under needle
-            ctx.shadowColor = "rgba(255, 80, 0, 0.3)";
-            ctx.shadowBlur = radius * 0.04;
-            ctx.shadowOffsetX = 0;
-            ctx.shadowOffsetY = 0;
+            // Shadow/glow under needle (skip on hi-res for performance)
+            if (!root.hiRes) {
+                ctx.shadowColor = "rgba(255, 80, 0, 0.3)";
+                ctx.shadowBlur = radius * 0.04;
+                ctx.shadowOffsetX = 0;
+                ctx.shadowOffsetY = 0;
+            }
 
             // Draw tapered needle shape
             // Tip is upward (-Y), tail is downward (+Y) in rotated coords
@@ -243,14 +249,18 @@ Item {
             // Outer chrome ring
             ctx.beginPath();
             ctx.arc(cx, cy, radius * 0.13, 0, 2 * Math.PI);
-            var hubGrad = ctx.createRadialGradient(
-                cx - radius * 0.03, cy - radius * 0.03, 0,
-                cx, cy, radius * 0.13);
-            hubGrad.addColorStop(0.0, "#eeeeee");
-            hubGrad.addColorStop(0.5, "#bbbbbb");
-            hubGrad.addColorStop(0.8, "#888888");
-            hubGrad.addColorStop(1.0, "#555555");
-            ctx.fillStyle = hubGrad;
+            if (root.hiRes) {
+                ctx.fillStyle = "#999999";
+            } else {
+                var hubGrad = ctx.createRadialGradient(
+                    cx - radius * 0.03, cy - radius * 0.03, 0,
+                    cx, cy, radius * 0.13);
+                hubGrad.addColorStop(0.0, "#eeeeee");
+                hubGrad.addColorStop(0.5, "#bbbbbb");
+                hubGrad.addColorStop(0.8, "#888888");
+                hubGrad.addColorStop(1.0, "#555555");
+                ctx.fillStyle = hubGrad;
+            }
             ctx.fill();
 
             // Dark gap ring
@@ -262,13 +272,17 @@ Item {
             // Inner bright cap
             ctx.beginPath();
             ctx.arc(cx, cy, radius * 0.065, 0, 2 * Math.PI);
-            var capGrad = ctx.createRadialGradient(
-                cx - radius * 0.015, cy - radius * 0.015, 0,
-                cx, cy, radius * 0.065);
-            capGrad.addColorStop(0.0, "#cccccc");
-            capGrad.addColorStop(0.7, "#888888");
-            capGrad.addColorStop(1.0, "#555555");
-            ctx.fillStyle = capGrad;
+            if (root.hiRes) {
+                ctx.fillStyle = "#999999";
+            } else {
+                var capGrad = ctx.createRadialGradient(
+                    cx - radius * 0.015, cy - radius * 0.015, 0,
+                    cx, cy, radius * 0.065);
+                capGrad.addColorStop(0.0, "#cccccc");
+                capGrad.addColorStop(0.7, "#888888");
+                capGrad.addColorStop(1.0, "#555555");
+                ctx.fillStyle = capGrad;
+            }
             ctx.fill();
         }
     }

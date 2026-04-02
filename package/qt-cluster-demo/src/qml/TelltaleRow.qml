@@ -80,11 +80,16 @@ Item {
 
                 Text {
                     anchors.centerIn: parent
+                    width: parent.width - 6
                     text: modelData.label
                     color: parent.isOn ? modelData.color : "#444444"
-                    font.pixelSize: modelData.blink ? parent.height * 0.65 : parent.height * 0.45
+                    font.pixelSize: modelData.blink ? parent.height * 0.65
+                                    : Math.min(parent.height * 0.45, parent.width * 0.38)
                     font.bold: true
                     font.weight: parent.isOn ? Font.ExtraBold : Font.Normal
+                    horizontalAlignment: Text.AlignHCenter
+                    fontSizeMode: Text.HorizontalFit
+                    minimumPixelSize: 8
                 }
             }
         }

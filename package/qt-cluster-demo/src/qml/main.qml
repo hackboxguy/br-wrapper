@@ -14,8 +14,12 @@ Window {
     property real topBarHeight: height * 0.12
     property real bottomBarHeight: height * 0.06
     property real gaugeAreaHeight: height - topBarHeight - bottomBarHeight
-    property real gaugeDiameter: gaugeAreaHeight * 1.0
+    // Cap dial diameter so center column keeps at least 15% of screen width
+    property real gaugeDiameter: Math.min(gaugeAreaHeight, (width - width * 0.15) / 2)
     property real centerWidth: width - gaugeDiameter * 2
+
+    // Performance: detect high-res displays (fullHD or larger)
+    property bool hiResDisplay: (Screen.width * Screen.height) >= (1920 * 1080)
 
     // Telltale row (top)
     TelltaleRow {
