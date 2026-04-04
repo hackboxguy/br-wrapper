@@ -51,6 +51,10 @@ add_definitions(-DQT_NO_DEBUG_OUTPUT)
 # Installation rules
 include(GNUInstallDirs)
 
+# Launcher config file selection (default: qt-demo-launcher.json for buildroot)
+# Use -DLAUNCHER_CONFIG=qt-demo-launcher-pios.json for PiOS/SDM builds
+set(LAUNCHER_CONFIG "qt-demo-launcher.json" CACHE STRING "Launcher JSON config file to install")
+
 # Install binary
 install(TARGETS qt-demo-launcher
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -61,12 +65,15 @@ install(TARGETS qt-demo-launcher
 set(DATA_DIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/qt-apps")
 
 install(FILES
-    src/qt-demo-launcher.json
+    src/${LAUNCHER_CONFIG}
     DESTINATION ${DATA_DIR}
+    RENAME qt-demo-launcher.json
 )
 
 install(PROGRAMS
     src/kodi-launcher.sh
+    src/kodi-slideshow.sh
+    src/kodi-video.sh
     update-config-paths.sh
     update-service-paths.sh
     DESTINATION ${DATA_DIR}
@@ -158,5 +165,6 @@ if(AUTO_UPDATE_CONFIG_PATHS)
 endif()
 
 message(STATUS "qt-demo-launcher: configured")
+message(STATUS "  Launcher config: ${LAUNCHER_CONFIG}")
 message(STATUS "  Install binary to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")
 message(STATUS "  Install configs to: ${DATA_DIR}")
