@@ -7,6 +7,9 @@ set(SCRIPT_INSTALL_DIR "${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")
 # Install the initialization script
 install(PROGRAMS
     init-hh983-fpdlink.sh
+    scripts/re-init-983-pipeline.sh
+    scripts/fpdlink-tool.sh
+    scripts/toggle-pi-hdmi.sh
     DESTINATION ${SCRIPT_INSTALL_DIR}
 )
 
