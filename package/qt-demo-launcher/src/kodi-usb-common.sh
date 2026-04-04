@@ -79,20 +79,29 @@ _get_usb_mount() {
 }
 
 # Detect USB media path for a given subdirectory (e.g., "Pictures" or "Videos")
-# Returns the full path if found, exits with 1 if not
+# Returns the full path if found, exits with 1 if not.
+# Retries up to 5 seconds to allow udisks2 automount to complete after boot.
 detect_usb_media_path() {
     local subdir="$1"
     local usb_device
+    local attempt
 
     usb_device=$(_detect_usb_device) || return 1
 
-    local mount_point
-    mount_point=$(_get_usb_mount "$usb_device") || return 1
+    # USB device exists — wait for it to be mounted (udisks2 may still be
+    # processing after boot). Retry up to 5 times with 1-second intervals.
+    for attempt in 1 2 3 4 5; do
+        local mount_point
+        mount_point=$(_get_usb_mount "$usb_device") || { sleep 1; continue; }
 
-    if [ -d "$mount_point/$subdir" ]; then
-        echo "$mount_point/$subdir"
-        return 0
-    fi
+        if [ -d "$mount_point/$subdir" ]; then
+            echo "$mount_point/$subdir"
+            return 0
+        fi
+
+        # Mounted but no matching subdir — no point retrying
+        return 1
+    done
 
     return 1
 }
