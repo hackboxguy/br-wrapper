@@ -74,6 +74,7 @@ install(PROGRAMS
     src/kodi-launcher.sh
     src/kodi-slideshow.sh
     src/kodi-video.sh
+    src/kodi-usb-common.sh
     update-config-paths.sh
     update-service-paths.sh
     DESTINATION ${DATA_DIR}
