@@ -867,7 +867,7 @@ private:
     void setupUI()
     {
         setWindowTitle("Touch App Launcher");
-        setStyleSheet("QMainWindow { background-color: #1e1e1e; }");
+        setStyleSheet("QMainWindow { background-color: #000000; }");
 
         QWidget *centralWidget = new QWidget;
         setCentralWidget(centralWidget);
