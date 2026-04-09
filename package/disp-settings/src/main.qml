@@ -974,7 +974,7 @@ Window {
             // Temperature Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 150
+                Layout.preferredHeight: mcu.available ? 190 : 150
                 color: "#0f3460"
                 radius: 10
 
