@@ -159,15 +159,15 @@ void FpgaController::parseBoardInfo(const uint8_t *data)
 {
     // FPGA ID register format:
     // byte0 = reserved
-    // byte1 = resolution code (0=1920x720, 1=1920x1080, 2=2560x1440)
+    // byte1 = resolution code (0=1920x1080, 1=1920x720, 2=2560x1440)
     // byte2 high nibble = board type
     // byte2 low nibble + byte3 = display size BCD (0x146 = 14.6")
 
     // Display resolution
     QString displayResolution;
     switch (data[1]) {
-        case 0: displayResolution = "1920x720"; break;
-        case 1: displayResolution = "1920x1080"; break;
+        case 0: displayResolution = "1920x1080"; break;
+        case 1: displayResolution = "1920x720"; break;
         case 2: displayResolution = "2560x1440"; break;
         default: displayResolution = QString("Unknown (%1)").arg(data[1]);
     }

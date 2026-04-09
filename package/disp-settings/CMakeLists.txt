@@ -21,6 +21,7 @@ set(SOURCES
     src/FpgaController.cpp
     src/TemperatureController.cpp
     src/TddiController.cpp
+    src/McuController.cpp
 )
 
 set(HEADERS
@@ -29,6 +30,7 @@ set(HEADERS
     src/FpgaController.h
     src/TemperatureController.h
     src/TddiController.h
+    src/McuController.h
 )
 
 set(RESOURCES

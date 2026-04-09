@@ -11,6 +11,7 @@
 #include "FpgaController.h"
 #include "TemperatureController.h"
 #include "TddiController.h"
+#include "McuController.h"
 
 // Parse VERSION and BUILD_DATE from a key=value version file
 static void parseVersionFile(const QString &path, QString &version, QString &buildDate)
@@ -94,6 +95,10 @@ int main(int argc, char *argv[])
     TddiController tddiController;
     tddiController.start();
 
+    McuController mcuController;
+    mcuController.setI2cBus(parser.value(i2cOption));
+    mcuController.start();
+
     // Parse OS and application version files
     QString osVersion, osBuildDate, incVersion, incBuildDate;
     parseVersionFile("/etc/base-version.txt", osVersion, osBuildDate);
@@ -112,6 +117,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("fpga", &fpgaController);
     engine.rootContext()->setContextProperty("tempSensors", &temperatureController);
     engine.rootContext()->setContextProperty("tddi", &tddiController);
+    engine.rootContext()->setContextProperty("mcu", &mcuController);
 
     // Load main QML file
     const QUrl url(QStringLiteral("qrc:/main.qml"));

@@ -482,6 +482,52 @@ Window {
 
                             Item { Layout.fillWidth: true }
                         }
+
+                        // Backlight Temperature Row (MCU 0x66)
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 15
+                            visible: mcu.available
+
+                            Text {
+                                text: "Backlight:"
+                                font.pixelSize: 24
+                                color: "#888888"
+                                Layout.preferredWidth: 110
+                            }
+
+                            Text {
+                                text: mcu.backlightTempValid ? mcu.backlightTemp.toFixed(1) + " °C" : "N/A"
+                                font.pixelSize: 24
+                                font.bold: true
+                                color: mcu.backlightTempValid ? "#ffffff" : "#666666"
+                                Layout.preferredWidth: 100
+                            }
+
+                            Rectangle {
+                                width: 14
+                                height: 14
+                                radius: 7
+                                color: mcu.backlightTempValid ? "#27ae60" : "#555555"
+
+                                ToolTip.visible: blTempMouseAreaWide.containsMouse
+                                ToolTip.text: mcu.backlightTempValid ? "MCU backlight NTC" : "MCU not available"
+
+                                MouseArea {
+                                    id: blTempMouseAreaWide
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                }
+                            }
+
+                            Text {
+                                text: "(MCU NTC)"
+                                font.pixelSize: 16
+                                color: "#555555"
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
                     }
                 }
             }
@@ -647,6 +693,12 @@ Window {
                         Text { text: "App:"; font.pixelSize: Math.max(12, Screen.height * 0.018); font.bold: true; color: "#888888" }
                         Text { text: swVersion; font.pixelSize: Math.max(12, Screen.height * 0.018); color: "#ffffff" }
                         Text { text: "(" + swBuildDate + ")"; font.pixelSize: Math.max(10, Screen.height * 0.015); color: "#666666" }
+
+                        Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 6; Layout.bottomMargin: 6; color: "#333333"; visible: mcu.available }
+
+                        Text { text: "IOC:"; font.pixelSize: Math.max(12, Screen.height * 0.018); font.bold: true; color: "#888888"; visible: mcu.available }
+                        Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(12, Screen.height * 0.018); color: "#ffffff"; visible: mcu.available }
+                        Text { text: "(" + mcu.buildDateTime + ")"; font.pixelSize: Math.max(10, Screen.height * 0.015); color: "#666666"; visible: mcu.available }
 
                         Item { Layout.fillWidth: true }
                     }
@@ -1035,6 +1087,52 @@ Window {
 
                         Item { Layout.fillWidth: true }
                     }
+
+                    // Backlight Temperature Row (MCU 0x66)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 15
+                        visible: mcu.available
+
+                        Text {
+                            text: "Backlight:"
+                            font.pixelSize: 24
+                            color: "#888888"
+                            Layout.preferredWidth: 110
+                        }
+
+                        Text {
+                            text: mcu.backlightTempValid ? mcu.backlightTemp.toFixed(1) + " °C" : "N/A"
+                            font.pixelSize: 24
+                            font.bold: true
+                            color: mcu.backlightTempValid ? "#ffffff" : "#666666"
+                            Layout.preferredWidth: 100
+                        }
+
+                        Rectangle {
+                            width: 14
+                            height: 14
+                            radius: 7
+                            color: mcu.backlightTempValid ? "#27ae60" : "#555555"
+
+                            ToolTip.visible: blTempMouseArea.containsMouse
+                            ToolTip.text: mcu.backlightTempValid ? "MCU backlight NTC" : "MCU not available"
+
+                            MouseArea {
+                                id: blTempMouseArea
+                                anchors.fill: parent
+                                hoverEnabled: true
+                            }
+                        }
+
+                        Text {
+                            text: "(MCU NTC)"
+                            font.pixelSize: 16
+                            color: "#555555"
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
                 }
             }
 
@@ -1309,6 +1407,12 @@ Window {
                     Text { text: "App:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888" }
                     Text { text: swVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff" }
                     Text { text: "(" + swBuildDate + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666" }
+
+                    Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 8; Layout.bottomMargin: 8; color: "#333333"; visible: mcu.available }
+
+                    Text { text: "IOC:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888"; visible: mcu.available }
+                    Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff"; visible: mcu.available }
+                    Text { text: "(" + mcu.buildDateTime + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"; visible: mcu.available }
 
                     Item { Layout.fillWidth: true }
                 }
