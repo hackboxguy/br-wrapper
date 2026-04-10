@@ -686,13 +686,13 @@ Window {
 
                         Text { text: "OS:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
                         Text { text: osVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
-                        Text { text: "(" + osBuildDate + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
+                        Text { text: "(" + osBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
 
                         Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 10; Layout.bottomMargin: 10; color: "#333333" }
 
                         Text { text: "App:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
                         Text { text: swVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
-                        Text { text: "(" + swBuildDate + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
+                        Text { text: "(" + swBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
 
                         Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 10; Layout.bottomMargin: 10; color: "#333333"; visible: mcu.available }
 
