@@ -607,7 +607,7 @@ Window {
                 // FPGA Settings Section (compact for wide layout)
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 50
+                    Layout.preferredHeight: 75
                     color: "#0f3460"
                     radius: 10
 
@@ -674,7 +674,7 @@ Window {
                 // Version Info Row (compact for wide layout)
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(36, Screen.height * 0.035)
+                    Layout.preferredHeight: Math.max(65, Screen.height * 0.09)
                     color: "#0f3460"
                     radius: 8
 
@@ -684,21 +684,21 @@ Window {
                         anchors.rightMargin: 12
                         spacing: Screen.width * 0.01
 
-                        Text { text: "OS:"; font.pixelSize: Math.max(12, Screen.height * 0.018); font.bold: true; color: "#888888" }
-                        Text { text: osVersion; font.pixelSize: Math.max(12, Screen.height * 0.018); color: "#ffffff" }
-                        Text { text: "(" + osBuildDate + ")"; font.pixelSize: Math.max(10, Screen.height * 0.015); color: "#666666" }
+                        Text { text: "OS:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
+                        Text { text: osVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
+                        Text { text: "(" + osBuildDate + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
 
-                        Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 6; Layout.bottomMargin: 6; color: "#333333" }
+                        Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 10; Layout.bottomMargin: 10; color: "#333333" }
 
-                        Text { text: "App:"; font.pixelSize: Math.max(12, Screen.height * 0.018); font.bold: true; color: "#888888" }
-                        Text { text: swVersion; font.pixelSize: Math.max(12, Screen.height * 0.018); color: "#ffffff" }
-                        Text { text: "(" + swBuildDate + ")"; font.pixelSize: Math.max(10, Screen.height * 0.015); color: "#666666" }
+                        Text { text: "App:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
+                        Text { text: swVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
+                        Text { text: "(" + swBuildDate + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
 
-                        Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 6; Layout.bottomMargin: 6; color: "#333333"; visible: mcu.available }
+                        Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 10; Layout.bottomMargin: 10; color: "#333333"; visible: mcu.available }
 
-                        Text { text: "IOC:"; font.pixelSize: Math.max(12, Screen.height * 0.018); font.bold: true; color: "#888888"; visible: mcu.available }
-                        Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(12, Screen.height * 0.018); color: "#ffffff"; visible: mcu.available }
-                        Text { text: "(" + mcu.buildDateTime + ")"; font.pixelSize: Math.max(10, Screen.height * 0.015); color: "#666666"; visible: mcu.available }
+                        Text { text: "IOC:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888"; visible: mcu.available }
+                        Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff"; visible: mcu.available }
+                        Text { text: "(" + mcu.buildDateTime + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: mcu.available }
 
                         Item { Layout.fillWidth: true }
                     }
