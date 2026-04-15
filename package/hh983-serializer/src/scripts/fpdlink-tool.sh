@@ -196,6 +196,19 @@ recover_983_dp() {
     echo "DP link recovery complete"
 }
 
+# Recovery for deserializer (984/988) after PATGEN disable.
+# Empirically: writing PGCTL/PGCFG = 0x00 on disable corrupts downstream
+# eDP/OLDI color-depth pipeline; the device never re-locks to FPDLink video.
+# Restoring the device defaults (0x08) and pulsing the main-page digital
+# reset (reg 0x01 bit 0, self-clearing, preserves registers) re-latches
+# the output pipeline and brings back incoming FPDLink video.
+recover_deser_video() {
+    _addr=$1
+    echo "Recovering deserializer video path (digital reset)..."
+    i2c_write "$_addr" 0x01 0x01
+    sleep 0.5
+}
+
 # -----------------------------------------------
 # 983 Timings: VP0 Video Timing (Indirect Page 0x32)
 # -----------------------------------------------
@@ -491,12 +504,16 @@ cmd_pattern_set() {
     echo ""
 
     if [ "$PATTERN" = "off" ]; then
-        echo "Disabling pattern generator..."
-        ind_write8 "$_addr" "$_page" "$_pgctl" 0x00
-        echo "Restoring color depth to default..."
-        ind_write8 "$_addr" "$_page" "$_pgcfg" 0x00
+        echo "Disabling pattern generator (restoring defaults 0x08/0x08)..."
+        # Writing 0x00 here corrupts the downstream color-depth pipeline on
+        # 984 (eDP TX) and 988 (OLDI TX); the device shows BIST/garbage and
+        # never re-locks to FPDLink video. 0x08 matches the device defaults
+        # and the known-good stable state.
+        ind_write8 "$_addr" "$_page" "$_pgctl" 0x08
+        ind_write8 "$_addr" "$_page" "$_pgcfg" 0x08
+        recover_deser_video "$_addr"
         echo ""
-        echo "Pattern generator DISABLED"
+        echo "Pattern generator DISABLED — FPDLink video restored"
     else
         echo "Setting color depth to 24bpp..."
         ind_write8 "$_addr" "$_page" "$_pgcfg" 0x08
