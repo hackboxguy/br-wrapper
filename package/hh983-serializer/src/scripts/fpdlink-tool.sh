@@ -344,8 +344,13 @@ cmd_988_timings() {
 }
 
 # -----------------------------------------------
-# 984 Timings: FPD RX Link Layer (Indirect Page 0x48)
+# 984 Timings: DTG Measured Timing (Indirect Page 0x50)
 # -----------------------------------------------
+# 984 shares the DTG measured-timing layout with 988 (Page 0x50 offsets
+# 0x40-0x4F). The per-stream HACTIVE/VTOTAL registers on Page 0x48 are
+# override/configured fields and stay zero in a passthrough setup, so they
+# are reported only as secondary change-flag info.
+# GP_STATUS_1 bit 1 (SIG_DET) is reserved/unreliable on 984 and not shown.
 cmd_984_timings() {
     echo "=== DS90HH984 Deserializer - Video Timing ==="
     echo "I2C Bus: $I2C_BUS  Address: $ADDR_984  Stream: $STREAM"
@@ -357,47 +362,58 @@ cmd_984_timings() {
     s0=$((sts0)); s1=$((sts1))
     fpd4_lock="NO"; [ $((s0 & 0x01)) -ne 0 ] && fpd4_lock="YES"
     lock="NO"; [ $((s1 & 0x01)) -ne 0 ] && lock="YES"
-    sig_det="NO"; [ $((s1 & 0x02)) -ne 0 ] && sig_det="YES"
-    echo "Link Status: FPD4_LOCK=$fpd4_lock LOCK=$lock SIG_DET=$sig_det"
+    echo "Link Status: FPD4_LOCK=$fpd4_lock LOCK=$lock"
     echo ""
 
-    # Per-stream timing from Page_18 (write 0x48 to reg 0x40)
-    # Stream offsets: 0=0x00, 1=0x20, 2=0x40, 3=0x60, 4=0x80, 5=0xA0
+    # DTG control register (same layout as 988)
+    dtg_ctl=$(ind_read8 "$ADDR_984" 0x50 0x20)
+    dtg_ctl_val=$((dtg_ctl))
+    src_sel=$((dtg_ctl_val & 0x03))
+    case $src_sel in
+        0) src_desc="register values" ;;
+        1) src_desc="measured timing (with overrides)" ;;
+        2) src_desc="register values" ;;
+        3) src_desc="measured + main-link HACTIVE" ;;
+    esac
+    echo "DTG_CTL (0x50:0x20): $dtg_ctl  PG_DATA_SOURCE_SEL=$src_sel ($src_desc)"
+    echo ""
+
+    # Measured timing from Page 0x50 offsets 0x40-0x4F (15-bit BE)
+    echo "--- Measured Timing (Page 0x50, Port 0) ---"
+    h_total=$(ind_read15_be  "$ADDR_984" 0x50 0x40 0x41)
+    v_total=$(ind_read15_be  "$ADDR_984" 0x50 0x42 0x43)
+    h_active=$(ind_read15_be "$ADDR_984" 0x50 0x44 0x45)
+    v_active=$(ind_read15_be "$ADDR_984" 0x50 0x46 0x47)
+    h_start=$(ind_read15_be  "$ADDR_984" 0x50 0x48 0x49)
+    v_start=$(ind_read15_be  "$ADDR_984" 0x50 0x4a 0x4b)
+    h_sync=$(ind_read13_be   "$ADDR_984" 0x50 0x4c 0x4d)
+    v_sync=$(ind_read13_be   "$ADDR_984" 0x50 0x4e 0x4f)
+
+    echo "  H Total:       $h_total"
+    echo "  V Total:       $v_total"
+    echo "  H Active:      $h_active"
+    echo "  V Active:      $v_active"
+    echo "  H Start:       $h_start"
+    echo "  V Start:       $v_start"
+    echo "  H Sync Width:  $h_sync"
+    echo "  V Sync Width:  $v_sync"
+
+    if [ "$h_total" -gt 0 ] && [ "$v_total" -gt 0 ]; then
+        echo ""
+        echo "--- Derived ---"
+        echo "  Resolution:    ${h_active}x${v_active}"
+        echo "  Total:         ${h_total}x${v_total}"
+    fi
+
+    # Per-stream change flags (Page 0x48) — secondary diagnostic
     stream_off=$((STREAM * 0x20))
-    hact_msb=$(printf "0x%02x" $((0x66 + stream_off)))
-    hact_lsb=$(printf "0x%02x" $((0x65 + stream_off)))
-    vtot_msb=$(printf "0x%02x" $((0x68 + stream_off)))
-    vtot_lsb=$(printf "0x%02x" $((0x67 + stream_off)))
     flags_off=$(printf "0x%02x" $((0x69 + stream_off)))
-
-    # Page_18: write 0x48 to reg 0x40 for write, 0x49 for read
-    # Read HACTIVE (MSB first: 0x66, then LSB: 0x65)
-    echo "--- Stream $STREAM Timing (Page 0x48) ---"
-    echo "  (984 provides HACTIVE and VTOTAL per-stream only)"
-    echo ""
-
-    i2c_write "$ADDR_984" 0x40 0x48
-    i2c_write "$ADDR_984" 0x41 "$hact_msb"
-    _hmsb=$(i2c_read "$ADDR_984" 0x42)
-    i2c_write "$ADDR_984" 0x41 "$hact_lsb"
-    _hlsb=$(i2c_read "$ADDR_984" 0x42)
-    h_active=$(( (_hmsb << 8) | _hlsb ))
-
-    i2c_write "$ADDR_984" 0x41 "$vtot_msb"
-    _vmsb=$(i2c_read "$ADDR_984" 0x42)
-    i2c_write "$ADDR_984" 0x41 "$vtot_lsb"
-    _vlsb=$(i2c_read "$ADDR_984" 0x42)
-    v_total=$(( (_vmsb << 8) | _vlsb ))
-
-    # Change flags
-    i2c_write "$ADDR_984" 0x41 "$flags_off"
-    flags=$(i2c_read "$ADDR_984" 0x42)
+    flags=$(ind_read8 "$ADDR_984" 0x48 "$flags_off")
     flags_val=$((flags))
     hact_chg="NO"; [ $((flags_val & 0x02)) -ne 0 ] && hact_chg="YES"
     vtot_chg="NO"; [ $((flags_val & 0x01)) -ne 0 ] && vtot_chg="YES"
-
-    echo "  H Active:      $h_active"
-    echo "  V Total:       $v_total"
+    echo ""
+    echo "--- Stream $STREAM Change Flags (Page 0x48:$flags_off) ---"
     echo "  HACTIVE_CHNG:  $hact_chg"
     echo "  VTOTAL_CHNG:   $vtot_chg"
 }
