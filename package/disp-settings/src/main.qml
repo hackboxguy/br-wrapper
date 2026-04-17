@@ -180,7 +180,7 @@ Window {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.minimumHeight: 180
+                    Layout.minimumHeight: pmic.available ? 150 : 180
                     color: "#0f3460"
                     radius: 10
 
@@ -373,7 +373,7 @@ Window {
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
-                    Layout.minimumHeight: 150
+                    Layout.minimumHeight: pmic.available ? 130 : 150
                     color: "#0f3460"
                     radius: 10
 
@@ -524,6 +524,120 @@ Window {
                                 text: "(MCU NTC)"
                                 font.pixelSize: 16
                                 color: "#555555"
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+                    }
+                }
+
+                // RTQ6749 PMIC Section (visible only when IOC MCU reachable)
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 120
+                    visible: pmic.available
+                    color: "#0f3460"
+                    radius: 10
+
+                    ColumnLayout {
+                        anchors.fill: parent
+                        anchors.margins: 12
+                        spacing: 6
+
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 10
+
+                            Text {
+                                text: "RTQ6749 PMIC"
+                                font.pixelSize: 20
+                                font.bold: true
+                                color: "#ffffff"
+                            }
+
+                            Item { Layout.fillWidth: true }
+
+                            Rectangle {
+                                width: 12
+                                height: 12
+                                radius: 6
+                                color: pmic.statusOk ? "#27ae60" : "#e74c3c"
+                            }
+
+                            Text {
+                                text: pmic.faultSummary
+                                font.pixelSize: 16
+                                font.bold: true
+                                color: pmic.statusOk ? "#27ae60" : "#e74c3c"
+                            }
+                        }
+
+                        // Channels row
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Text { text: "Channels:"; font.pixelSize: 16; color: "#888888"; Layout.preferredWidth: 110 }
+
+                            Repeater {
+                                model: [
+                                    { label: "PAVDD", on: pmic.chPavdd },
+                                    { label: "NAVDD", on: pmic.chNavdd },
+                                    { label: "VGH",   on: pmic.chVgh },
+                                    { label: "VGL",   on: pmic.chVgl },
+                                    { label: "VCOM",  on: pmic.chVcom },
+                                    { label: "RESET", on: pmic.chReset }
+                                ]
+                                delegate: Rectangle {
+                                    implicitWidth: chText.implicitWidth + 14
+                                    implicitHeight: 24
+                                    radius: 4
+                                    color: modelData.on ? "#1a5c3a" : "#3a1a1a"
+                                    border.color: modelData.on ? "#27ae60" : "#666666"
+                                    border.width: 1
+                                    Text {
+                                        id: chText
+                                        anchors.centerIn: parent
+                                        text: modelData.label
+                                        font.pixelSize: 14
+                                        font.bold: true
+                                        color: modelData.on ? "#ffffff" : "#888888"
+                                    }
+                                }
+                            }
+
+                            Item { Layout.fillWidth: true }
+                        }
+
+                        // Protections row
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 6
+
+                            Text { text: "Protections:"; font.pixelSize: 16; color: "#888888"; Layout.preferredWidth: 110 }
+
+                            Repeater {
+                                model: [
+                                    { label: "OTP", on: pmic.protOtp },
+                                    { label: "UVP", on: pmic.protUvp },
+                                    { label: "SCP", on: pmic.protScp }
+                                ]
+                                delegate: Rectangle {
+                                    implicitWidth: prText.implicitWidth + 14
+                                    implicitHeight: 24
+                                    radius: 4
+                                    color: modelData.on ? "#1a5c3a" : "#3a3a1a"
+                                    border.color: modelData.on ? "#27ae60" : "#888800"
+                                    border.width: 1
+                                    Text {
+                                        id: prText
+                                        anchors.centerIn: parent
+                                        text: modelData.label
+                                        font.pixelSize: 14
+                                        font.bold: true
+                                        color: modelData.on ? "#ffffff" : "#cccc88"
+                                    }
+                                }
                             }
 
                             Item { Layout.fillWidth: true }
@@ -1152,6 +1266,118 @@ Window {
                             text: "(MCU NTC)"
                             font.pixelSize: 16
                             color: "#555555"
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+                }
+            }
+
+            // RTQ6749 PMIC Section (visible only when IOC MCU reachable)
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 140
+                visible: pmic.available
+                color: "#0f3460"
+                radius: 10
+
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 15
+                    spacing: 8
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        Text {
+                            text: "RTQ6749 PMIC"
+                            font.pixelSize: 22
+                            font.bold: true
+                            color: "#ffffff"
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        Rectangle {
+                            width: 14
+                            height: 14
+                            radius: 7
+                            color: pmic.statusOk ? "#27ae60" : "#e74c3c"
+                        }
+
+                        Text {
+                            text: pmic.faultSummary
+                            font.pixelSize: 18
+                            font.bold: true
+                            color: pmic.statusOk ? "#27ae60" : "#e74c3c"
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text { text: "Channels:"; font.pixelSize: 18; color: "#888888"; Layout.preferredWidth: 130 }
+
+                        Repeater {
+                            model: [
+                                { label: "PAVDD", on: pmic.chPavdd },
+                                { label: "NAVDD", on: pmic.chNavdd },
+                                { label: "VGH",   on: pmic.chVgh },
+                                { label: "VGL",   on: pmic.chVgl },
+                                { label: "VCOM",  on: pmic.chVcom },
+                                { label: "RESET", on: pmic.chReset }
+                            ]
+                            delegate: Rectangle {
+                                implicitWidth: chTextN.implicitWidth + 18
+                                implicitHeight: 28
+                                radius: 4
+                                color: modelData.on ? "#1a5c3a" : "#3a1a1a"
+                                border.color: modelData.on ? "#27ae60" : "#666666"
+                                border.width: 1
+                                Text {
+                                    id: chTextN
+                                    anchors.centerIn: parent
+                                    text: modelData.label
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    color: modelData.on ? "#ffffff" : "#888888"
+                                }
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Text { text: "Protections:"; font.pixelSize: 18; color: "#888888"; Layout.preferredWidth: 130 }
+
+                        Repeater {
+                            model: [
+                                { label: "OTP", on: pmic.protOtp },
+                                { label: "UVP", on: pmic.protUvp },
+                                { label: "SCP", on: pmic.protScp }
+                            ]
+                            delegate: Rectangle {
+                                implicitWidth: prTextN.implicitWidth + 18
+                                implicitHeight: 28
+                                radius: 4
+                                color: modelData.on ? "#1a5c3a" : "#3a3a1a"
+                                border.color: modelData.on ? "#27ae60" : "#888800"
+                                border.width: 1
+                                Text {
+                                    id: prTextN
+                                    anchors.centerIn: parent
+                                    text: modelData.label
+                                    font.pixelSize: 15
+                                    font.bold: true
+                                    color: modelData.on ? "#ffffff" : "#cccc88"
+                                }
+                            }
                         }
 
                         Item { Layout.fillWidth: true }

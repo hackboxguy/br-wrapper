@@ -12,6 +12,7 @@
 #include "TemperatureController.h"
 #include "TddiController.h"
 #include "McuController.h"
+#include "PmicController.h"
 
 // Parse VERSION and BUILD_DATE from a key=value version file
 static void parseVersionFile(const QString &path, QString &version, QString &buildDate)
@@ -106,6 +107,11 @@ int main(int argc, char *argv[])
     hh983Controller.setReadTemperature(false);
     hh983Controller.start();
 
+    // RTQ6749 PMIC via IOC MCU (0x66) bridge to internal 0x6B
+    PmicController pmicController;
+    pmicController.setI2cBus(parser.value(i2cOption));
+    pmicController.start();
+
     // Parse OS and application version files
     QString osVersion, osBuildDate, incVersion, incBuildDate;
     parseVersionFile("/etc/base-version.txt", osVersion, osBuildDate);
@@ -126,6 +132,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("tddi", &tddiController);
     engine.rootContext()->setContextProperty("mcu", &mcuController);
     engine.rootContext()->setContextProperty("hh983", &hh983Controller);
+    engine.rootContext()->setContextProperty("pmic", &pmicController);
 
     // Load main QML file
     const QUrl url(QStringLiteral("qrc:/main.qml"));

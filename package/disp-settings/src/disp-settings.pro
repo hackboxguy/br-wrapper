@@ -10,14 +10,16 @@ SOURCES += main.cpp \
     FpgaController.cpp \
     TemperatureController.cpp \
     TddiController.cpp \
-    McuController.cpp
+    McuController.cpp \
+    PmicController.cpp
 
 HEADERS += config.h \
     AlsDimmerController.h \
     FpgaController.h \
     TemperatureController.h \
     TddiController.h \
-    McuController.h
+    McuController.h \
+    PmicController.h
 
 RESOURCES += qml.qrc
 

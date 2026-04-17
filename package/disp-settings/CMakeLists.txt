@@ -22,6 +22,7 @@ set(SOURCES
     src/TemperatureController.cpp
     src/TddiController.cpp
     src/McuController.cpp
+    src/PmicController.cpp
 )
 
 set(HEADERS
@@ -31,6 +32,7 @@ set(HEADERS
     src/TemperatureController.h
     src/TddiController.h
     src/McuController.h
+    src/PmicController.h
 )
 
 set(RESOURCES
