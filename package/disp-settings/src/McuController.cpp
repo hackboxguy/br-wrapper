@@ -110,7 +110,7 @@ static QString bcdByte(uint8_t b)
 void McuController::parseDeviceInfo(const uint8_t *data)
 {
     // data[0] = FW_VERSION_MAJOR (BCD), data[1] = FW_VERSION_MINOR (BCD)
-    QString version = QString("v%1.%2").arg(bcdByte(data[0]), bcdByte(data[1]));
+    QString version = QString("%1.%2").arg(bcdByte(data[0]), bcdByte(data[1]));
     if (version != m_firmwareVersion) {
         m_firmwareVersion = version;
         emit firmwareVersionChanged();
