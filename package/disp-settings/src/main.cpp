@@ -99,6 +99,13 @@ int main(int argc, char *argv[])
     mcuController.setI2cBus(parser.value(i2cOption));
     mcuController.start();
 
+    // HH983 serializer MCU on same bus at 0x67 — version/build-date only (no temp)
+    McuController hh983Controller;
+    hh983Controller.setI2cBus(parser.value(i2cOption));
+    hh983Controller.setI2cAddress(0x67);
+    hh983Controller.setReadTemperature(false);
+    hh983Controller.start();
+
     // Parse OS and application version files
     QString osVersion, osBuildDate, incVersion, incBuildDate;
     parseVersionFile("/etc/base-version.txt", osVersion, osBuildDate);
@@ -118,6 +125,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("tempSensors", &temperatureController);
     engine.rootContext()->setContextProperty("tddi", &tddiController);
     engine.rootContext()->setContextProperty("mcu", &mcuController);
+    engine.rootContext()->setContextProperty("hh983", &hh983Controller);
 
     // Load main QML file
     const QUrl url(QStringLiteral("qrc:/main.qml"));

@@ -24,6 +24,7 @@ McuController::McuController(QObject *parent)
     , m_i2cAddress(MCU_I2C_ADDR)
     , m_available(false)
     , m_deviceInfoRead(false)
+    , m_readTemperature(true)
     , m_backlightTemp(0.0)
     , m_backlightTempValid(false)
     , m_refreshTimer(new QTimer(this))
@@ -40,6 +41,16 @@ McuController::~McuController()
 void McuController::setI2cBus(const QString &bus)
 {
     m_i2cBus = bus;
+}
+
+void McuController::setI2cAddress(int address)
+{
+    m_i2cAddress = address;
+}
+
+void McuController::setReadTemperature(bool enabled)
+{
+    m_readTemperature = enabled;
 }
 
 void McuController::start()
@@ -151,8 +162,9 @@ void McuController::refresh()
 
     bool success = true;
 
-    // Read device info only once (version/build date don't change at runtime)
-    if (!m_deviceInfoRead) {
+    // Read device info: always when temp read is disabled (acts as presence ping),
+    // otherwise only on first success since version/build-date don't change at runtime
+    if (!m_deviceInfoRead || !m_readTemperature) {
         uint8_t infoData[DEVICE_INFO_SIZE];
         if (readRegister16(fd, REG_FW_VERSION, infoData, DEVICE_INFO_SIZE)) {
             parseDeviceInfo(infoData);
@@ -162,12 +174,14 @@ void McuController::refresh()
         }
     }
 
-    // Read backlight temperature every poll
-    uint8_t tempData[TEMP_SIZE];
-    if (readRegister16(fd, REG_BL_TEMP, tempData, TEMP_SIZE)) {
-        parseTemperature(tempData);
-    } else {
-        success = false;
+    // Read backlight temperature every poll (skip if disabled)
+    if (m_readTemperature) {
+        uint8_t tempData[TEMP_SIZE];
+        if (readRegister16(fd, REG_BL_TEMP, tempData, TEMP_SIZE)) {
+            parseTemperature(tempData);
+        } else {
+            success = false;
+        }
     }
 
     closeI2c(fd);

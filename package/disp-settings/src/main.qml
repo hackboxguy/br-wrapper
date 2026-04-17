@@ -674,33 +674,56 @@ Window {
                 // Version Info Row (compact for wide layout)
                 Rectangle {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: Math.max(65, Screen.height * 0.09)
+                    Layout.preferredHeight: (mcu.available || hh983.available)
+                                            ? Math.max(120, Screen.height * 0.17)
+                                            : Math.max(65, Screen.height * 0.09)
                     color: "#0f3460"
                     radius: 8
 
-                    RowLayout {
+                    ColumnLayout {
                         anchors.fill: parent
                         anchors.leftMargin: 12
                         anchors.rightMargin: 12
-                        spacing: Screen.width * 0.01
+                        anchors.topMargin: 6
+                        anchors.bottomMargin: 6
+                        spacing: 6
 
-                        Text { text: "OS:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
-                        Text { text: osVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
-                        Text { text: "(" + osBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
+                        // Line 1: OS + App
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Screen.width * 0.01
 
-                        Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 10; Layout.bottomMargin: 10; color: "#333333" }
+                            Text { text: "OS:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
+                            Text { text: osVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
+                            Text { text: "(" + osBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
 
-                        Text { text: "App:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
-                        Text { text: swVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
-                        Text { text: "(" + swBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
+                            Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 4; Layout.bottomMargin: 4; color: "#333333" }
 
-                        Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 10; Layout.bottomMargin: 10; color: "#333333"; visible: mcu.available }
+                            Text { text: "App:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
+                            Text { text: swVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
+                            Text { text: "(" + swBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
 
-                        Text { text: "IOC:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888"; visible: mcu.available }
-                        Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff"; visible: mcu.available }
-                        Text { text: "(" + mcu.buildDateTime + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: mcu.available }
+                            Item { Layout.fillWidth: true }
+                        }
 
-                        Item { Layout.fillWidth: true }
+                        // Line 2: IOC + HH983 (only visible if any MCU is detected)
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: Screen.width * 0.01
+                            visible: mcu.available || hh983.available
+
+                            Text { text: "IOC:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888"; visible: mcu.available }
+                            Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff"; visible: mcu.available }
+                            Text { text: "(" + mcu.buildDateTime + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: mcu.available }
+
+                            Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 4; Layout.bottomMargin: 4; color: "#333333"; visible: mcu.available && hh983.available }
+
+                            Text { text: "HH983:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888"; visible: hh983.available }
+                            Text { text: hh983.firmwareVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff"; visible: hh983.available }
+                            Text { text: "(" + hh983.buildDateTime + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: hh983.available }
+
+                            Item { Layout.fillWidth: true }
+                        }
                     }
                 }
 
@@ -1413,6 +1436,12 @@ Window {
                     Text { text: "IOC:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888"; visible: mcu.available }
                     Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff"; visible: mcu.available }
                     Text { text: "(" + mcu.buildDateTime + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"; visible: mcu.available }
+
+                    Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 8; Layout.bottomMargin: 8; color: "#333333"; visible: hh983.available }
+
+                    Text { text: "HH983:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888"; visible: hh983.available }
+                    Text { text: hh983.firmwareVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff"; visible: hh983.available }
+                    Text { text: "(" + hh983.buildDateTime + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"; visible: hh983.available }
 
                     Item { Layout.fillWidth: true }
                 }

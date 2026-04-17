@@ -27,6 +27,8 @@ public:
     ~McuController();
 
     void setI2cBus(const QString &bus);
+    void setI2cAddress(int address);
+    void setReadTemperature(bool enabled);
     void start();
 
     bool available() const { return m_available; }
@@ -58,6 +60,7 @@ private:
 
     bool m_available;
     bool m_deviceInfoRead;
+    bool m_readTemperature;
     QString m_firmwareVersion;
     QString m_buildDateTime;
     double m_backlightTemp;
