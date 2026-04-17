@@ -39,6 +39,7 @@ PmicController::PmicController(QObject *parent)
     , m_chPavdd(false), m_chNavdd(false), m_chVgh(false)
     , m_chVgl(false), m_chVcom(false), m_chReset(false)
     , m_protOtp(false), m_protUvp(false), m_protScp(false)
+    , m_faultPavdd(false), m_faultNavdd(false), m_faultVgh(false), m_faultVgl(false)
     , m_refreshTimer(new QTimer(this))
 {
     connect(m_refreshTimer, &QTimer::timeout, this, &PmicController::refresh);
@@ -153,10 +154,10 @@ void PmicController::parseStatus(uint8_t chanReg, uint8_t protReg, uint8_t fault
     m_protOtp = (protReg >> 2) & 1;
 
     // Faults (0x1D, lower 4 bits): bit0=NAVDD, bit1=VGH, bit2=VGL, bit3=PAVDD
-    bool fNavdd = (faultReg >> 0) & 1;
-    bool fVgh   = (faultReg >> 1) & 1;
-    bool fVgl   = (faultReg >> 2) & 1;
-    bool fPavdd = (faultReg >> 3) & 1;
+    m_faultNavdd = (faultReg >> 0) & 1;
+    m_faultVgh   = (faultReg >> 1) & 1;
+    m_faultVgl   = (faultReg >> 2) & 1;
+    m_faultPavdd = (faultReg >> 3) & 1;
     bool anyFault = (faultReg & 0x0F) != 0;
 
     bool newStatusOk = !anyFault;
@@ -167,10 +168,10 @@ void PmicController::parseStatus(uint8_t chanReg, uint8_t protReg, uint8_t fault
         summary = "OK";
     } else {
         QStringList faults;
-        if (fPavdd) faults << "PAVDD";
-        if (fNavdd) faults << "NAVDD";
-        if (fVgh)   faults << "VGH";
-        if (fVgl)   faults << "VGL";
+        if (m_faultPavdd) faults << "PAVDD";
+        if (m_faultNavdd) faults << "NAVDD";
+        if (m_faultVgh)   faults << "VGH";
+        if (m_faultVgl)   faults << "VGL";
         summary = "FAULT: " + faults.join(", ");
     }
     if (summary != m_faultSummary) m_faultSummary = summary;

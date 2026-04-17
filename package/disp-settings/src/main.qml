@@ -581,19 +581,21 @@ Window {
 
                             Repeater {
                                 model: [
-                                    { label: "PAVDD", on: pmic.chPavdd },
-                                    { label: "NAVDD", on: pmic.chNavdd },
-                                    { label: "VGH",   on: pmic.chVgh },
-                                    { label: "VGL",   on: pmic.chVgl },
-                                    { label: "VCOM",  on: pmic.chVcom },
-                                    { label: "RESET", on: pmic.chReset }
+                                    { label: "PAVDD", on: pmic.chPavdd, fault: pmic.faultPavdd },
+                                    { label: "NAVDD", on: pmic.chNavdd, fault: pmic.faultNavdd },
+                                    { label: "VGH",   on: pmic.chVgh,   fault: pmic.faultVgh },
+                                    { label: "VGL",   on: pmic.chVgl,   fault: pmic.faultVgl },
+                                    { label: "VCOM",  on: pmic.chVcom,  fault: false },
+                                    { label: "RESET", on: pmic.chReset, fault: false }
                                 ]
                                 delegate: Rectangle {
                                     implicitWidth: chText.implicitWidth + 14
                                     implicitHeight: 24
                                     radius: 4
-                                    color: modelData.on ? "#1a5c3a" : "#3a1a1a"
-                                    border.color: modelData.on ? "#27ae60" : "#666666"
+                                    color: modelData.fault ? "#5c1a1a"
+                                           : modelData.on ? "#1a5c3a" : "#1a2a3a"
+                                    border.color: modelData.fault ? "#e74c3c"
+                                                  : modelData.on ? "#27ae60" : "#666666"
                                     border.width: 1
                                     Text {
                                         id: chText
@@ -601,7 +603,7 @@ Window {
                                         text: modelData.label
                                         font.pixelSize: 14
                                         font.bold: true
-                                        color: modelData.on ? "#ffffff" : "#888888"
+                                        color: (modelData.fault || modelData.on) ? "#ffffff" : "#888888"
                                     }
                                 }
                             }
@@ -1322,19 +1324,21 @@ Window {
 
                         Repeater {
                             model: [
-                                { label: "PAVDD", on: pmic.chPavdd },
-                                { label: "NAVDD", on: pmic.chNavdd },
-                                { label: "VGH",   on: pmic.chVgh },
-                                { label: "VGL",   on: pmic.chVgl },
-                                { label: "VCOM",  on: pmic.chVcom },
-                                { label: "RESET", on: pmic.chReset }
+                                { label: "PAVDD", on: pmic.chPavdd, fault: pmic.faultPavdd },
+                                { label: "NAVDD", on: pmic.chNavdd, fault: pmic.faultNavdd },
+                                { label: "VGH",   on: pmic.chVgh,   fault: pmic.faultVgh },
+                                { label: "VGL",   on: pmic.chVgl,   fault: pmic.faultVgl },
+                                { label: "VCOM",  on: pmic.chVcom,  fault: false },
+                                { label: "RESET", on: pmic.chReset, fault: false }
                             ]
                             delegate: Rectangle {
                                 implicitWidth: chTextN.implicitWidth + 18
                                 implicitHeight: 28
                                 radius: 4
-                                color: modelData.on ? "#1a5c3a" : "#3a1a1a"
-                                border.color: modelData.on ? "#27ae60" : "#666666"
+                                color: modelData.fault ? "#5c1a1a"
+                                       : modelData.on ? "#1a5c3a" : "#1a2a3a"
+                                border.color: modelData.fault ? "#e74c3c"
+                                              : modelData.on ? "#27ae60" : "#666666"
                                 border.width: 1
                                 Text {
                                     id: chTextN
@@ -1342,7 +1346,7 @@ Window {
                                     text: modelData.label
                                     font.pixelSize: 15
                                     font.bold: true
-                                    color: modelData.on ? "#ffffff" : "#888888"
+                                    color: (modelData.fault || modelData.on) ? "#ffffff" : "#888888"
                                 }
                             }
                         }

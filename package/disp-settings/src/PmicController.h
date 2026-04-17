@@ -33,6 +33,13 @@ class PmicController : public QObject
     Q_PROPERTY(bool protUvp READ protUvp NOTIFY statusChanged)
     Q_PROPERTY(bool protScp READ protScp NOTIFY statusChanged)
 
+    // Per-channel fault flags (from register 0x1D, lower 4 bits)
+    // Note: only PAVDD/NAVDD/VGH/VGL are monitored — VCOM/RESET have no fault bits
+    Q_PROPERTY(bool faultPavdd READ faultPavdd NOTIFY statusChanged)
+    Q_PROPERTY(bool faultNavdd READ faultNavdd NOTIFY statusChanged)
+    Q_PROPERTY(bool faultVgh   READ faultVgh   NOTIFY statusChanged)
+    Q_PROPERTY(bool faultVgl   READ faultVgl   NOTIFY statusChanged)
+
 public:
     explicit PmicController(QObject *parent = nullptr);
     ~PmicController();
@@ -55,6 +62,11 @@ public:
     bool protOtp() const { return m_protOtp; }
     bool protUvp() const { return m_protUvp; }
     bool protScp() const { return m_protScp; }
+
+    bool faultPavdd() const { return m_faultPavdd; }
+    bool faultNavdd() const { return m_faultNavdd; }
+    bool faultVgh() const { return m_faultVgh; }
+    bool faultVgl() const { return m_faultVgl; }
 
 public slots:
     void refresh();
@@ -81,6 +93,7 @@ private:
 
     bool m_chPavdd, m_chNavdd, m_chVgh, m_chVgl, m_chVcom, m_chReset;
     bool m_protOtp, m_protUvp, m_protScp;
+    bool m_faultPavdd, m_faultNavdd, m_faultVgh, m_faultVgl;
 
     QTimer *m_refreshTimer;
 };
