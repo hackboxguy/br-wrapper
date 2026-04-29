@@ -3,6 +3,7 @@
 #include <QScreen>
 #include <QDebug>
 #include <QFile>
+#include <QProcessEnvironment>
 #include <QTextStream>
 #include <QProcess>
 #include <QRegExp>
@@ -13,6 +14,10 @@ PatternController::PatternController(QObject *parent)
     , m_customColor(0, 0, 0)
     , m_showCustomColor(false)
     , m_networkInterface(nullptr)
+    , m_childProcess(nullptr)
+    , m_childShutdownTimer(new QTimer(this))
+    , m_networkPort(DEFAULT_NETWORK_PORT)
+    , m_shutdownRequested(false)
     , m_metadataStatus("autohide")  // Default to autohide behavior
     , m_metadataText("")           // Empty = use default IP:port display
     , m_metadataAlign("center")    // Default center alignment
@@ -20,6 +25,11 @@ PatternController::PatternController(QObject *parent)
     , m_metadataColor(255, 255, 255) // Default white color
     , m_userInteractionEnabled(true) // Default user interaction enabled
 {
+    m_childShutdownTimer->setSingleShot(true);
+    m_childShutdownTimer->setInterval(3000);
+    connect(m_childShutdownTimer, &QTimer::timeout,
+            this, &PatternController::forceStopChildScript);
+
     // Initialize available patterns (added solid colors, removed white-text-black)
     m_patterns << "grayscale-ramp" << "ansi-checker" << "colorbar" << "white" << "black"
                << "red" << "green" << "blue" << "cyan" << "magenta" << "yellow"
@@ -29,6 +39,12 @@ PatternController::PatternController(QObject *parent)
 
 PatternController::~PatternController()
 {
+    if (m_childProcess && m_childProcess->state() != QProcess::NotRunning) {
+        qWarning() << "Child script still running during shutdown; killing it";
+        m_childProcess->kill();
+        m_childProcess->waitForFinished(1000);
+    }
+
     if (m_networkInterface) {
         delete m_networkInterface;
     }
@@ -36,11 +52,150 @@ PatternController::~PatternController()
 
 bool PatternController::startNetworkInterface(int port)
 {
+    m_networkPort = port;
     m_networkInterface = new NetworkInterface(port, this);
     connect(m_networkInterface, &NetworkInterface::commandReceived,
             this, &PatternController::handleNetworkCommand);
 
     return m_networkInterface->startServer();
+}
+
+bool PatternController::startChildScript(const QString &program, const QStringList &arguments)
+{
+    if (program.isEmpty()) {
+        qWarning() << "No child script specified";
+        return false;
+    }
+
+    if (isChildScriptRunning()) {
+        qWarning() << "Child script is already running";
+        return false;
+    }
+
+    cleanupChildProcess();
+
+    m_childProcess = new QProcess(this);
+    m_childProcess->setProcessChannelMode(QProcess::ForwardedChannels);
+
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    env.insert("DISP_TESTER_HOST", "127.0.0.1");
+    env.insert("DISP_TESTER_PORT", QString::number(m_networkPort));
+    m_childProcess->setProcessEnvironment(env);
+
+    connect(m_childProcess, &QProcess::started, this, [this, program]() {
+        qDebug() << "Child script started:" << program << "pid:" << m_childProcess->processId();
+    });
+
+    connect(m_childProcess,
+            static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
+            this, &PatternController::handleChildFinished);
+
+    connect(m_childProcess, &QProcess::errorOccurred,
+            this, &PatternController::handleChildError);
+
+    qDebug() << "Starting child script:" << program << "args:" << arguments;
+    m_childProcess->start(program, arguments);
+    return true;
+}
+
+bool PatternController::isChildScriptRunning() const
+{
+    return m_childProcess && m_childProcess->state() != QProcess::NotRunning;
+}
+
+void PatternController::requestQuit()
+{
+    requestQuit("ui");
+}
+
+void PatternController::requestQuit(const QString &reason)
+{
+    if (m_shutdownRequested) {
+        return;
+    }
+
+    m_shutdownRequested = true;
+    qDebug() << "Graceful shutdown requested"
+             << (reason.isEmpty() ? QString() : QString("(%1)").arg(reason));
+
+    if (isChildScriptRunning()) {
+        stopChildScript();
+        return;
+    }
+
+    finishApplicationQuit();
+}
+
+void PatternController::stopChildScript()
+{
+    if (!isChildScriptRunning()) {
+        finishApplicationQuit();
+        return;
+    }
+
+    qDebug() << "Terminating child script";
+    m_childProcess->terminate();
+    m_childShutdownTimer->start();
+}
+
+void PatternController::forceStopChildScript()
+{
+    if (!isChildScriptRunning()) {
+        return;
+    }
+
+    qWarning() << "Child script did not exit after SIGTERM; killing it";
+    m_childProcess->kill();
+}
+
+void PatternController::handleChildFinished(int exitCode, QProcess::ExitStatus exitStatus)
+{
+    qDebug() << "Child script finished with exit code" << exitCode
+             << "status" << exitStatus;
+
+    if (m_childShutdownTimer->isActive()) {
+        m_childShutdownTimer->stop();
+    }
+
+    cleanupChildProcess();
+
+    if (m_shutdownRequested) {
+        finishApplicationQuit();
+    }
+}
+
+void PatternController::handleChildError(QProcess::ProcessError error)
+{
+    qWarning() << "Child script process error:" << error
+               << (m_childProcess ? m_childProcess->errorString() : QString());
+
+    if (error == QProcess::FailedToStart) {
+        if (m_childShutdownTimer->isActive()) {
+            m_childShutdownTimer->stop();
+        }
+        cleanupChildProcess();
+
+        if (m_shutdownRequested) {
+            finishApplicationQuit();
+        }
+    }
+}
+
+void PatternController::cleanupChildProcess()
+{
+    if (!m_childProcess) {
+        return;
+    }
+
+    QProcess *process = m_childProcess;
+    m_childProcess = nullptr;
+    process->deleteLater();
+}
+
+void PatternController::finishApplicationQuit()
+{
+    qDebug() << "Exiting disp-tester";
+    QGuiApplication::quit();
 }
 
 void PatternController::nextPattern()
@@ -192,14 +347,7 @@ QString PatternController::getNetworkInfo()
         netFile.close();
     }
 
-    // Get port from network interface
-    int port = DEFAULT_NETWORK_PORT; // default
-    if (m_networkInterface) {
-        // We could store the port in NetworkInterface class, but for now use default
-        port = DEFAULT_NETWORK_PORT;
-    }
-
-    return QString("TCP:%1:%2").arg(ipAddress).arg(port);
+    return QString("TCP:%1:%2").arg(ipAddress).arg(m_networkPort);
 }
 
 void PatternController::setMetadataStatus(const QString &status)
@@ -477,7 +625,9 @@ void PatternController::handleNetworkCommand(const QString &command)
         m_networkInterface->sendResponse("OK");
     } else if (cmd == "quit") {
         m_networkInterface->sendResponse("OK");
-        QGuiApplication::quit();
+        QTimer::singleShot(0, this, [this]() {
+            requestQuit("network");
+        });
     } else {
         m_networkInterface->sendResponse("ERROR: Unknown command");
     }

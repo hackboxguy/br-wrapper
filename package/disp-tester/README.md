@@ -66,10 +66,31 @@ For cross-compilation, ensure Qt5 development tools and target toolchain are con
 qt-pattern-generator [options]
 
 Options:
-  -p, --port <port>     TCP server port (default: 8080)
+  -p, --port <port>     TCP server port (default: 8082)
+  --script <program>    Start a supervised child script/program
+  --script-arg <arg>    Argument for the child script (repeatable)
   -h, --help            Display help
   -v, --version         Display version
 ```
+
+### Supervised Child Script
+
+`disp-tester` can optionally start one child script after the UI and TCP
+server are ready:
+
+```bash
+./disp-tester --port=8082 --script /usr/bin/my-measurement.sh \
+  --script-arg sequence-a --script-arg panel-42
+```
+
+The child inherits the normal environment plus:
+
+- `DISP_TESTER_HOST=127.0.0.1`
+- `DISP_TESTER_PORT=<configured port>`
+
+The parent never waits synchronously for the child while the Qt event loop is
+running. On touch exit, TCP `quit`, SIGTERM, or SIGINT, `disp-tester` sends
+SIGTERM to the child and falls back to SIGKILL after 3 seconds.
 
 ### Touch Navigation
 - **Left edge tap** (25%): Previous pattern

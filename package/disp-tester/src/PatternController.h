@@ -5,6 +5,8 @@
 #include <QString>
 #include <QStringList>
 #include <QColor>
+#include <QProcess>
+#include <QTimer>
 #include <QVariantMap>
 #include "NetworkInterface.h"
 #include "PatternParameters.h"
@@ -37,6 +39,8 @@ public:
     QString metadataStatus() const { return m_metadataStatus; }
 
     bool startNetworkInterface(int port);
+    bool startChildScript(const QString &program, const QStringList &arguments);
+    void requestQuit(const QString &reason);
 
 public slots:
     void nextPattern();
@@ -50,6 +54,7 @@ public slots:
     int getMetadataFontSize() const { return m_metadataFontSize; }
     QColor getMetadataColor() const { return m_metadataColor; }
     bool getUserInteractionEnabled() const { return m_userInteractionEnabled; }
+    void requestQuit();
 
 signals:
     void currentPatternChanged();
@@ -66,6 +71,9 @@ signals:
 
 private slots:
     void handleNetworkCommand(const QString &command);
+    void handleChildFinished(int exitCode, QProcess::ExitStatus exitStatus);
+    void handleChildError(QProcess::ProcessError error);
+    void forceStopChildScript();
 
 private:
     QStringList m_patterns;
@@ -74,6 +82,10 @@ private:
     QColor m_customColor;
     bool m_showCustomColor;
     NetworkInterface *m_networkInterface;
+    QProcess *m_childProcess;
+    QTimer *m_childShutdownTimer;
+    int m_networkPort;
+    bool m_shutdownRequested;
     PatternParameters m_parameters;
 
     // Metadata management
@@ -100,6 +112,10 @@ private:
     void setMetadataColor(int r, int g, int b);
     void setMetadataColorByName(const QString &colorName);
     void setUserInteractionEnabled(bool enabled);
+    bool isChildScriptRunning() const;
+    void stopChildScript();
+    void finishApplicationQuit();
+    void cleanupChildProcess();
 };
 
 #endif // PATTERNCONTROLLER_H

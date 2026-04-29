@@ -12,6 +12,7 @@ Window {
     visibility: Window.FullScreen
 
     property bool uiVisible: true
+    property bool emergencyExitVisible: false
 
     // Pattern navigation functions
     function nextPattern() {
@@ -27,6 +28,11 @@ Window {
     function showUITemporarily() {
         uiVisible = true
         uiHideTimer.restart()
+    }
+
+    function showEmergencyExitTemporarily() {
+        emergencyExitVisible = true
+        emergencyExitTimer.restart()
     }
 
     // Custom color overlay (when RGB patch or solid color is active)
@@ -184,32 +190,6 @@ Window {
             }
         }
 
-        // Exit button (top-right)
-        Rectangle {
-            anchors.top: parent.top
-            anchors.right: parent.right
-            anchors.margins: 20
-            width: 100
-            height: 60
-            color: "#C0800000"
-            radius: 8
-            border.color: "white"
-            border.width: 1
-
-            Text {
-                anchors.centerIn: parent
-                text: "EXIT"
-                color: "white"
-                font.pixelSize: 24
-                font.bold: true
-            }
-
-            MouseArea {
-                anchors.fill: parent
-                onClicked: Qt.quit()
-            }
-        }
-
         // Instructions (bottom-center)
         Rectangle {
             anchors.bottom: parent.bottom
@@ -252,6 +232,40 @@ Window {
             }
         }
 
+    }
+
+    MouseArea {
+        anchors.fill: parent
+        enabled: !patternController.userInteractionEnabled && !emergencyExitVisible
+        onClicked: showEmergencyExitTemporarily()
+    }
+
+    // Exit button (top-right) - kept outside the navigation overlay so it
+    // remains available while automation disables pattern navigation.
+    Rectangle {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 20
+        width: 100
+        height: 60
+        color: "#C0800000"
+        radius: 8
+        border.color: "white"
+        border.width: 1
+        visible: (uiVisible && patternController.userInteractionEnabled) || emergencyExitVisible
+
+        Text {
+            anchors.centerIn: parent
+            text: "EXIT"
+            color: "white"
+            font.pixelSize: 24
+            font.bold: true
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: patternController.requestQuit()
+        }
     }
 
     // Network info (bottom-right) - Outside uiOverlay for independent visibility
@@ -308,6 +322,13 @@ Window {
                 uiVisible = false  // Only auto-hide if user interaction is enabled
             }
         }
+    }
+
+    Timer {
+        id: emergencyExitTimer
+        interval: 4000
+        running: false
+        onTriggered: emergencyExitVisible = false
     }
 
     // Show UI initially
