@@ -237,13 +237,21 @@
         "border_radius": 20
       },
       {
-        "id": "exit",
-        "enabled": false,
-        "text": "Exit",
-        "icon": "/usr/share/icons/power-off.png",
-        "action": "quit",
+        "id": "brightness-calibration",
+        "enabled": true,
+        "text": "Brightness Calibration",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--script", "/usr/bin/als-dimmer-sweep-child.py",
+          "--script-arg=--output", "--script-arg=/tmp/warm.csv",
+          "--script-arg=--label", "--script-arg=warm",
+          "--script-arg=--warmup-seconds", "--script-arg=5",
+          "--script-arg=--install-calibration"
+        ],
+        "working_directory": "/tmp",
         "position": {
-          "row": 1,
+          "row": 2,
           "column": 2
         },
         "size": {
@@ -251,14 +259,14 @@
           "height": 200
         },
         "icon_size": {
-          "width": 48,
-          "height": 48
+          "width": 100,
+          "height": 100
         },
         "icon_layout": "icon_top",
         "font_size": 30,
-        "background_color": "#8E4000",
-        "hover_color": "#D32F2F",
-        "border_radius": 12
+        "background_color": "#006C8E",
+        "hover_color": "#005A78",
+        "border_radius": 20
       } 
     ]
   }

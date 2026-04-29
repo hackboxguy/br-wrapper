@@ -124,6 +124,36 @@ The script handles SIGTERM/SIGINT by stopping any active `spotread`, restoring
 the original ALS dimmer mode/brightness when possible, flushing the partial
 CSV, and exiting. It does not send `quit` to `disp-tester`.
 
+Before starting the sweep, the child script checks `/sys/bus/usb/devices` for
+an i1 Display Pro style USB colorimeter. The known i1 Display Pro USB ID
+`0765:5020` is accepted by default. If it is not found, the script leaves
+brightness untouched and shows an `i1 Display Pro Not Found` message in the
+bottom-right info box. Use `--no-require-colorimeter` only for dry-runs or
+lab debugging.
+
+To apply a successful sweep automatically, add `--install-calibration`. The
+child script resolves `/home/pi/als-dimmer/etc/als-dimmer/config.json` and
+copies the CSV into the matching calibration target:
+
+- `config_fpga_opti4001_dimmer2048.json` -> `calibrations/dimmer_2048.csv`
+- `config_opti4001_boepwm.json` -> `calibrations/boe_pwm_2khz_reference.csv`
+- any other config -> `calibrations/dimmer_2048.csv`
+
+It then runs `systemctl restart als-dimmer`. If the script is not running as
+root, it uses `sudo -n` so it fails quickly instead of waiting for a password.
+After the copy and restart succeed, the info box shows `Brightness Calibration
+Success`.
+
+```json
+"arguments": [
+  "--script", "/usr/bin/als-dimmer-sweep-child.py",
+  "--script-arg=--output", "--script-arg=/tmp/warm.csv",
+  "--script-arg=--label", "--script-arg=warm",
+  "--script-arg=--warmup-seconds", "--script-arg=5",
+  "--script-arg=--install-calibration"
+]
+```
+
 ### Touch Navigation
 - **Left edge tap** (25%): Previous pattern
 - **Right edge tap** (25%): Next pattern  

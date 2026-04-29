@@ -29,6 +29,14 @@ import time
 DEFAULT_ALS_SOCKET = "/tmp/als-dimmer.sock"
 DEFAULT_DISP_HOST = os.environ.get("DISP_TESTER_HOST", "127.0.0.1")
 DEFAULT_DISP_PORT = int(os.environ.get("DISP_TESTER_PORT", "8082"))
+DEFAULT_ALS_CONFIG = "/home/pi/als-dimmer/etc/als-dimmer/config.json"
+DEFAULT_CALIBRATION_DIR = "/home/pi/als-dimmer/etc/als-dimmer/calibrations"
+DEFAULT_CALIBRATION_FALLBACK = "dimmer_2048.csv"
+DEFAULT_RESTART_COMMAND = "systemctl restart als-dimmer"
+CONFIG_CALIBRATION_MAP = {
+    "config_fpga_opti4001_dimmer2048.json": "dimmer_2048.csv",
+    "config_opti4001_boepwm.json": "boe_pwm_2khz_reference.csv",
+}
 DEFAULT_PROGRESS_TEXT = (
     "Brightness Calibration in Progress\\n"
     "Step: {step}/{total}\\n"
@@ -39,11 +47,30 @@ DEFAULT_COMPLETE_TEXT = (
     "Rows: {rows}/{total}\\n"
     "Output: {output}"
 )
+DEFAULT_CALIBRATION_SUCCESS_TEXT = (
+    "Brightness Calibration Success\\n"
+    "Calibration Applied\\n"
+    "als-dimmer restarted"
+)
 DEFAULT_ABORT_TEXT = (
     "Brightness Calibration Aborted\\n"
     "Rows: {rows}/{total}\\n"
     "Reason: {reason}"
 )
+DEFAULT_SENSOR_NOT_FOUND_TEXT = (
+    "i1 Display Pro Not Found\\n"
+    "Connect USB colorimeter\\n"
+    "Sweep not started"
+)
+DEFAULT_COLORIMETER_MATCH = [
+    "i1display",
+    "i1 display",
+    "i1display pro",
+    "i1 display pro",
+]
+DEFAULT_COLORIMETER_USB_IDS = [
+    "0765:5020",
+]
 
 _YXY_RE = re.compile(r"Result is XYZ:.*Yxy:\s*([0-9.]+)")
 
@@ -277,6 +304,74 @@ def validate_output_path(path):
         return False
 
 
+def read_text_file(path):
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def normalize_usb_id(value):
+    return value.lower().replace(":", "").replace("-", "").strip()
+
+
+def usb_device_records(sysfs_root="/sys/bus/usb/devices"):
+    try:
+        entries = sorted(os.listdir(sysfs_root))
+    except OSError:
+        return []
+
+    records = []
+    for entry in entries:
+        path = os.path.join(sysfs_root, entry)
+        vendor = read_text_file(os.path.join(path, "idVendor"))
+        product_id = read_text_file(os.path.join(path, "idProduct"))
+        manufacturer = read_text_file(os.path.join(path, "manufacturer"))
+        product = read_text_file(os.path.join(path, "product"))
+        if not vendor and not product_id and not manufacturer and not product:
+            continue
+        records.append({
+            "path": path,
+            "usb_id": f"{vendor}:{product_id}".lower() if vendor and product_id else "",
+            "text": f"{manufacturer} {product}".lower(),
+        })
+    return records
+
+
+def find_colorimeter(match_terms, usb_ids, sysfs_root="/sys/bus/usb/devices"):
+    wanted_ids = {normalize_usb_id(item) for item in usb_ids if item}
+    wanted_terms = [term.lower() for term in match_terms if term]
+
+    for record in usb_device_records(sysfs_root):
+        if wanted_ids and normalize_usb_id(record["usb_id"]) in wanted_ids:
+            return record
+        if any(term in record["text"] for term in wanted_terms):
+            return record
+    return None
+
+
+def show_status_message(display, args, message):
+    display.best_effort("set-metadata-status enable")
+    display.best_effort(f"set-metadata-fontsize {args.progress_fontsize}")
+    display.set_overlay_text(message)
+
+
+def check_colorimeter_or_report(display, args):
+    if not args.require_colorimeter:
+        return True
+
+    device = find_colorimeter(args.colorimeter_match, args.colorimeter_usb_id,
+                              args.usb_sysfs_root)
+    if device:
+        print(f"colorimeter found: {device['usb_id']} {device['text']}", file=sys.stderr)
+        return True
+
+    print("error: i1 Display Pro USB colorimeter not found", file=sys.stderr)
+    show_status_message(display, args, args.sensor_not_found_text)
+    return False
+
+
 def build_step_list(start, end, step):
     if start == end:
         return [start]
@@ -330,6 +425,16 @@ def run_process_capture(argv, timeout, shell=False):
     finally:
         if _active_process is proc:
             _active_process = None
+
+
+def run_admin_command(argv, timeout, use_sudo=True, shell=False):
+    if use_sudo and hasattr(os, "geteuid") and os.geteuid() != 0:
+        if shell:
+            argv = ["sudo", "-n", "sh", "-c", argv]
+            shell = False
+        else:
+            argv = ["sudo", "-n"] + argv
+    return run_process_capture(argv, timeout, shell=shell)
 
 
 def measure_nits(max_retries, retry_sleep_s, spotread_timeout):
@@ -395,6 +500,47 @@ def restore_als(client, original_mode, original_brightness, no_restore):
         print(f"warning: failed to restore als-dimmer state: {e}", file=sys.stderr)
 
 
+def resolve_calibration_target(args):
+    if args.calibration_target:
+        if os.path.isabs(args.calibration_target):
+            return args.calibration_target, "explicit"
+        return os.path.join(args.calibration_dir, args.calibration_target), "explicit"
+
+    if os.path.exists(args.calibration_config) or os.path.islink(args.calibration_config):
+        resolved = os.path.realpath(args.calibration_config)
+        config_name = os.path.basename(resolved)
+    else:
+        resolved = args.calibration_config
+        config_name = os.path.basename(args.calibration_config)
+
+    filename = CONFIG_CALIBRATION_MAP.get(config_name, args.calibration_fallback)
+    return os.path.join(args.calibration_dir, filename), resolved
+
+
+def install_calibration(args):
+    target, source_config = resolve_calibration_target(args)
+    target_dir = os.path.dirname(os.path.abspath(target))
+    use_sudo = not args.no_calibration_sudo
+
+    print(f"installing calibration: {args.output} -> {target}", file=sys.stderr)
+    print(f"selected from config: {source_config}", file=sys.stderr)
+
+    try:
+        run_admin_command(["mkdir", "-p", target_dir], timeout=5, use_sudo=use_sudo)
+        run_admin_command(["cp", "-f", args.output, target], timeout=10, use_sudo=use_sudo)
+        if args.restart_command:
+            print(f"restarting als-dimmer: {args.restart_command}", file=sys.stderr)
+            run_admin_command(args.restart_command, timeout=15, use_sudo=use_sudo, shell=True)
+    except InterruptedError:
+        raise
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+            FileNotFoundError, OSError) as e:
+        detail = getattr(e, "output", None) or str(e)
+        return False, target, one_line(detail, 160)
+
+    return True, target, "installed"
+
+
 def setup_display(display, args):
     if args.pattern:
         display.command(f"pattern {args.pattern}", required=True)
@@ -435,7 +581,27 @@ def validate_args(args):
         except (KeyError, IndexError) as e:
             print(f"error: invalid --progress-text placeholder: {e}", file=sys.stderr)
             return False
-    return validate_output_path(args.output)
+
+    test_values = {
+        "rows": 1,
+        "total": 1,
+        "output": args.output,
+        "reason": "test",
+        "calibration_target": "/tmp/test.csv",
+        "calibration_status": "test",
+    }
+    for name in ("complete_text", "calibration_success_text",
+                 "abort_text", "sensor_not_found_text"):
+        template = getattr(args, name)
+        if template:
+            try:
+                template.format(**test_values)
+            except (KeyError, IndexError) as e:
+                print(f"error: invalid --{name.replace('_', '-')} placeholder: {e}",
+                      file=sys.stderr)
+                return False
+
+    return True
 
 
 def parse_args():
@@ -489,10 +655,25 @@ def parse_args():
                         help="Initial overlay text.")
     parser.add_argument("--complete-text", default=DEFAULT_COMPLETE_TEXT,
                         help="Completion overlay template. Empty string disables completion overlay.")
+    parser.add_argument("--calibration-success-text", default=DEFAULT_CALIBRATION_SUCCESS_TEXT,
+                        help="Overlay shown after calibration CSV install and als-dimmer restart succeed.")
     parser.add_argument("--abort-text", default=DEFAULT_ABORT_TEXT,
                         help="Abort overlay template. Empty string disables abort overlay.")
+    parser.add_argument("--sensor-not-found-text", default=DEFAULT_SENSOR_NOT_FOUND_TEXT,
+                        help="Overlay shown when the required USB colorimeter is not detected.")
     parser.add_argument("--progress-fontsize", type=int, default=32,
                         help="disp-tester metadata font size.")
+    parser.add_argument("--require-colorimeter", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Require an i1 Display Pro USB colorimeter before starting the sweep.")
+    parser.add_argument("--colorimeter-match", action="append",
+                        default=list(DEFAULT_COLORIMETER_MATCH),
+                        help="Case-insensitive USB manufacturer/product substring accepted as the colorimeter.")
+    parser.add_argument("--colorimeter-usb-id", action="append",
+                        default=list(DEFAULT_COLORIMETER_USB_IDS),
+                        help="Accepted colorimeter USB VID:PID. Can be repeated.")
+    parser.add_argument("--usb-sysfs-root", default="/sys/bus/usb/devices",
+                        help="USB sysfs root used for colorimeter detection.")
 
     parser.add_argument("--temp-cmd",
                         help="Shell command that prints backlight temperature in degC.")
@@ -502,6 +683,20 @@ def parse_args():
                         help="Path to write CSV. Defaults to /tmp/als-dimmer-sweep-<timestamp>.csv.")
     parser.add_argument("--no-restore", action="store_true",
                         help="Do not restore original als-dimmer state on exit.")
+    parser.add_argument("--install-calibration", action="store_true",
+                        help="After a successful sweep, copy the CSV into the ALS calibration folder and restart als-dimmer.")
+    parser.add_argument("--calibration-config", default=DEFAULT_ALS_CONFIG,
+                        help="ALS config.json path used to infer the calibration target filename.")
+    parser.add_argument("--calibration-dir", default=DEFAULT_CALIBRATION_DIR,
+                        help="Directory that stores ALS calibration CSV files.")
+    parser.add_argument("--calibration-target",
+                        help="Override calibration target CSV path or filename.")
+    parser.add_argument("--calibration-fallback", default=DEFAULT_CALIBRATION_FALLBACK,
+                        help="Fallback calibration filename when config symlink is not recognized.")
+    parser.add_argument("--restart-command", default=DEFAULT_RESTART_COMMAND,
+                        help="Command used after installing calibration. Empty string skips restart.")
+    parser.add_argument("--no-calibration-sudo", action="store_true",
+                        help="Do not use non-interactive sudo for calibration install/restart.")
 
     return parser.parse_args()
 
@@ -512,18 +707,27 @@ def main():
     if not validate_args(args):
         return 2
 
+    display = DispTesterClient(args.disp_host, args.disp_port, args.disp_timeout)
+    if not check_colorimeter_or_report(display, args):
+        return 3
+
+    if not validate_output_path(args.output):
+        return 2
+
     if args.ascending:
         steps = build_step_list(min(args.start, args.end), max(args.start, args.end), args.step)
     else:
         steps = build_step_list(max(args.start, args.end), min(args.start, args.end), args.step)
 
-    display = DispTesterClient(args.disp_host, args.disp_port, args.disp_timeout)
     client = None
     recorder = None
     original_mode = None
     original_brightness = None
     output_type = "unknown"
     aborted_reason = None
+    calibration_status = "not requested"
+    calibration_target = ""
+    failed_rows = 0
 
     try:
         client = connect_als(args)
@@ -572,6 +776,7 @@ def main():
                 reason = response.get("message", "set_brightness failed")
                 print(f"  [{index}/{len(steps)}] {pct}% FAIL: {reason}", file=sys.stderr)
                 recorder.write_row(pct, None, "FAIL", None, 0)
+                failed_rows += 1
                 consecutive_failures += 1
                 if consecutive_failures >= args.max_consecutive_failures:
                     aborted_reason = f"{consecutive_failures} consecutive brightness failures"
@@ -590,6 +795,7 @@ def main():
             row_status = "OK" if nits is not None else "FAIL"
 
             if nits is None:
+                failed_rows += 1
                 consecutive_failures += 1
             else:
                 consecutive_failures = 0
@@ -623,18 +829,46 @@ def main():
             client.close()
 
         if not stop_requested():
+            if not aborted_reason and args.install_calibration:
+                if rows_written != len(steps):
+                    calibration_status = f"skipped: only {rows_written}/{len(steps)} rows captured"
+                    aborted_reason = calibration_status
+                elif failed_rows:
+                    calibration_status = f"skipped: {failed_rows} failed rows"
+                    aborted_reason = calibration_status
+                else:
+                    try:
+                        ok, calibration_target, calibration_status = install_calibration(args)
+                        if not ok:
+                            aborted_reason = f"calibration install failed: {calibration_status}"
+                    except InterruptedError:
+                        aborted_reason = f"signal {_stop_signal}"
+
             if aborted_reason:
                 if args.abort_text:
                     display.set_overlay_text(args.abort_text.format(
                         rows=rows_written,
                         total=len(steps),
                         reason=aborted_reason,
+                        output=args.output,
+                        calibration_target=calibration_target,
+                        calibration_status=calibration_status,
                     ))
+            elif args.install_calibration and args.calibration_success_text:
+                display.set_overlay_text(args.calibration_success_text.format(
+                    rows=rows_written,
+                    total=len(steps),
+                    output=args.output,
+                    calibration_target=calibration_target,
+                    calibration_status=calibration_status,
+                ))
             elif args.complete_text:
                 display.set_overlay_text(args.complete_text.format(
                     rows=rows_written,
                     total=len(steps),
                     output=args.output,
+                    calibration_target=calibration_target,
+                    calibration_status=calibration_status,
                 ))
 
     if stop_requested():
