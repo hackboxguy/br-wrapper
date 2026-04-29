@@ -92,6 +92,38 @@ The parent never waits synchronously for the child while the Qt event loop is
 running. On touch exit, TCP `quit`, SIGTERM, or SIGINT, `disp-tester` sends
 SIGTERM to the child and falls back to SIGKILL after 3 seconds.
 
+### ALS Dimmer Sweep Child Script
+
+The package also installs `/usr/bin/als-dimmer-sweep-child.py`, a simplified
+child-script variant of the ALS brightness-to-nits sweep. It assumes
+`disp-tester` is already running as its parent, sets a white pattern through
+the parent socket, drives `als-dimmer`, records `spotread` results to CSV, and
+leaves `disp-tester` open with a completion overlay when the sweep finishes.
+
+Example through `disp-tester`:
+
+```bash
+disp-tester --script /usr/bin/als-dimmer-sweep-child.py \
+  --script-arg=--output --script-arg=/tmp/sweep.csv \
+  --script-arg=--label --script-arg=warm
+```
+
+For `qt-demo-launcher` JSON, pass script options with the `--script-arg=...`
+form, especially for values that begin with `--`:
+
+```json
+"program": "/usr/bin/disp-tester",
+"arguments": [
+  "--script", "/usr/bin/als-dimmer-sweep-child.py",
+  "--script-arg=--output", "--script-arg=/tmp/sweep.csv",
+  "--script-arg=--label", "--script-arg=warm"
+]
+```
+
+The script handles SIGTERM/SIGINT by stopping any active `spotread`, restoring
+the original ALS dimmer mode/brightness when possible, flushing the partial
+CSV, and exiting. It does not send `quit` to `disp-tester`.
+
 ### Touch Navigation
 - **Left edge tap** (25%): Previous pattern
 - **Right edge tap** (25%): Next pattern  

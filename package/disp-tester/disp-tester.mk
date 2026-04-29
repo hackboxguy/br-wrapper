@@ -15,6 +15,7 @@ endef
 
 define DISP_TESTER_INSTALL_TARGET_CMDS
     $(INSTALL) -D -m 0755 $(@D)/disp-tester $(TARGET_DIR)/usr/bin/disp-tester
+    $(INSTALL) -D -m 0755 $(@D)/als-dimmer-sweep-child.py $(TARGET_DIR)/usr/bin/als-dimmer-sweep-child.py
 endef
 
 $(eval $(generic-package))

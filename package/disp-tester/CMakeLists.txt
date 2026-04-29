@@ -59,5 +59,9 @@ install(TARGETS disp-tester
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
+install(PROGRAMS src/als-dimmer-sweep-child.py
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
 message(STATUS "disp-tester: configured")
 message(STATUS "  Install binary to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")
