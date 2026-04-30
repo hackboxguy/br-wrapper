@@ -32,6 +32,26 @@ Window {
     // Adaptive layout: use two columns on wide screens (aspect ratio > 2.0)
     property bool wideScreen: Screen.width / Screen.height > 2.0
 
+    function absoluteNitsText() {
+        if (!alsDimmer.connected) {
+            return "Nits: ---";
+        }
+        if (alsDimmer.absoluteBrightnessValid) {
+            return "Nits: " + alsDimmer.absoluteBrightnessNits.toFixed(1);
+        }
+        return alsDimmer.absoluteBrightnessCalibrated ? "Nits: ---" : "Nits: uncal";
+    }
+
+    function absoluteNitsColor() {
+        if (!alsDimmer.connected) {
+            return "#888888";
+        }
+        if (!alsDimmer.absoluteBrightnessValid && alsDimmer.absoluteBrightnessCalibrated) {
+            return "#888888";
+        }
+        return alsDimmer.absoluteBrightnessCalibrated ? "#27ae60" : "#e74c3c";
+    }
+
     // Sync user preference when we first receive the actual mode from als-dimmer
     Connections {
         target: alsDimmer
@@ -357,6 +377,19 @@ Window {
 
                         RowLayout {
                             Layout.fillWidth: true
+                            spacing: 15
+
+                            Item { Layout.preferredWidth: 185 }
+
+                            Text {
+                                text: absoluteNitsText()
+                                font.pixelSize: 22
+                                font.bold: true
+                                color: absoluteNitsColor()
+                                Layout.preferredWidth: 190
+                                elide: Text.ElideRight
+                                maximumLineCount: 1
+                            }
 
                             Item { Layout.fillWidth: true }
 
@@ -923,7 +956,7 @@ Window {
             // Brightness Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 180
+                Layout.preferredHeight: 210
                 color: "#0f3460"
                 radius: 10
 
@@ -1099,12 +1132,30 @@ Window {
                             font.pixelSize: 22
                             color: "#888888"
                         }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 15
+
+                        Item { Layout.preferredWidth: 185 }
+
+                        Text {
+                            text: absoluteNitsText()
+                            font.pixelSize: 22
+                            font.bold: true
+                            color: absoluteNitsColor()
+                            Layout.preferredWidth: 190
+                            elide: Text.ElideRight
+                            maximumLineCount: 1
+                        }
+
+                        Item { Layout.fillWidth: true }
 
                         Text {
                             text: "Zone: " + (alsDimmer.connected ? alsDimmer.zone : "---")
                             font.pixelSize: 22
                             color: "#888888"
-                            Layout.leftMargin: 20
                         }
                     }
                 }

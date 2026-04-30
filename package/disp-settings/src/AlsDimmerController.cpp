@@ -2,6 +2,7 @@
 #include "config.h"
 #include <QJsonDocument>
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QDebug>
 
 AlsDimmerController::AlsDimmerController(QObject *parent)
@@ -13,6 +14,9 @@ AlsDimmerController::AlsDimmerController(QObject *parent)
     , m_brightness(50)
     , m_pendingBrightness(50)
     , m_luxValue(0.0)
+    , m_absoluteBrightnessNits(0.0)
+    , m_absoluteBrightnessValid(false)
+    , m_absoluteBrightnessCalibrated(false)
     , m_mode("unknown")
     , m_zone("unknown")
     , m_connected(false)
@@ -182,14 +186,11 @@ void AlsDimmerController::parseResponse(const QByteArray &data)
 
 void AlsDimmerController::handleStatusResponse(const QJsonObject &data)
 {
-    bool changed = false;
-
     // Update brightness
     if (data.contains("brightness")) {
         int newBrightness = data["brightness"].toInt();
         if (newBrightness != m_brightness) {
             m_brightness = newBrightness;
-            changed = true;
             emit brightnessChanged();
         }
     }
@@ -204,6 +205,40 @@ void AlsDimmerController::handleStatusResponse(const QJsonObject &data)
         }
     } else {
         qDebug() << "AlsDimmerController: Status response missing 'lux' field";
+    }
+
+    bool absoluteChanged = false;
+
+    if (data.contains("calibrated")) {
+        bool newCalibrated = data["calibrated"].toBool(false);
+        if (newCalibrated != m_absoluteBrightnessCalibrated) {
+            m_absoluteBrightnessCalibrated = newCalibrated;
+            absoluteChanged = true;
+        }
+    } else if (m_absoluteBrightnessCalibrated) {
+        m_absoluteBrightnessCalibrated = false;
+        absoluteChanged = true;
+    }
+
+    QJsonValue nitsValue = data.value("nits");
+    if (nitsValue.isDouble()) {
+        double newNits = nitsValue.toDouble();
+        if (!m_absoluteBrightnessValid || qAbs(newNits - m_absoluteBrightnessNits) > 0.05) {
+            m_absoluteBrightnessNits = newNits;
+            absoluteChanged = true;
+        }
+        if (!m_absoluteBrightnessValid) {
+            m_absoluteBrightnessValid = true;
+            absoluteChanged = true;
+        }
+    } else if (m_absoluteBrightnessValid) {
+        m_absoluteBrightnessNits = 0.0;
+        m_absoluteBrightnessValid = false;
+        absoluteChanged = true;
+    }
+
+    if (absoluteChanged) {
+        emit absoluteBrightnessChanged();
     }
 
     // Update mode

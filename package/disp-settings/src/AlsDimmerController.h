@@ -13,6 +13,9 @@ class AlsDimmerController : public QObject
     // Properties exposed to QML
     Q_PROPERTY(int brightness READ brightness NOTIFY brightnessChanged)
     Q_PROPERTY(double luxValue READ luxValue NOTIFY luxValueChanged)
+    Q_PROPERTY(double absoluteBrightnessNits READ absoluteBrightnessNits NOTIFY absoluteBrightnessChanged)
+    Q_PROPERTY(bool absoluteBrightnessValid READ absoluteBrightnessValid NOTIFY absoluteBrightnessChanged)
+    Q_PROPERTY(bool absoluteBrightnessCalibrated READ absoluteBrightnessCalibrated NOTIFY absoluteBrightnessChanged)
     Q_PROPERTY(QString mode READ mode NOTIFY modeChanged)
     Q_PROPERTY(QString zone READ zone NOTIFY zoneChanged)
     Q_PROPERTY(bool adaptiveEnabled READ adaptiveEnabled NOTIFY modeChanged)
@@ -25,6 +28,9 @@ public:
     // Property getters
     int brightness() const { return m_brightness; }
     double luxValue() const { return m_luxValue; }
+    double absoluteBrightnessNits() const { return m_absoluteBrightnessNits; }
+    bool absoluteBrightnessValid() const { return m_absoluteBrightnessValid; }
+    bool absoluteBrightnessCalibrated() const { return m_absoluteBrightnessCalibrated; }
     QString mode() const { return m_mode; }
     QString zone() const { return m_zone; }
     bool adaptiveEnabled() const { return m_mode == "auto"; }
@@ -44,6 +50,7 @@ public slots:
 signals:
     void brightnessChanged();
     void luxValueChanged();
+    void absoluteBrightnessChanged();
     void modeChanged();
     void zoneChanged();
     void connectedChanged();
@@ -73,6 +80,9 @@ private:
     int m_brightness;
     int m_pendingBrightness;
     double m_luxValue;
+    double m_absoluteBrightnessNits;
+    bool m_absoluteBrightnessValid;
+    bool m_absoluteBrightnessCalibrated;
     QString m_mode;
     QString m_zone;
     bool m_connected;
