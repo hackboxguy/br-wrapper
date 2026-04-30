@@ -508,6 +508,27 @@ def fmt_float(value, precision=1, suffix=""):
     return f"{number:.{precision}f}{suffix}"
 
 
+def delta_percent(measurement, status_data, absolute_data):
+    if not measurement:
+        return None
+    absolute_nits = as_float(absolute_data.get("nits"))
+    if absolute_nits is None:
+        absolute_nits = as_float(status_data.get("nits"))
+    if absolute_nits is None or absolute_nits <= 0:
+        return None
+    return ((measurement["Y"] - absolute_nits) / absolute_nits) * 100.0
+
+
+def overlay_alert_needed(measurement, spotread_error, status_data,
+                         absolute_data, als_error, args):
+    if als_error:
+        return True
+    if spotread_error and not measurement:
+        return True
+    pct = delta_percent(measurement, status_data, absolute_data)
+    return pct is not None and abs(pct) > args.delta_alert_percent
+
+
 def format_live_message(measurement, spotread_error, temp, status_data,
                         absolute_data, als_error):
     lines = ["Live Measurement"]
@@ -518,7 +539,7 @@ def format_live_message(measurement, spotread_error, temp, status_data,
         lines.append(f"x: {measurement['x']:.4f}  y: {measurement['y']:.4f}")
     elif spotread_error:
         measured_nits = None
-        lines.append("Measured: spotread failed")
+        lines.append("Measured: sensor error")
     else:
         measured_nits = None
         lines.append("Measured: waiting")
@@ -548,18 +569,8 @@ def format_live_message(measurement, spotread_error, temp, status_data,
 
     lines.append(f"BL Temp: {fmt_float(temp, 1, ' C')}")
 
-    mode = status_data.get("mode", "NA")
-    lux = fmt_float(status_data.get("lux"), 1)
-    sensor_status = status_data.get("sensor_status")
-    mode_line = f"Mode: {mode}  Lux: {lux}"
-    if sensor_status:
-        mode_line += f"  Sensor: {sensor_status}"
-    lines.append(mode_line)
-
     if als_error:
-        lines.append(f"ALS: {als_error}")
-    elif spotread_error and not measurement:
-        lines.append(f"spotread: {one_line(spotread_error, 48)}")
+        lines.append("ALS: read error")
 
     return "\n".join(lines)
 
@@ -570,6 +581,7 @@ def setup_display(display, args):
     display.best_effort("set-metadata-status enable")
     display.best_effort(f"set-metadata-fontsize {args.progress_fontsize}")
     display.best_effort(f"set-metadata-align {args.metadata_align}")
+    display.best_effort(f"set-metadata-color {args.normal_color}")
     display.set_overlay_text(args.initial_text)
 
 
@@ -582,6 +594,9 @@ def validate_args(args):
         return False
     if args.max_samples < 0:
         print("error: --max-samples must be >= 0", file=sys.stderr)
+        return False
+    if args.delta_alert_percent < 0:
+        print("error: --delta-alert-percent must be >= 0", file=sys.stderr)
         return False
     if not (8 <= args.progress_fontsize <= 48):
         print("error: --progress-fontsize must be in [8, 48]", file=sys.stderr)
@@ -637,6 +652,12 @@ def parse_args():
                         help="disp-tester metadata font size.")
     parser.add_argument("--metadata-align", default="left",
                         help="disp-tester metadata alignment: left, center, or right.")
+    parser.add_argument("--normal-color", default="white",
+                        help="disp-tester metadata color used when values are in range.")
+    parser.add_argument("--alert-color", default="red",
+                        help="disp-tester metadata color used for sensor errors or large delta.")
+    parser.add_argument("--delta-alert-percent", type=float, default=5.0,
+                        help="Turn overlay alert color when measured-vs-ALS delta exceeds this percent.")
 
     parser.add_argument("--require-colorimeter", action=argparse.BooleanOptionalAction,
                         default=True,
@@ -709,6 +730,7 @@ def main():
                     message = args.sensor_not_found_text + "\n" + "\n".join(
                         message.splitlines()[2:]
                     )
+                display.best_effort(f"set-metadata-color {args.alert_color}")
                 display.set_overlay_text(message)
                 if not interruptible_sleep(args.interval_seconds):
                     break
@@ -727,6 +749,16 @@ def main():
                 absolute_data,
                 als_error,
             )
+            alert = overlay_alert_needed(
+                measurement,
+                spotread_error,
+                status_data,
+                absolute_data,
+                als_error,
+                args,
+            )
+            color = args.alert_color if alert else args.normal_color
+            display.best_effort(f"set-metadata-color {color}")
             display.set_overlay_text(message)
             samples += 1
 
@@ -745,6 +777,7 @@ def main():
         pass
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
+        display.best_effort(f"set-metadata-color {args.alert_color}")
         display.set_overlay_text(f"Live Measurement\nError: {one_line(e, 80)}")
         return 1
     finally:

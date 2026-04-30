@@ -192,8 +192,9 @@ The package also installs `/usr/bin/live-measurements-child.py`, a read-only
 child script for live spot checks. It shows a white pattern, repeatedly takes
 one `spotread` xyY sample, reads backlight temperature from the display-manager
 I2C diagnostics register when available, reads `als-dimmer` status plus
-`get_absolute_brightness`, and updates the bottom-right overlay. It does not
-change ALS mode, brightness, or calibration.
+`get_absolute_brightness` for brightness percent and absolute nits, and updates
+the bottom-right overlay. It does not change ALS mode, brightness, or
+calibration.
 
 ```bash
 disp-tester --script /usr/bin/live-measurements-child.py \
@@ -203,6 +204,12 @@ disp-tester --script /usr/bin/live-measurements-child.py \
 The update cadence is one `spotread` attempt, immediate overlay update, then
 `--interval-seconds` sleep before the next attempt. The default interval is 2s;
 use `--interval-seconds 0` only for short lab/debug runs.
+
+The live overlay uses the normal metadata color when readings are healthy and
+turns the whole overlay red for sensor read errors, ALS read errors, or when
+the measured-vs-ALS delta exceeds `--delta-alert-percent` (default 5%).
+Spotread failures are shown as a short `Measured: sensor error` line so the
+overlay size stays stable.
 
 ### Touch Navigation
 - **Left edge tap** (25%): Previous pattern
