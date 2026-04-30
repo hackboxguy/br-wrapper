@@ -17,6 +17,7 @@ import argparse
 import csv
 import datetime
 import json
+import math
 import os
 import re
 import signal
@@ -62,6 +63,11 @@ DEFAULT_SENSOR_NOT_FOUND_TEXT = (
     "Connect USB colorimeter\\n"
     "Sweep not started"
 )
+DEFAULT_SENSOR_DISCONNECTED_TEXT = (
+    "i1 Display Pro Disconnected\\n"
+    "Reconnect USB colorimeter\\n"
+    "Sweep aborted"
+)
 DEFAULT_PLACEMENT_TEXT = (
     "Place i1 Display Pro\\n"
     "At center of white screen\\n"
@@ -86,12 +92,17 @@ DEFAULT_COLORIMETER_MATCH = [
 DEFAULT_COLORIMETER_USB_IDS = [
     "0765:5020",
 ]
+CSV_HEADER = ["brightness_pct", "nits", "status", "backlight_temp_c", "retries"]
 
 _YXY_RE = re.compile(r"Result is XYZ:.*Yxy:\s*([0-9.]+)")
 
 _stop_requested = False
 _stop_signal = None
 _active_process = None
+
+
+class ColorimeterDisconnectedError(RuntimeError):
+    pass
 
 
 def _signal_handler(signum, _frame):
@@ -269,7 +280,7 @@ class CsvRecorder:
         self.file.write(f"# planned_steps={self.total_steps}\n")
         if self.args.temp_cmd:
             self.file.write(f"# temp_source_cmd={one_line(self.args.temp_cmd, 200)}\n")
-        self.writer.writerow(["brightness_pct", "nits", "status", "backlight_temp_c", "retries"])
+        self.writer.writerow(CSV_HEADER)
 
     def write_row(self, pct, nits, status, temp, retries):
         nits_str = f"{nits:.4f}" if nits is not None else ""
@@ -366,6 +377,11 @@ def find_colorimeter(match_terms, usb_ids, sysfs_root="/sys/bus/usb/devices"):
     return None
 
 
+def find_configured_colorimeter(args):
+    return find_colorimeter(args.colorimeter_match, args.colorimeter_usb_id,
+                            args.usb_sysfs_root)
+
+
 def show_status_message(display, args, message):
     display.best_effort("set-metadata-status enable")
     display.best_effort(f"set-metadata-fontsize {args.progress_fontsize}")
@@ -376,8 +392,7 @@ def check_colorimeter_or_report(display, args):
     if not args.require_colorimeter:
         return True
 
-    device = find_colorimeter(args.colorimeter_match, args.colorimeter_usb_id,
-                              args.usb_sysfs_root)
+    device = find_configured_colorimeter(args)
     if device:
         print(f"colorimeter found: {device['usb_id']} {device['text']}", file=sys.stderr)
         return True
@@ -385,6 +400,25 @@ def check_colorimeter_or_report(display, args):
     print("error: i1 Display Pro USB colorimeter not found", file=sys.stderr)
     show_status_message(display, args, args.sensor_not_found_text)
     return False
+
+
+def check_colorimeter_still_connected(display, args):
+    if not args.require_colorimeter or not args.check_colorimeter_during_sweep:
+        return True
+
+    if find_configured_colorimeter(args):
+        return True
+
+    print("error: i1 Display Pro USB colorimeter disconnected", file=sys.stderr)
+    show_status_message(display, args, args.sensor_disconnected_text)
+    return False
+
+
+def require_colorimeter_still_connected(display, args):
+    if not check_colorimeter_still_connected(display, args):
+        raise ColorimeterDisconnectedError(
+            "i1 Display Pro USB colorimeter disconnected"
+        )
 
 
 def build_step_list(start, end, step):
@@ -452,9 +486,12 @@ def run_admin_command(argv, timeout, use_sudo=True, shell=False):
     return run_process_capture(argv, timeout, shell=shell)
 
 
-def measure_nits(max_retries, retry_sleep_s, spotread_timeout):
+def measure_nits(max_retries, retry_sleep_s, spotread_timeout, before_attempt=None):
     retries = 0
     for attempt in range(max_retries + 1):
+        if before_attempt:
+            before_attempt()
+
         try:
             out = run_process_capture(["spotread", "-x", "-O"], spotread_timeout)
         except InterruptedError:
@@ -556,6 +593,95 @@ def install_calibration(args):
     return True, target, "installed"
 
 
+def validate_sweep_csv(path, expected_steps, args):
+    try:
+        if not os.path.exists(path):
+            return False, "output CSV missing"
+        if os.path.getsize(path) == 0:
+            return False, "output CSV empty"
+
+        with open(path, "r", newline="", encoding="utf-8", errors="replace") as f:
+            data_lines = (
+                line for line in f
+                if line.strip() and not line.lstrip().startswith("#")
+            )
+            reader = csv.reader(data_lines)
+            header = next(reader, None)
+            rows = list(reader)
+    except OSError as e:
+        return False, f"cannot read output CSV: {one_line(str(e), 120)}"
+    except csv.Error as e:
+        return False, f"cannot parse output CSV: {one_line(str(e), 120)}"
+
+    if header != CSV_HEADER:
+        return False, "unexpected CSV header"
+    if len(rows) != len(expected_steps):
+        return False, f"expected {len(expected_steps)} rows, found {len(rows)}"
+
+    expected = [int(step) for step in expected_steps]
+    observed = []
+    nits_by_pct = {}
+    nits_values = []
+
+    for row_index, row in enumerate(rows, start=1):
+        if len(row) != len(CSV_HEADER):
+            return False, f"row {row_index} has {len(row)} columns"
+
+        try:
+            brightness_pct = int(row[0])
+        except ValueError:
+            return False, f"row {row_index} has invalid brightness"
+
+        status = row[2].strip()
+        if status != "OK":
+            return False, f"row {row_index} status is {status or 'empty'}"
+
+        try:
+            nits = float(row[1])
+        except ValueError:
+            return False, f"row {row_index} has invalid nits"
+
+        if not math.isfinite(nits) or nits < 0:
+            return False, f"row {row_index} has invalid nits"
+
+        if row[3].strip():
+            try:
+                temp = float(row[3])
+            except ValueError:
+                return False, f"row {row_index} has invalid temperature"
+            if not math.isfinite(temp):
+                return False, f"row {row_index} has invalid temperature"
+
+        try:
+            retries = int(row[4])
+        except ValueError:
+            return False, f"row {row_index} has invalid retries"
+        if retries < 0:
+            return False, f"row {row_index} has invalid retries"
+
+        observed.append(brightness_pct)
+        nits_by_pct[brightness_pct] = nits
+        nits_values.append(nits)
+
+    if observed != expected:
+        return False, "brightness steps do not match the requested sweep"
+    if len(set(observed)) != len(observed):
+        return False, "duplicate brightness steps found"
+
+    if args.placement_check and 100 in nits_by_pct:
+        fullscale_nits = nits_by_pct[100]
+        if fullscale_nits < args.placement_min_nits:
+            return False, (
+                f"100% row is {fullscale_nits:.1f} nits, "
+                f"below {args.placement_min_nits:.0f}"
+            )
+
+    if len(nits_values) > 1 and max(nits_values) <= min(nits_values):
+        return False, "nits did not change across sweep"
+
+    return True, "ok"
+
+
 def format_placement_message(template, args, nits=None, attempt=1,
                              elapsed_seconds=0.0):
     nits_text = f"{nits:.1f}" if nits is not None else "NA"
@@ -586,6 +712,8 @@ def wait_for_colorimeter_placement(client, display, args):
     start = time.monotonic()
     attempt = 1
     while not stop_requested():
+        require_colorimeter_still_connected(display, args)
+
         elapsed = time.monotonic() - start
         nits, _retries = measure_nits(0, args.retry_sleep, args.spotread_timeout)
         if nits is not None and nits >= args.placement_min_nits:
@@ -691,6 +819,7 @@ def validate_args(args):
     }
     for name in ("complete_text", "calibration_success_text",
                  "abort_text", "sensor_not_found_text",
+                 "sensor_disconnected_text",
                  "placement_text", "placement_success_text",
                  "placement_failed_text"):
         template = getattr(args, name)
@@ -762,6 +891,8 @@ def parse_args():
                         help="Abort overlay template. Empty string disables abort overlay.")
     parser.add_argument("--sensor-not-found-text", default=DEFAULT_SENSOR_NOT_FOUND_TEXT,
                         help="Overlay shown when the required USB colorimeter is not detected.")
+    parser.add_argument("--sensor-disconnected-text", default=DEFAULT_SENSOR_DISCONNECTED_TEXT,
+                        help="Overlay shown when the USB colorimeter is disconnected during the sweep.")
     parser.add_argument("--placement-check", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="Require an initial bright reading before starting the sweep.")
@@ -786,6 +917,9 @@ def parse_args():
     parser.add_argument("--require-colorimeter", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="Require an i1 Display Pro USB colorimeter before starting the sweep.")
+    parser.add_argument("--check-colorimeter-during-sweep", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Re-check the USB colorimeter before measurements and abort cleanly if disconnected.")
     parser.add_argument("--colorimeter-match", action="append",
                         default=list(DEFAULT_COLORIMETER_MATCH),
                         help="Case-insensitive USB manufacturer/product substring accepted as the colorimeter.")
@@ -897,6 +1031,11 @@ def main():
                 aborted_reason = f"signal {_stop_signal}"
                 break
 
+            if not check_colorimeter_still_connected(display, args):
+                aborted_reason = "i1 Display Pro USB colorimeter disconnected"
+                suppress_abort_overlay = True
+                break
+
             response = client.call("set_brightness", brightness=int(pct))
             if not response_ok(response):
                 reason = response.get("message", "set_brightness failed")
@@ -915,8 +1054,19 @@ def main():
                 aborted_reason = f"signal {_stop_signal}"
                 break
 
-            nits, retries = measure_nits(args.max_retries, args.retry_sleep,
-                                         args.spotread_timeout)
+            if not check_colorimeter_still_connected(display, args):
+                aborted_reason = "i1 Display Pro USB colorimeter disconnected"
+                suppress_abort_overlay = True
+                break
+
+            nits, retries = measure_nits(
+                args.max_retries,
+                args.retry_sleep,
+                args.spotread_timeout,
+                before_attempt=lambda: require_colorimeter_still_connected(
+                    display, args
+                ),
+            )
             temp = read_temp(args.temp_cmd)
             row_status = "OK" if nits is not None else "FAIL"
 
@@ -936,6 +1086,9 @@ def main():
                 aborted_reason = f"{consecutive_failures} consecutive measurement failures"
                 break
 
+    except ColorimeterDisconnectedError as e:
+        aborted_reason = str(e)
+        suppress_abort_overlay = True
     except InterruptedError:
         aborted_reason = f"signal {_stop_signal}"
     except Exception as e:
@@ -963,12 +1116,17 @@ def main():
                     calibration_status = f"skipped: {failed_rows} failed rows"
                     aborted_reason = calibration_status
                 else:
-                    try:
-                        ok, calibration_target, calibration_status = install_calibration(args)
-                        if not ok:
-                            aborted_reason = f"calibration install failed: {calibration_status}"
-                    except InterruptedError:
-                        aborted_reason = f"signal {_stop_signal}"
+                    csv_ok, csv_reason = validate_sweep_csv(args.output, steps, args)
+                    if not csv_ok:
+                        calibration_status = f"skipped: {csv_reason}"
+                        aborted_reason = f"calibration sanity check failed: {csv_reason}"
+                    else:
+                        try:
+                            ok, calibration_target, calibration_status = install_calibration(args)
+                            if not ok:
+                                aborted_reason = f"calibration install failed: {calibration_status}"
+                        except InterruptedError:
+                            aborted_reason = f"signal {_stop_signal}"
 
             if aborted_reason:
                 if args.abort_text and not suppress_abort_overlay:

@@ -131,6 +131,12 @@ brightness untouched and shows an `i1 Display Pro Not Found` message in the
 bottom-right info box. Use `--no-require-colorimeter` only for dry-runs or
 lab debugging.
 
+During the sweep, the script re-checks USB presence before each measurement
+step. This is only a sysfs scan, so the cost is negligible compared with the
+brightness settle time and `spotread`; if the colorimeter disappears, the
+partial CSV is preserved, calibration install is skipped, and the info box
+shows `i1 Display Pro Disconnected`.
+
 After the USB check passes, the script sets the display to a white pattern and
 100% brightness, then waits until `spotread` sees at least 250 nits. This is a
 placement check for the colorimeter: if the reading is too low, the bottom-right
@@ -149,8 +155,11 @@ copies the CSV into the matching calibration target:
 
 It then runs `systemctl restart als-dimmer`. If the script is not running as
 root, it uses `sudo -n` so it fails quickly instead of waiting for a password.
-After the copy and restart succeed, the info box shows `Brightness Calibration
-Success`.
+Before copying, the script re-opens the CSV on disk and checks that the header,
+row count, brightness steps, row status, nits values, and 100% brightness sanity
+look valid. A partial or broken `/tmp/warm.csv` is not copied over the existing
+calibration. After the copy and restart succeed, the info box shows
+`Brightness Calibration Success`.
 
 ```json
 "arguments": [
