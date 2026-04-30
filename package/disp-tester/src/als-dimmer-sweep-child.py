@@ -1002,6 +1002,9 @@ def parse_args():
                         help="Seconds between spotread retries.")
     parser.add_argument("--spotread-timeout", type=float, default=15.0,
                         help="Timeout for each spotread attempt.")
+    parser.add_argument("--zero-nits-on-zero-fail", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Treat a failed spotread at exactly 0%% brightness as 0.0 nits.")
     parser.add_argument("--max-consecutive-failures", type=int, default=10,
                         help="Abort after this many consecutive failed rows.")
 
@@ -1119,6 +1122,7 @@ def main():
     calibration_target = ""
     failed_rows = 0
     suppress_abort_overlay = False
+    zero_nits_fallback_used = False
 
     try:
         client = connect_als(args)
@@ -1207,6 +1211,17 @@ def main():
                     display, args
                 ),
             )
+
+            if nits is None and int(pct) == 0 and args.zero_nits_on_zero_fail:
+                if not check_colorimeter_still_connected(display, args):
+                    aborted_reason = "i1 Display Pro USB colorimeter disconnected"
+                    suppress_abort_overlay = True
+                    break
+                nits = 0.0
+                zero_nits_fallback_used = True
+                print("    zero-nits fallback: treating failed 0% spotread as 0.0 nits",
+                      file=sys.stderr)
+
             temp = temperature_sampler()
             row_status = "OK" if nits is not None else "FAIL"
 
@@ -1240,6 +1255,11 @@ def main():
             if aborted_reason:
                 recorder.write_comment("aborted", aborted_reason)
             else:
+                if zero_nits_fallback_used:
+                    recorder.write_comment(
+                        "zero_nits_fallback",
+                        "spotread_failed_at_0_percent",
+                    )
                 recorder.write_comment("completed", "true")
             recorder.__exit__(None, None, None)
 

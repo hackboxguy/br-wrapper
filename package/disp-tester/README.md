@@ -144,6 +144,12 @@ is not present or a row read fails, the temperature field is left blank and
 the sweep continues. Use `--no-i2c-temp` to disable this native probe, or
 `--temp-cmd` to override it with a custom temperature command.
 
+For local-dimming displays, `spotread` can fail at the final 0% black reading
+even when the preceding low-brightness rows are valid. By default, a failed
+measurement at exactly 0% is written as `0.0000` nits with `OK` status after
+confirming the colorimeter is still connected. Other brightness levels remain
+strict failures. Use `--no-zero-nits-on-zero-fail` to disable this fallback.
+
 After the USB check passes, the script sets the display to a white pattern and
 100% brightness, then waits until `spotread` sees at least 250 nits. This is a
 placement check for the colorimeter: if the reading is too low, the bottom-right
