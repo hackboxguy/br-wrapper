@@ -243,7 +243,7 @@
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/disp-tester",
         "arguments": [
-          "--script", "/usr/bin/als-dimmer-sweep-child.py",
+          "--script", "/home/pi/micropanel/bin/als-dimmer-sweep-child.py",
           "--script-arg=--output", "--script-arg=/tmp/warm.csv",
           "--script-arg=--label", "--script-arg=warm",
           "--script-arg=--warmup-seconds", "--script-arg=5",
