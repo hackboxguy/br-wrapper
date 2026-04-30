@@ -137,6 +137,13 @@ brightness settle time and `spotread`; if the colorimeter disappears, the
 partial CSV is preserved, calibration install is skipped, and the info box
 shows `i1 Display Pro Disconnected`.
 
+Each row can also include `backlight_temp_c`. By default the script probes
+`/dev/i2c-1`, slave `0x66`, register `0x1002`, and reads the display_manager
+backlight NTC temperature as signed big-endian `degC x10`. If that I2C slave
+is not present or a row read fails, the temperature field is left blank and
+the sweep continues. Use `--no-i2c-temp` to disable this native probe, or
+`--temp-cmd` to override it with a custom temperature command.
+
 After the USB check passes, the script sets the display to a white pattern and
 100% brightness, then waits until `spotread` sees at least 250 nits. This is a
 placement check for the colorimeter: if the reading is too low, the bottom-right

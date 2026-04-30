@@ -15,7 +15,9 @@ quickly as possible and exits, allowing disp-tester to finish shutting down.
 
 import argparse
 import csv
+import ctypes
 import datetime
+import fcntl
 import json
 import math
 import os
@@ -34,6 +36,9 @@ DEFAULT_ALS_CONFIG = "/home/pi/als-dimmer/etc/als-dimmer/config.json"
 DEFAULT_CALIBRATION_DIR = "/home/pi/als-dimmer/etc/als-dimmer/calibrations"
 DEFAULT_CALIBRATION_FALLBACK = "dimmer_2048.csv"
 DEFAULT_RESTART_COMMAND = "systemctl restart als-dimmer"
+DEFAULT_I2C_TEMP_BUS = "/dev/i2c-1"
+DEFAULT_I2C_TEMP_ADDRESS = 0x66
+DEFAULT_I2C_TEMP_REGISTER = 0x1002
 CONFIG_CALIBRATION_MAP = {
     "config_fpga_opti4001_dimmer2048.json": "dimmer_2048.csv",
     "config_opti4001_boepwm.json": "boe_pwm_2khz_reference.csv",
@@ -94,6 +99,9 @@ DEFAULT_COLORIMETER_USB_IDS = [
 ]
 CSV_HEADER = ["brightness_pct", "nits", "status", "backlight_temp_c", "retries"]
 
+I2C_RDWR = 0x0707
+I2C_M_RD = 0x0001
+
 _YXY_RE = re.compile(r"Result is XYZ:.*Yxy:\s*([0-9.]+)")
 
 _stop_requested = False
@@ -103,6 +111,22 @@ _active_process = None
 
 class ColorimeterDisconnectedError(RuntimeError):
     pass
+
+
+class I2cMsg(ctypes.Structure):
+    _fields_ = [
+        ("addr", ctypes.c_uint16),
+        ("flags", ctypes.c_uint16),
+        ("len", ctypes.c_uint16),
+        ("buf", ctypes.POINTER(ctypes.c_uint8)),
+    ]
+
+
+class I2cRdwrIoctlData(ctypes.Structure):
+    _fields_ = [
+        ("msgs", ctypes.POINTER(I2cMsg)),
+        ("nmsgs", ctypes.c_uint32),
+    ]
 
 
 def _signal_handler(signum, _frame):
@@ -280,6 +304,10 @@ class CsvRecorder:
         self.file.write(f"# planned_steps={self.total_steps}\n")
         if self.args.temp_cmd:
             self.file.write(f"# temp_source_cmd={one_line(self.args.temp_cmd, 200)}\n")
+        elif self.args.temp_source_description:
+            self.file.write(
+                f"# temp_source={one_line(self.args.temp_source_description, 200)}\n"
+            )
         self.writer.writerow(CSV_HEADER)
 
     def write_row(self, pct, nits, status, temp, retries):
@@ -522,6 +550,98 @@ def read_temp(temp_cmd):
         return None
     match = re.search(r"-?\d+(\.\d+)?", out)
     return float(match.group(0)) if match else None
+
+
+def parse_int_auto(value):
+    try:
+        return int(str(value), 0)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
+
+
+def i2c_read_register(bus_path, address, register, length):
+    write_buf = (ctypes.c_uint8 * 2)(
+        (register >> 8) & 0xFF,
+        register & 0xFF,
+    )
+    read_buf = (ctypes.c_uint8 * length)()
+    messages = (I2cMsg * 2)(
+        I2cMsg(
+            ctypes.c_uint16(address),
+            ctypes.c_uint16(0),
+            ctypes.c_uint16(len(write_buf)),
+            ctypes.cast(write_buf, ctypes.POINTER(ctypes.c_uint8)),
+        ),
+        I2cMsg(
+            ctypes.c_uint16(address),
+            ctypes.c_uint16(I2C_M_RD),
+            ctypes.c_uint16(length),
+            ctypes.cast(read_buf, ctypes.POINTER(ctypes.c_uint8)),
+        ),
+    )
+    ioctl_data = I2cRdwrIoctlData(
+        ctypes.cast(messages, ctypes.POINTER(I2cMsg)),
+        ctypes.c_uint32(len(messages)),
+    )
+
+    with open(bus_path, "rb+", buffering=0) as bus:
+        fcntl.ioctl(bus.fileno(), I2C_RDWR, ioctl_data)
+
+    return bytes(read_buf)
+
+
+def read_i2c_backlight_temp(args):
+    if stop_requested():
+        return None
+    raw = i2c_read_register(
+        args.i2c_temp_bus,
+        args.i2c_temp_address,
+        args.i2c_temp_register,
+        2,
+    )
+    value = int.from_bytes(raw, byteorder="big", signed=True)
+    temp = value / 10.0
+    if not math.isfinite(temp):
+        raise ValueError("temperature is not finite")
+    return temp
+
+
+def setup_temperature_sampler(args):
+    args.temp_source_description = ""
+    if args.temp_cmd is not None:
+        return lambda: read_temp(args.temp_cmd)
+    if not args.i2c_temp:
+        return lambda: None
+
+    source = (
+        f"i2c:{args.i2c_temp_bus}@0x{args.i2c_temp_address:02X}"
+        f"/0x{args.i2c_temp_register:04X}"
+    )
+    try:
+        temp = read_i2c_backlight_temp(args)
+    except (OSError, ValueError) as e:
+        print(f"warning: backlight temperature sensor unavailable ({source}): {e}",
+              file=sys.stderr)
+        return lambda: None
+
+    args.temp_source_description = source
+    print(f"backlight temperature sensor found: {source} ({temp:.1f}C)",
+          file=sys.stderr)
+
+    warned = False
+
+    def sample():
+        nonlocal warned
+        try:
+            return read_i2c_backlight_temp(args)
+        except (OSError, ValueError) as e:
+            if not warned:
+                print(f"warning: backlight temperature read failed: {e}",
+                      file=sys.stderr)
+                warned = True
+            return None
+
+    return sample
 
 
 def response_ok(response):
@@ -793,6 +913,14 @@ def validate_args(args):
     if args.placement_timeout_seconds < 0:
         print("error: --placement-timeout-seconds must be >= 0", file=sys.stderr)
         return False
+    if not (0 <= args.i2c_temp_address <= 0x7F):
+        print("error: --i2c-temp-address must be a 7-bit I2C address",
+              file=sys.stderr)
+        return False
+    if not (0 <= args.i2c_temp_register <= 0xFFFF):
+        print("error: --i2c-temp-register must be in [0, 0xFFFF]",
+              file=sys.stderr)
+        return False
     if not (8 <= args.progress_fontsize <= 48):
         print("error: --progress-fontsize must be in [8, 48]", file=sys.stderr)
         return False
@@ -930,7 +1058,18 @@ def parse_args():
                         help="USB sysfs root used for colorimeter detection.")
 
     parser.add_argument("--temp-cmd",
-                        help="Shell command that prints backlight temperature in degC.")
+                        help="Shell command that prints backlight temperature in degC. Overrides native I2C temp sampling.")
+    parser.add_argument("--i2c-temp", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Sample backlight temperature from the display_manager I2C diagnostics registers.")
+    parser.add_argument("--i2c-temp-bus", default=DEFAULT_I2C_TEMP_BUS,
+                        help="Linux I2C device used for native backlight temperature sampling.")
+    parser.add_argument("--i2c-temp-address", type=parse_int_auto,
+                        default=DEFAULT_I2C_TEMP_ADDRESS,
+                        help="7-bit I2C address for display_manager temperature diagnostics.")
+    parser.add_argument("--i2c-temp-register", type=parse_int_auto,
+                        default=DEFAULT_I2C_TEMP_REGISTER,
+                        help="16-bit register containing signed temperature x10.")
     parser.add_argument("--label", default="",
                         help="Free-form label written into CSV header.")
     parser.add_argument("--output", default=default_output_path(),
@@ -1012,6 +1151,7 @@ def main():
         if not validate_output_path(args.output):
             raise RuntimeError(f"cannot write output CSV {args.output}")
 
+        temperature_sampler = setup_temperature_sampler(args)
         recorder = CsvRecorder(args.output, args, output_type, len(steps))
         recorder.__enter__()
 
@@ -1067,7 +1207,7 @@ def main():
                     display, args
                 ),
             )
-            temp = read_temp(args.temp_cmd)
+            temp = temperature_sampler()
             row_status = "OK" if nits is not None else "FAIL"
 
             if nits is None:
