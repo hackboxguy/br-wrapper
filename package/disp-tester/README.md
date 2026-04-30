@@ -131,6 +131,14 @@ brightness untouched and shows an `i1 Display Pro Not Found` message in the
 bottom-right info box. Use `--no-require-colorimeter` only for dry-runs or
 lab debugging.
 
+After the USB check passes, the script sets the display to a white pattern and
+100% brightness, then waits until `spotread` sees at least 250 nits. This is a
+placement check for the colorimeter: if the reading is too low, the bottom-right
+info box asks the user to place the i1 Display Pro at the center of the lit
+screen. The default wait has no timeout and can be cancelled with the on-screen
+EXIT button. Use `--placement-min-nits`, `--placement-timeout-seconds`, or
+`--no-placement-check` to tune this behavior.
+
 To apply a successful sweep automatically, add `--install-calibration`. The
 child script resolves `/home/pi/als-dimmer/etc/als-dimmer/config.json` and
 copies the CSV into the matching calibration target:

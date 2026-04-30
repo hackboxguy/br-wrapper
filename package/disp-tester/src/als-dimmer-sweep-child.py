@@ -62,6 +62,21 @@ DEFAULT_SENSOR_NOT_FOUND_TEXT = (
     "Connect USB colorimeter\\n"
     "Sweep not started"
 )
+DEFAULT_PLACEMENT_TEXT = (
+    "Place i1 Display Pro\\n"
+    "At center of white screen\\n"
+    "Current: {nits_text} nits"
+)
+DEFAULT_PLACEMENT_SUCCESS_TEXT = (
+    "Colorimeter Placement OK\\n"
+    "Initial: {nits:.1f} nits\\n"
+    "Starting sweep"
+)
+DEFAULT_PLACEMENT_FAILED_TEXT = (
+    "Colorimeter Placement Failed\\n"
+    "Reading below {min_nits:.0f} nits\\n"
+    "Sweep not started"
+)
 DEFAULT_COLORIMETER_MATCH = [
     "i1display",
     "i1 display",
@@ -541,6 +556,69 @@ def install_calibration(args):
     return True, target, "installed"
 
 
+def format_placement_message(template, args, nits=None, attempt=1,
+                             elapsed_seconds=0.0):
+    nits_text = f"{nits:.1f}" if nits is not None else "NA"
+    return template.format(
+        nits=nits if nits is not None else 0.0,
+        nits_text=nits_text,
+        min_nits=args.placement_min_nits,
+        brightness_pct=args.placement_brightness,
+        attempt=attempt,
+        elapsed_seconds=elapsed_seconds,
+    )
+
+
+def wait_for_colorimeter_placement(client, display, args):
+    if not args.placement_check:
+        return True
+
+    show_status_message(display, args,
+                        format_placement_message(args.placement_text, args))
+
+    response = client.call("set_brightness", brightness=int(args.placement_brightness))
+    if not response_ok(response):
+        raise RuntimeError(f"placement set_brightness failed: {response}")
+
+    if not interruptible_sleep(args.placement_settle_seconds):
+        raise InterruptedError("stop requested")
+
+    start = time.monotonic()
+    attempt = 1
+    while not stop_requested():
+        elapsed = time.monotonic() - start
+        nits, _retries = measure_nits(0, args.retry_sleep, args.spotread_timeout)
+        if nits is not None and nits >= args.placement_min_nits:
+            if args.placement_success_text:
+                display.set_overlay_text(
+                    format_placement_message(args.placement_success_text, args,
+                                             nits, attempt, elapsed)
+                )
+            print(f"placement check OK: {nits:.2f} nits", file=sys.stderr)
+            return True
+
+        if args.placement_text:
+            display.set_overlay_text(
+                format_placement_message(args.placement_text, args,
+                                         nits, attempt, elapsed)
+            )
+
+        if args.placement_timeout_seconds > 0 and elapsed >= args.placement_timeout_seconds:
+            if args.placement_failed_text:
+                display.set_overlay_text(
+                    format_placement_message(args.placement_failed_text, args,
+                                             nits, attempt, elapsed)
+                )
+            print("error: colorimeter placement check timed out", file=sys.stderr)
+            return False
+
+        attempt += 1
+        if not interruptible_sleep(args.placement_retry_seconds):
+            raise InterruptedError("stop requested")
+
+    raise InterruptedError("stop requested")
+
+
 def setup_display(display, args):
     if args.pattern:
         display.command(f"pattern {args.pattern}", required=True)
@@ -572,6 +650,21 @@ def validate_args(args):
     if args.step <= 0:
         print("error: --step must be > 0", file=sys.stderr)
         return False
+    if not (0 <= args.placement_brightness <= 100):
+        print("error: --placement-brightness must be in [0, 100]", file=sys.stderr)
+        return False
+    if args.placement_min_nits <= 0:
+        print("error: --placement-min-nits must be > 0", file=sys.stderr)
+        return False
+    if args.placement_settle_seconds < 0:
+        print("error: --placement-settle-seconds must be >= 0", file=sys.stderr)
+        return False
+    if args.placement_retry_seconds <= 0:
+        print("error: --placement-retry-seconds must be > 0", file=sys.stderr)
+        return False
+    if args.placement_timeout_seconds < 0:
+        print("error: --placement-timeout-seconds must be >= 0", file=sys.stderr)
+        return False
     if not (8 <= args.progress_fontsize <= 48):
         print("error: --progress-fontsize must be in [8, 48]", file=sys.stderr)
         return False
@@ -589,9 +682,17 @@ def validate_args(args):
         "reason": "test",
         "calibration_target": "/tmp/test.csv",
         "calibration_status": "test",
+        "nits": 300.0,
+        "nits_text": "300.0",
+        "min_nits": args.placement_min_nits,
+        "brightness_pct": args.placement_brightness,
+        "attempt": 1,
+        "elapsed_seconds": 0.0,
     }
     for name in ("complete_text", "calibration_success_text",
-                 "abort_text", "sensor_not_found_text"):
+                 "abort_text", "sensor_not_found_text",
+                 "placement_text", "placement_success_text",
+                 "placement_failed_text"):
         template = getattr(args, name)
         if template:
             try:
@@ -661,6 +762,25 @@ def parse_args():
                         help="Abort overlay template. Empty string disables abort overlay.")
     parser.add_argument("--sensor-not-found-text", default=DEFAULT_SENSOR_NOT_FOUND_TEXT,
                         help="Overlay shown when the required USB colorimeter is not detected.")
+    parser.add_argument("--placement-check", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Require an initial bright reading before starting the sweep.")
+    parser.add_argument("--placement-min-nits", type=float, default=250.0,
+                        help="Minimum initial white-screen reading required before sweep starts.")
+    parser.add_argument("--placement-brightness", type=int, default=100,
+                        help="Brightness percent used for the placement check.")
+    parser.add_argument("--placement-settle-seconds", type=float, default=3.0,
+                        help="Seconds to wait after setting placement brightness before first read.")
+    parser.add_argument("--placement-retry-seconds", type=float, default=2.0,
+                        help="Seconds between placement-check reads.")
+    parser.add_argument("--placement-timeout-seconds", type=float, default=0.0,
+                        help="Abort placement check after this many seconds. 0 waits until user exits.")
+    parser.add_argument("--placement-text", default=DEFAULT_PLACEMENT_TEXT,
+                        help="Overlay shown while waiting for colorimeter placement.")
+    parser.add_argument("--placement-success-text", default=DEFAULT_PLACEMENT_SUCCESS_TEXT,
+                        help="Overlay shown when placement check passes.")
+    parser.add_argument("--placement-failed-text", default=DEFAULT_PLACEMENT_FAILED_TEXT,
+                        help="Overlay shown when placement check times out.")
     parser.add_argument("--progress-fontsize", type=int, default=32,
                         help="disp-tester metadata font size.")
     parser.add_argument("--require-colorimeter", action=argparse.BooleanOptionalAction,
@@ -711,9 +831,6 @@ def main():
     if not check_colorimeter_or_report(display, args):
         return 3
 
-    if not validate_output_path(args.output):
-        return 2
-
     if args.ascending:
         steps = build_step_list(min(args.start, args.end), max(args.start, args.end), args.step)
     else:
@@ -728,6 +845,7 @@ def main():
     calibration_status = "not requested"
     calibration_target = ""
     failed_rows = 0
+    suppress_abort_overlay = False
 
     try:
         client = connect_als(args)
@@ -751,6 +869,14 @@ def main():
                 raise RuntimeError(f"set_mode manual failed: {response}")
 
         setup_display(display, args)
+
+        if not wait_for_colorimeter_placement(client, display, args):
+            aborted_reason = "colorimeter placement check failed"
+            suppress_abort_overlay = True
+            raise RuntimeError(aborted_reason)
+
+        if not validate_output_path(args.output):
+            raise RuntimeError(f"cannot write output CSV {args.output}")
 
         recorder = CsvRecorder(args.output, args, output_type, len(steps))
         recorder.__enter__()
@@ -845,7 +971,7 @@ def main():
                         aborted_reason = f"signal {_stop_signal}"
 
             if aborted_reason:
-                if args.abort_text:
+                if args.abort_text and not suppress_abort_overlay:
                     display.set_overlay_text(args.abort_text.format(
                         rows=rows_written,
                         total=len(steps),
