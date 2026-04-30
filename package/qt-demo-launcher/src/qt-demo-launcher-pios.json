@@ -18,7 +18,7 @@
     "layout": {
       "type": "grid",
       "columns": 3,
-      "rows": 3,
+      "rows": 4,
       "spacing": 30,
       "margins": {
         "top": 100,
@@ -267,7 +267,36 @@
         "background_color": "#006C8E",
         "hover_color": "#005A78",
         "border_radius": 20
-      } 
+      },
+      {
+        "id": "live-measurement",
+        "enabled": true,
+        "text": "Live Measurement",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--script", "/home/pi/micropanel/bin/live-measurements-child.py",
+          "--script-arg=--interval-seconds", "--script-arg=2.0"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 3,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#5B6C5D",
+        "hover_color": "#465748",
+        "border_radius": 20
+      }
     ]
   }
 }

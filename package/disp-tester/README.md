@@ -186,6 +186,24 @@ calibration. After the copy and restart succeed, the info box shows
 ]
 ```
 
+### Live Measurement Child Script
+
+The package also installs `/usr/bin/live-measurements-child.py`, a read-only
+child script for live spot checks. It shows a white pattern, repeatedly takes
+one `spotread` xyY sample, reads backlight temperature from the display-manager
+I2C diagnostics register when available, reads `als-dimmer` status plus
+`get_absolute_brightness`, and updates the bottom-right overlay. It does not
+change ALS mode, brightness, or calibration.
+
+```bash
+disp-tester --script /usr/bin/live-measurements-child.py \
+  --script-arg=--interval-seconds --script-arg=2.0
+```
+
+The update cadence is one `spotread` attempt, immediate overlay update, then
+`--interval-seconds` sleep before the next attempt. The default interval is 2s;
+use `--interval-seconds 0` only for short lab/debug runs.
+
 ### Touch Navigation
 - **Left edge tap** (25%): Previous pattern
 - **Right edge tap** (25%): Next pattern  

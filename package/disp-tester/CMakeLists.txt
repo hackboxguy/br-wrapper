@@ -59,7 +59,9 @@ install(TARGETS disp-tester
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
-install(PROGRAMS src/als-dimmer-sweep-child.py
+install(PROGRAMS
+    src/als-dimmer-sweep-child.py
+    src/live-measurements-child.py
     DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
