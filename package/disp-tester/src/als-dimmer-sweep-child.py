@@ -913,6 +913,12 @@ def validate_args(args):
     if args.placement_timeout_seconds < 0:
         print("error: --placement-timeout-seconds must be >= 0", file=sys.stderr)
         return False
+    if args.max_retries < 0:
+        print("error: --max-retries must be >= 0", file=sys.stderr)
+        return False
+    if args.zero_nits_max_retries < 0:
+        print("error: --zero-nits-max-retries must be >= 0", file=sys.stderr)
+        return False
     if not (0 <= args.i2c_temp_address <= 0x7F):
         print("error: --i2c-temp-address must be a 7-bit I2C address",
               file=sys.stderr)
@@ -1005,6 +1011,8 @@ def parse_args():
     parser.add_argument("--zero-nits-on-zero-fail", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="Treat a failed spotread at exactly 0%% brightness as 0.0 nits.")
+    parser.add_argument("--zero-nits-max-retries", type=int, default=0,
+                        help="spotread parse retries at 0%% brightness before using the zero-nits fallback.")
     parser.add_argument("--max-consecutive-failures", type=int, default=10,
                         help="Abort after this many consecutive failed rows.")
 
@@ -1203,20 +1211,24 @@ def main():
                 suppress_abort_overlay = True
                 break
 
-            nits, retries = measure_nits(
-                args.max_retries,
-                args.retry_sleep,
-                args.spotread_timeout,
-                before_attempt=lambda: require_colorimeter_still_connected(
-                    display, args
-                ),
+            pct_int = int(pct)
+            zero_fallback_row = pct_int == 0 and args.zero_nits_on_zero_fail
+            measurement_max_retries = (
+                args.zero_nits_max_retries if zero_fallback_row
+                else args.max_retries
+            )
+            measurement_guard = None if zero_fallback_row else (
+                lambda: require_colorimeter_still_connected(display, args)
             )
 
-            if nits is None and int(pct) == 0 and args.zero_nits_on_zero_fail:
-                if not check_colorimeter_still_connected(display, args):
-                    aborted_reason = "i1 Display Pro USB colorimeter disconnected"
-                    suppress_abort_overlay = True
-                    break
+            nits, retries = measure_nits(
+                measurement_max_retries,
+                args.retry_sleep,
+                args.spotread_timeout,
+                before_attempt=measurement_guard,
+            )
+
+            if nits is None and zero_fallback_row:
                 nits = 0.0
                 zero_nits_fallback_used = True
                 print("    zero-nits fallback: treating failed 0% spotread as 0.0 nits",

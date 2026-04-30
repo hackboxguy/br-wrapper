@@ -146,9 +146,11 @@ the sweep continues. Use `--no-i2c-temp` to disable this native probe, or
 
 For local-dimming displays, `spotread` can fail at the final 0% black reading
 even when the preceding low-brightness rows are valid. By default, a failed
-measurement at exactly 0% is written as `0.0000` nits with `OK` status after
-confirming the colorimeter is still connected. Other brightness levels remain
-strict failures. Use `--no-zero-nits-on-zero-fail` to disable this fallback.
+measurement at exactly 0% is tried once, then written as `0.0000` nits with
+`OK` status if `spotread` cannot parse a value. This avoids a long low-light
+retry cycle that can make the i1 Display Pro disappear briefly from USB. Other
+brightness levels remain strict failures. Use `--zero-nits-max-retries` to tune
+the 0% retry count, or `--no-zero-nits-on-zero-fail` to disable this fallback.
 
 After the USB check passes, the script sets the display to a white pattern and
 100% brightness, then waits until `spotread` sees at least 250 nits. This is a
