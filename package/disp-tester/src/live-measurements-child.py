@@ -3,12 +3,15 @@
 live-measurements-child.py
 
 Read-only child script for disp-tester. It shows a white pattern, samples
-spotread xyY, display-manager backlight temperature, and als-dimmer absolute
-brightness, then updates the parent disp-tester metadata overlay.
+spotread XYZ/xyY, display-manager backlight temperature, and als-dimmer
+absolute brightness, then updates the parent disp-tester metadata overlay and
+records clean samples to CSV.
 """
 
 import argparse
+import csv
 import ctypes
+import datetime
 import fcntl
 import json
 import math
@@ -29,6 +32,7 @@ DEFAULT_DISP_PORT = int(os.environ.get("DISP_TESTER_PORT", "8082"))
 DEFAULT_I2C_TEMP_BUS = "/dev/i2c-1"
 DEFAULT_I2C_TEMP_ADDRESS = 0x66
 DEFAULT_I2C_TEMP_REGISTER = 0x1002
+DEFAULT_RECORD_DIR = "/home/pi/test-data"
 DEFAULT_COLORIMETER_MATCH = [
     "i1display",
     "i1 display",
@@ -51,7 +55,23 @@ DEFAULT_INITIAL_TEXT = (
 I2C_RDWR = 0x0707
 I2C_M_RD = 0x0001
 _FLOAT_RE = r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
+_XYZ_RE = re.compile(rf"Result is XYZ:\s*{_FLOAT_RE}\s+{_FLOAT_RE}\s+{_FLOAT_RE}")
 _YXY_RE = re.compile(rf"Yxy:\s*{_FLOAT_RE}\s+{_FLOAT_RE}\s+{_FLOAT_RE}")
+CSV_HEADER = [
+    "sample_index",
+    "timestamp",
+    "elapsed_seconds",
+    "X",
+    "Y",
+    "Z",
+    "x",
+    "y",
+    "backlight_temp_c",
+    "als_absolute_nits",
+    "als_brightness_pct",
+    "delta_nits",
+    "delta_pct",
+]
 
 _stop_requested = False
 _stop_signal = None
@@ -249,11 +269,84 @@ class DispTesterClient:
         return data.decode("utf-8", errors="replace").strip()
 
 
+class CsvRecorder:
+    def __init__(self, path, args):
+        self.path = path
+        self.args = args
+        self.file = None
+        self.writer = None
+
+    def __enter__(self):
+        directory = os.path.dirname(os.path.abspath(self.path))
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        self.file = open(self.path, "w", newline="")
+        self.writer = csv.writer(self.file)
+        self._write_header()
+        self.flush()
+        return self
+
+    def __exit__(self, _exc_type, _exc, _tb):
+        self.close()
+
+    def _write_header(self):
+        self.file.write("# live display measurement log\n")
+        self.file.write("# script=live-measurements-child.py\n")
+        self.file.write(f"# timestamp={datetime.datetime.now().astimezone().isoformat()}\n")
+        self.file.write(f"# record_interval_seconds={self.args.record_interval_seconds}\n")
+        self.file.write(f"# spotread_timeout={self.args.spotread_timeout}\n")
+        self.writer.writerow(CSV_HEADER)
+
+    def write_row(self, sample_index, elapsed_seconds, measurement, temp,
+                  status_data, absolute_data):
+        timestamp = datetime.datetime.now().astimezone().isoformat()
+        absolute_nits = resolved_absolute_nits(status_data, absolute_data)
+        brightness_pct = as_float(status_data.get("brightness"))
+        delta_nits = None
+        delta_pct = None
+        if absolute_nits is not None:
+            delta_nits = measurement["Y"] - absolute_nits
+            if absolute_nits > 0:
+                delta_pct = (delta_nits / absolute_nits) * 100.0
+
+        self.writer.writerow([
+            sample_index,
+            timestamp,
+            f"{elapsed_seconds:.3f}",
+            f"{measurement['X']:.6f}",
+            f"{measurement['Y']:.6f}",
+            f"{measurement['Z']:.6f}",
+            f"{measurement['x']:.6f}",
+            f"{measurement['y']:.6f}",
+            f"{temp:.2f}" if temp is not None else "",
+            f"{absolute_nits:.6f}" if absolute_nits is not None else "",
+            f"{brightness_pct:.0f}" if brightness_pct is not None else "",
+            f"{delta_nits:.6f}" if delta_nits is not None else "",
+            f"{delta_pct:.6f}" if delta_pct is not None else "",
+        ])
+        self.flush()
+
+    def flush(self):
+        if self.file:
+            self.file.flush()
+
+    def close(self):
+        if self.file:
+            self.flush()
+            self.file.close()
+            self.file = None
+
+
 def one_line(text, max_len=120):
     collapsed = " ".join(str(text).split())
     if len(collapsed) > max_len:
         return collapsed[:max_len - 3] + "..."
     return collapsed
+
+
+def default_record_output_path(record_dir):
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    return os.path.join(record_dir, f"{ts}-live-measurements.csv")
 
 
 def read_text_file(path):
@@ -338,16 +431,32 @@ def run_process_capture(argv, timeout):
             _active_process = None
 
 
-def parse_yxy_from_spotread(text):
-    match = _YXY_RE.search(text)
-    if not match:
+def parse_spotread_measurement(text):
+    yxy_match = _YXY_RE.search(text)
+    if not yxy_match:
         return None
-    y_value, x_value, y_chromaticity = (float(item) for item in match.groups())
-    return {
+
+    y_value, x_value, y_chromaticity = (
+        float(item) for item in yxy_match.groups()
+    )
+    measurement = {
         "Y": y_value,
         "x": x_value,
         "y": y_chromaticity,
     }
+
+    xyz_match = _XYZ_RE.search(text)
+    if xyz_match:
+        x_tristimulus, y_tristimulus, z_tristimulus = (
+            float(item) for item in xyz_match.groups()
+        )
+        measurement.update({
+            "X": x_tristimulus,
+            "Y": y_tristimulus,
+            "Z": z_tristimulus,
+        })
+
+    return measurement
 
 
 def measure_spotread(timeout):
@@ -360,7 +469,7 @@ def measure_spotread(timeout):
         detail = getattr(e, "output", None) or str(e)
         return None, one_line(detail)
 
-    measurement = parse_yxy_from_spotread(out)
+    measurement = parse_spotread_measurement(out)
     if measurement is None:
         return None, "spotread output did not contain Yxy"
     return measurement, ""
@@ -501,6 +610,20 @@ def as_float(value):
     return result if math.isfinite(result) else None
 
 
+def resolved_absolute_nits(status_data, absolute_data):
+    absolute_nits = as_float(absolute_data.get("nits"))
+    if absolute_nits is None:
+        absolute_nits = as_float(status_data.get("nits"))
+    return absolute_nits
+
+
+def measurement_recordable(measurement):
+    if not measurement:
+        return False
+    return all(as_float(measurement.get(key)) is not None
+               for key in ("X", "Y", "Z", "x", "y"))
+
+
 def fmt_float(value, precision=1, suffix=""):
     number = as_float(value)
     if number is None:
@@ -511,9 +634,7 @@ def fmt_float(value, precision=1, suffix=""):
 def delta_percent(measurement, status_data, absolute_data):
     if not measurement:
         return None
-    absolute_nits = as_float(absolute_data.get("nits"))
-    if absolute_nits is None:
-        absolute_nits = as_float(status_data.get("nits"))
+    absolute_nits = resolved_absolute_nits(status_data, absolute_data)
     if absolute_nits is None or absolute_nits <= 0:
         return None
     return ((measurement["Y"] - absolute_nits) / absolute_nits) * 100.0
@@ -545,9 +666,7 @@ def format_live_message(measurement, spotread_error, temp, status_data,
         lines.append("Measured: waiting")
 
     brightness_pct = status_data.get("brightness")
-    absolute_nits = as_float(absolute_data.get("nits"))
-    if absolute_nits is None:
-        absolute_nits = as_float(status_data.get("nits"))
+    absolute_nits = resolved_absolute_nits(status_data, absolute_data)
 
     calibrated = absolute_data.get("calibrated", status_data.get("calibrated"))
     if absolute_nits is not None:
@@ -575,6 +694,16 @@ def format_live_message(measurement, spotread_error, temp, status_data,
     return "\n".join(lines)
 
 
+def setup_recorder(args):
+    if not args.record_csv:
+        return None
+    path = args.record_output or default_record_output_path(args.record_dir)
+    recorder = CsvRecorder(path, args)
+    recorder.__enter__()
+    print(f"recording live measurements to {path}", file=sys.stderr)
+    return recorder
+
+
 def setup_display(display, args):
     if args.pattern:
         display.command(f"pattern {args.pattern}", required=True)
@@ -594,6 +723,9 @@ def validate_args(args):
         return False
     if args.max_samples < 0:
         print("error: --max-samples must be >= 0", file=sys.stderr)
+        return False
+    if args.record_interval_seconds < 0:
+        print("error: --record-interval-seconds must be >= 0", file=sys.stderr)
         return False
     if args.delta_alert_percent < 0:
         print("error: --delta-alert-percent must be >= 0", file=sys.stderr)
@@ -618,7 +750,7 @@ def validate_args(args):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Live xyY/nits monitor child script for disp-tester.",
+        description="Live XYZ/xyY/nits monitor child script for disp-tester.",
     )
     parser.add_argument("--als-socket", default=None,
                         help=f"als-dimmer Unix socket. If omitted, {DEFAULT_ALS_SOCKET} is used when present.")
@@ -644,6 +776,15 @@ def parse_args():
                         help="Timeout for each spotread attempt.")
     parser.add_argument("--max-samples", type=int, default=0,
                         help="Stop after this many samples. 0 runs until disp-tester exits.")
+    parser.add_argument("--record-csv", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Record clean XYZ/xyY samples to CSV while live monitoring.")
+    parser.add_argument("--record-dir", default=DEFAULT_RECORD_DIR,
+                        help="Directory used for auto-named live measurement CSV files.")
+    parser.add_argument("--record-output",
+                        help="Explicit CSV path. Overrides --record-dir.")
+    parser.add_argument("--record-interval-seconds", type=float, default=30.0,
+                        help="Seconds between recorded clean samples.")
     parser.add_argument("--initial-text", default=DEFAULT_INITIAL_TEXT,
                         help="Initial overlay text.")
     parser.add_argument("--sensor-not-found-text", default=DEFAULT_SENSOR_NOT_FOUND_TEXT,
@@ -697,11 +838,16 @@ def main():
     display = DispTesterClient(args.disp_host, args.disp_port, args.disp_timeout)
     als_reader = AlsReader(args)
     temperature_sampler = setup_temperature_sampler(args)
+    recorder = None
     samples = 0
+    recorded_samples = 0
+    start_time = time.monotonic()
+    next_record_time = start_time
     last_sensor_missing = False
 
     try:
         setup_display(display, args)
+        recorder = setup_recorder(args)
 
         while not stop_requested():
             if args.max_samples and samples >= args.max_samples:
@@ -763,12 +909,28 @@ def main():
             samples += 1
 
             measured = measurement["Y"] if measurement else None
-            target = as_float(absolute_data.get("nits"))
+            target = resolved_absolute_nits(status_data, absolute_data)
             print(
                 f"sample {samples}: measured={fmt_float(measured, 2)} "
                 f"als={fmt_float(target, 2)} temp={fmt_float(temp, 1)}",
                 file=sys.stderr,
             )
+
+            now = time.monotonic()
+            if (recorder and now >= next_record_time and
+                    measurement_recordable(measurement)):
+                recorded_samples += 1
+                recorder.write_row(
+                    recorded_samples,
+                    now - start_time,
+                    measurement,
+                    temp,
+                    status_data,
+                    absolute_data,
+                )
+                next_record_time = now + args.record_interval_seconds
+                print(f"recorded sample {recorded_samples}: {recorder.path}",
+                      file=sys.stderr)
 
             if not interruptible_sleep(args.interval_seconds):
                 break
@@ -781,6 +943,8 @@ def main():
         display.set_overlay_text(f"Live Measurement\nError: {one_line(e, 80)}")
         return 1
     finally:
+        if recorder:
+            recorder.__exit__(None, None, None)
         als_reader.close()
 
     if stop_requested():

@@ -190,11 +190,11 @@ calibration. After the copy and restart succeed, the info box shows
 
 The package also installs `/usr/bin/live-measurements-child.py`, a read-only
 child script for live spot checks. It shows a white pattern, repeatedly takes
-one `spotread` xyY sample, reads backlight temperature from the display-manager
-I2C diagnostics register when available, reads `als-dimmer` status plus
-`get_absolute_brightness` for brightness percent and absolute nits, and updates
-the bottom-right overlay. It does not change ALS mode, brightness, or
-calibration.
+one `spotread` XYZ/xyY sample, reads backlight temperature from the
+display-manager I2C diagnostics register when available, reads `als-dimmer`
+status plus `get_absolute_brightness` for brightness percent and absolute
+nits, and updates the bottom-right overlay. It does not change ALS mode,
+brightness, or calibration.
 
 ```bash
 disp-tester --script /usr/bin/live-measurements-child.py \
@@ -204,6 +204,14 @@ disp-tester --script /usr/bin/live-measurements-child.py \
 The update cadence is one `spotread` attempt, immediate overlay update, then
 `--interval-seconds` sleep before the next attempt. The default interval is 2s;
 use `--interval-seconds 0` only for short lab/debug runs.
+
+By default, each invocation also creates a timestamped CSV under
+`/home/pi/test-data/` and records the next clean XYZ/xyY sample at startup and
+then every 30 seconds. Clean means `spotread` parsed both XYZ and xyY; a
+transient sensor error is shown live but not written to the drift log. The CSV
+is flushed after every row and keeps growing until the user exits. Use
+`--record-dir`, `--record-output`, `--record-interval-seconds`, or
+`--no-record-csv` to adjust this behavior.
 
 The live overlay uses the normal metadata color when readings are healthy and
 turns the whole overlay red for sensor read errors, ALS read errors, or when
