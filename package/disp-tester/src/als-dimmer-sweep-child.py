@@ -34,13 +34,13 @@ DEFAULT_DISP_HOST = os.environ.get("DISP_TESTER_HOST", "127.0.0.1")
 DEFAULT_DISP_PORT = int(os.environ.get("DISP_TESTER_PORT", "8082"))
 DEFAULT_ALS_CONFIG = "/home/pi/als-dimmer/etc/als-dimmer/config.json"
 DEFAULT_CALIBRATION_DIR = "/home/pi/als-dimmer/etc/als-dimmer/calibrations"
-DEFAULT_CALIBRATION_FALLBACK = "dimmer_2048.csv"
+DEFAULT_CALIBRATION_FALLBACK = "dimmer_neutral.csv"
 DEFAULT_RESTART_COMMAND = "systemctl restart als-dimmer"
 DEFAULT_I2C_TEMP_BUS = "/dev/i2c-1"
 DEFAULT_I2C_TEMP_ADDRESS = 0x66
 DEFAULT_I2C_TEMP_REGISTER = 0x1002
 CONFIG_CALIBRATION_MAP = {
-    "config_fpga_opti4001_dimmer2048.json": "dimmer_2048.csv",
+    "config_fpga_opti4001_dimmer2048.json": "dimmer_neutral.csv",
     "config_opti4001_boepwm.json": "boe_pwm_2khz_reference.csv",
 }
 DEFAULT_PROGRESS_TEXT = (
