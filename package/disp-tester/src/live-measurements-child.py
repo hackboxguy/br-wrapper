@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+import select
 import signal
 import socket
 import subprocess
@@ -347,6 +348,29 @@ def one_line(text, max_len=120):
 def default_record_output_path(record_dir):
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     return os.path.join(record_dir, f"{ts}-live-measurements.csv")
+
+
+def unique_output_path(path):
+    if not os.path.exists(path):
+        return path
+
+    root, ext = os.path.splitext(path)
+    for index in range(2, 1000):
+        candidate = f"{root}-{index}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+    raise RuntimeError(f"could not find unused output path for {path}")
+
+
+def record_output_path(args, session_index):
+    if args.record_output:
+        if session_index <= 1:
+            return args.record_output
+
+        root, ext = os.path.splitext(args.record_output)
+        return unique_output_path(f"{root}-{session_index}{ext}")
+
+    return unique_output_path(default_record_output_path(args.record_dir))
 
 
 def read_text_file(path):
@@ -694,14 +718,114 @@ def format_live_message(measurement, spotread_error, temp, status_data,
     return "\n".join(lines)
 
 
-def setup_recorder(args):
+def setup_recorder(args, session_index):
     if not args.record_csv:
         return None
-    path = args.record_output or default_record_output_path(args.record_dir)
+    path = record_output_path(args, session_index)
     recorder = CsvRecorder(path, args)
     recorder.__enter__()
     print(f"recording live measurements to {path}", file=sys.stderr)
     return recorder
+
+
+def close_recorder(recorder):
+    if recorder:
+        print(f"stopped recording live measurements: {recorder.path}",
+              file=sys.stderr)
+        recorder.__exit__(None, None, None)
+
+
+def parse_bool(value):
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in ("1", "true", "yes", "on", "enable", "enabled", "start"):
+            return True
+        if normalized in ("0", "false", "no", "off", "disable", "disabled", "stop"):
+            return False
+    return None
+
+
+def parse_control_line(line):
+    stripped = line.strip()
+    if not stripped:
+        return None
+
+    lower = stripped.lower()
+    if lower in ("start_recording", "recording start", "recording on"):
+        return {"command": "set_recording", "enabled": True}
+    if lower in ("stop_recording", "recording stop", "recording off"):
+        return {"command": "set_recording", "enabled": False}
+
+    try:
+        message = json.loads(stripped)
+    except ValueError as e:
+        print(f"warning: ignoring invalid child control line: {one_line(e)}",
+              file=sys.stderr)
+        return None
+
+    if not isinstance(message, dict):
+        print("warning: ignoring non-object child control message",
+              file=sys.stderr)
+        return None
+    return message
+
+
+def read_control_messages(stdin_closed):
+    if stdin_closed:
+        return [], True
+
+    messages = []
+    while True:
+        try:
+            ready, _, _ = select.select([sys.stdin], [], [], 0)
+        except (OSError, ValueError):
+            return messages, True
+
+        if not ready:
+            return messages, False
+
+        line = sys.stdin.readline()
+        if line == "":
+            return messages, True
+
+        message = parse_control_line(line)
+        if message is not None:
+            messages.append(message)
+
+
+def apply_control_messages(args, recorder, record_session_index,
+                           recorded_samples, next_record_time, stdin_closed):
+    messages, stdin_closed = read_control_messages(stdin_closed)
+
+    for message in messages:
+        command = str(message.get("command", "")).strip().lower()
+        if command != "set_recording":
+            print(f"warning: ignoring unknown child control command: {command}",
+                  file=sys.stderr)
+            continue
+
+        enabled = parse_bool(message.get("enabled"))
+        if enabled is None:
+            print("warning: set_recording control missing boolean enabled",
+                  file=sys.stderr)
+            continue
+
+        if enabled:
+            if recorder is None:
+                record_session_index += 1
+                recorder = setup_recorder(args, record_session_index)
+                recorded_samples = 0
+                next_record_time = time.monotonic()
+        elif recorder is not None:
+            close_recorder(recorder)
+            recorder = None
+
+    return (recorder, record_session_index, recorded_samples,
+            next_record_time, stdin_closed)
 
 
 def setup_display(display, args):
@@ -779,6 +903,9 @@ def parse_args():
     parser.add_argument("--record-csv", action=argparse.BooleanOptionalAction,
                         default=True,
                         help="Record clean XYZ/xyY samples to CSV while live monitoring.")
+    parser.add_argument("--record-on-start", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="Start CSV recording immediately instead of waiting for a parent control command.")
     parser.add_argument("--record-dir", default=DEFAULT_RECORD_DIR,
                         help="Directory used for auto-named live measurement CSV files.")
     parser.add_argument("--record-output",
@@ -841,15 +968,29 @@ def main():
     recorder = None
     samples = 0
     recorded_samples = 0
+    record_session_index = 0
     start_time = time.monotonic()
     next_record_time = start_time
     last_sensor_missing = False
+    stdin_closed = False
 
     try:
         setup_display(display, args)
-        recorder = setup_recorder(args)
+        if args.record_csv and args.record_on_start:
+            record_session_index += 1
+            recorder = setup_recorder(args, record_session_index)
 
         while not stop_requested():
+            (recorder, record_session_index, recorded_samples,
+             next_record_time, stdin_closed) = apply_control_messages(
+                args,
+                recorder,
+                record_session_index,
+                recorded_samples,
+                next_record_time,
+                stdin_closed,
+            )
+
             if args.max_samples and samples >= args.max_samples:
                 break
 
@@ -886,6 +1027,16 @@ def main():
             measurement, spotread_error = measure_spotread(args.spotread_timeout)
             temp = temperature_sampler()
             status_data, absolute_data, als_error = read_als_snapshot(als_reader)
+
+            (recorder, record_session_index, recorded_samples,
+             next_record_time, stdin_closed) = apply_control_messages(
+                args,
+                recorder,
+                record_session_index,
+                recorded_samples,
+                next_record_time,
+                stdin_closed,
+            )
 
             message = format_live_message(
                 measurement,
@@ -944,7 +1095,7 @@ def main():
         return 1
     finally:
         if recorder:
-            recorder.__exit__(None, None, None)
+            close_recorder(recorder)
         als_reader.close()
 
     if stop_requested():

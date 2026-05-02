@@ -27,6 +27,12 @@ class PatternController : public QObject
     Q_PROPERTY(int metadataFontSize READ getMetadataFontSize NOTIFY metadataFontSizeChanged)
     Q_PROPERTY(QColor metadataColor READ getMetadataColor NOTIFY metadataColorChanged)
     Q_PROPERTY(bool userInteractionEnabled READ getUserInteractionEnabled NOTIFY userInteractionEnabledChanged)
+    Q_PROPERTY(bool childActionButtonVisible READ childActionButtonVisible NOTIFY childActionButtonChanged)
+    Q_PROPERTY(bool childActionActive READ childActionActive NOTIFY childActionStateChanged)
+    Q_PROPERTY(QString childActionStartText READ childActionStartText NOTIFY childActionButtonChanged)
+    Q_PROPERTY(QString childActionStopText READ childActionStopText NOTIFY childActionButtonChanged)
+    Q_PROPERTY(QColor childActionStartColor READ childActionStartColor NOTIFY childActionButtonChanged)
+    Q_PROPERTY(QColor childActionStopColor READ childActionStopColor NOTIFY childActionButtonChanged)
 
 public:
     explicit PatternController(QObject *parent = nullptr);
@@ -37,9 +43,17 @@ public:
     bool showCustomColor() const { return m_showCustomColor; }
     QVariantMap patternParams() const { return m_parameters.toVariantMap(); }
     QString metadataStatus() const { return m_metadataStatus; }
+    bool childActionButtonVisible() const { return m_childActionButtonVisible; }
+    bool childActionActive() const { return m_childActionActive; }
+    QString childActionStartText() const { return m_childActionStartText; }
+    QString childActionStopText() const { return m_childActionStopText; }
+    QColor childActionStartColor() const { return m_childActionStartColor; }
+    QColor childActionStopColor() const { return m_childActionStopColor; }
 
     bool startNetworkInterface(int port);
     bool startChildScript(const QString &program, const QStringList &arguments);
+    void configureChildActionButton(bool visible, const QString &startText, const QString &stopText,
+                                    const QColor &startColor, const QColor &stopColor);
     void requestQuit(const QString &reason);
 
 public slots:
@@ -55,6 +69,7 @@ public slots:
     QColor getMetadataColor() const { return m_metadataColor; }
     bool getUserInteractionEnabled() const { return m_userInteractionEnabled; }
     void requestQuit();
+    void toggleChildAction();
 
 signals:
     void currentPatternChanged();
@@ -68,6 +83,8 @@ signals:
     void metadataFontSizeChanged();
     void metadataColorChanged();
     void userInteractionEnabledChanged();
+    void childActionButtonChanged();
+    void childActionStateChanged();
 
 private slots:
     void handleNetworkCommand(const QString &command);
@@ -95,6 +112,12 @@ private:
     int m_metadataFontSize;    // Font size (8-48)
     QColor m_metadataColor;    // Text color
     bool m_userInteractionEnabled; // Enable/disable user touch interaction
+    bool m_childActionButtonVisible;
+    bool m_childActionActive;
+    QString m_childActionStartText;
+    QString m_childActionStopText;
+    QColor m_childActionStartColor;
+    QColor m_childActionStopColor;
 
     void updatePattern(const QString &pattern);
     bool setPatternParameter(const QString &pattern, const QString &param, const QStringList &values);
@@ -116,6 +139,8 @@ private:
     void stopChildScript();
     void finishApplicationQuit();
     void cleanupChildProcess();
+    bool sendChildControlCommand(const QString &command, bool enabled);
+    void setChildActionActive(bool active);
 };
 
 #endif // PATTERNCONTROLLER_H

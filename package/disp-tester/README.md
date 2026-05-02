@@ -210,8 +210,25 @@ By default, each invocation also creates a timestamped CSV under
 then every 30 seconds. Clean means `spotread` parsed both XYZ and xyY; a
 transient sensor error is shown live but not written to the drift log. The CSV
 is flushed after every row and keeps growing until the user exits. Use
-`--record-dir`, `--record-output`, `--record-interval-seconds`, or
-`--no-record-csv` to adjust this behavior.
+`--record-dir`, `--record-output`, `--record-interval-seconds`,
+`--no-record-on-start`, or `--no-record-csv` to adjust this behavior.
+
+For operator-controlled recording, start `disp-tester` with its child action
+button enabled and pass `--no-record-on-start` to the child:
+
+```bash
+disp-tester \
+  --child-action-button \
+  --child-action-start-text "Start Recording" \
+  --child-action-stop-text "Stop Recording" \
+  --script /usr/bin/live-measurements-child.py \
+  --script-arg=--no-record-on-start
+```
+
+The button auto-hides with the normal touch overlay. Pressing Start sends a
+child-process control command over stdin and creates a new timestamped CSV.
+Pressing Stop flushes and closes that CSV. Pressing Start again creates a new
+file rather than appending to the previous recording session.
 
 The live overlay uses the normal metadata color when readings are healthy and
 turns the whole overlay red for sensor read errors, ALS read errors, or when

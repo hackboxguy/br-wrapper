@@ -97,6 +97,30 @@ int main(int argc, char *argv[])
                                        "argument");
     parser.addOption(scriptArgOption);
 
+    QCommandLineOption childActionButtonOption(QStringList() << "child-action-button",
+                                               "Show an auto-hide button that toggles a child-script action.");
+    parser.addOption(childActionButtonOption);
+
+    QCommandLineOption childActionStartTextOption(QStringList() << "child-action-start-text",
+                                                  "Text shown when the child action is inactive.",
+                                                  "text", "Start Recording");
+    parser.addOption(childActionStartTextOption);
+
+    QCommandLineOption childActionStopTextOption(QStringList() << "child-action-stop-text",
+                                                 "Text shown when the child action is active.",
+                                                 "text", "Stop Recording");
+    parser.addOption(childActionStopTextOption);
+
+    QCommandLineOption childActionStartColorOption(QStringList() << "child-action-start-color",
+                                                   "Button color when the child action is inactive.",
+                                                   "color", "green");
+    parser.addOption(childActionStartColorOption);
+
+    QCommandLineOption childActionStopColorOption(QStringList() << "child-action-stop-color",
+                                                  "Button color when the child action is active.",
+                                                  "color", "red");
+    parser.addOption(childActionStopColorOption);
+
     parser.process(app);
 
     // Get screen resolution for debugging
@@ -108,6 +132,24 @@ int main(int argc, char *argv[])
 
     // Create pattern controller
     PatternController patternController;
+    QColor childActionStartColor(parser.value(childActionStartColorOption));
+    if (!childActionStartColor.isValid()) {
+        qWarning() << "Invalid child action start color; using green";
+        childActionStartColor = QColor(0, 128, 0);
+    }
+
+    QColor childActionStopColor(parser.value(childActionStopColorOption));
+    if (!childActionStopColor.isValid()) {
+        qWarning() << "Invalid child action stop color; using red";
+        childActionStopColor = QColor(192, 0, 0);
+    }
+
+    patternController.configureChildActionButton(
+        parser.isSet(childActionButtonOption),
+        parser.value(childActionStartTextOption),
+        parser.value(childActionStopTextOption),
+        childActionStartColor,
+        childActionStopColor);
 
     QSocketNotifier *signalNotifier = nullptr;
     if (setupUnixSignalHandlers()) {

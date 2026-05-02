@@ -7,6 +7,8 @@
 #include <QTextStream>
 #include <QProcess>
 #include <QRegExp>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 PatternController::PatternController(QObject *parent)
     : QObject(parent)
@@ -24,6 +26,12 @@ PatternController::PatternController(QObject *parent)
     , m_metadataFontSize(16)       // Default font size
     , m_metadataColor(255, 255, 255) // Default white color
     , m_userInteractionEnabled(true) // Default user interaction enabled
+    , m_childActionButtonVisible(false)
+    , m_childActionActive(false)
+    , m_childActionStartText("Start Recording")
+    , m_childActionStopText("Stop Recording")
+    , m_childActionStartColor(0, 128, 0)
+    , m_childActionStopColor(192, 0, 0)
 {
     m_childShutdownTimer->setSingleShot(true);
     m_childShutdownTimer->setInterval(3000);
@@ -96,6 +104,26 @@ bool PatternController::startChildScript(const QString &program, const QStringLi
     qDebug() << "Starting child script:" << program << "args:" << arguments;
     m_childProcess->start(program, arguments);
     return true;
+}
+
+void PatternController::configureChildActionButton(bool visible, const QString &startText, const QString &stopText,
+                                                   const QColor &startColor, const QColor &stopColor)
+{
+    m_childActionButtonVisible = visible;
+    if (!startText.isEmpty()) {
+        m_childActionStartText = startText;
+    }
+    if (!stopText.isEmpty()) {
+        m_childActionStopText = stopText;
+    }
+    if (startColor.isValid()) {
+        m_childActionStartColor = startColor;
+    }
+    if (stopColor.isValid()) {
+        m_childActionStopColor = stopColor;
+    }
+    setChildActionActive(false);
+    emit childActionButtonChanged();
 }
 
 bool PatternController::isChildScriptRunning() const
@@ -183,6 +211,8 @@ void PatternController::handleChildError(QProcess::ProcessError error)
 
 void PatternController::cleanupChildProcess()
 {
+    setChildActionActive(false);
+
     if (!m_childProcess) {
         return;
     }
@@ -196,6 +226,53 @@ void PatternController::finishApplicationQuit()
 {
     qDebug() << "Exiting disp-tester";
     QGuiApplication::quit();
+}
+
+void PatternController::setChildActionActive(bool active)
+{
+    if (m_childActionActive == active) {
+        return;
+    }
+
+    m_childActionActive = active;
+    emit childActionStateChanged();
+}
+
+bool PatternController::sendChildControlCommand(const QString &command, bool enabled)
+{
+    if (!isChildScriptRunning()) {
+        qWarning() << "Cannot send child control command; child script is not running";
+        return false;
+    }
+
+    QJsonObject message;
+    message["command"] = command;
+    message["enabled"] = enabled;
+
+    QByteArray payload = QJsonDocument(message).toJson(QJsonDocument::Compact);
+    payload.append('\n');
+
+    qint64 written = m_childProcess->write(payload);
+    if (written != payload.size()) {
+        qWarning() << "Failed to write child control command"
+                   << command << "enabled" << enabled;
+        return false;
+    }
+
+    qDebug() << "Sent child control command:" << payload.trimmed();
+    return true;
+}
+
+void PatternController::toggleChildAction()
+{
+    if (!m_childActionButtonVisible) {
+        return;
+    }
+
+    bool nextState = !m_childActionActive;
+    if (sendChildControlCommand("set_recording", nextState)) {
+        setChildActionActive(nextState);
+    }
 }
 
 void PatternController::nextPattern()

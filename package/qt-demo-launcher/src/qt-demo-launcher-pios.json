@@ -275,8 +275,14 @@
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/disp-tester",
         "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start Recording",
+          "--child-action-stop-text", "Stop Recording",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
           "--script", "/home/pi/micropanel/bin/live-measurements-child.py",
-          "--script-arg=--interval-seconds", "--script-arg=2.0"
+          "--script-arg=--interval-seconds", "--script-arg=2.0",
+          "--script-arg=--no-record-on-start"
         ],
         "working_directory": "/tmp",
         "position": {

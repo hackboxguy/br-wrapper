@@ -243,6 +243,7 @@ Window {
     // Exit button (top-right) - kept outside the navigation overlay so it
     // remains available while automation disables pattern navigation.
     Rectangle {
+        id: exitButton
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.margins: 20
@@ -265,6 +266,45 @@ Window {
         MouseArea {
             anchors.fill: parent
             onClicked: patternController.requestQuit()
+        }
+    }
+
+    Rectangle {
+        id: childActionButton
+        anchors.top: parent.top
+        anchors.right: exitButton.left
+        anchors.topMargin: 20
+        anchors.rightMargin: 12
+        width: Math.max(childActionText.contentWidth + 36, 190)
+        height: 60
+        color: patternController.childActionActive ?
+               patternController.childActionStopColor :
+               patternController.childActionStartColor
+        radius: 8
+        border.color: "white"
+        border.width: 1
+        visible: patternController.childActionButtonVisible &&
+                 ((uiVisible && patternController.userInteractionEnabled) || emergencyExitVisible)
+
+        Text {
+            id: childActionText
+            anchors.centerIn: parent
+            text: patternController.childActionActive ?
+                  patternController.childActionStopText :
+                  patternController.childActionStartText
+            color: "white"
+            font.pixelSize: 22
+            font.bold: true
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                patternController.toggleChildAction()
+                if (patternController.userInteractionEnabled) {
+                    showUITemporarily()
+                }
+            }
         }
     }
 
