@@ -228,7 +228,8 @@ disp-tester \
 The button auto-hides with the normal touch overlay. Pressing Start sends a
 child-process control command over stdin and creates a new timestamped CSV.
 Pressing Stop flushes and closes that CSV. Pressing Start again creates a new
-file rather than appending to the previous recording session.
+file rather than appending to the previous recording session. While recording,
+the live overlay title changes to `Live Measurement (Recording)`.
 
 The live overlay uses the normal metadata color when readings are healthy and
 turns the whole overlay red for sensor read errors, ALS read errors, or when

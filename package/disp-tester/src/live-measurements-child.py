@@ -664,6 +664,18 @@ def delta_percent(measurement, status_data, absolute_data):
     return ((measurement["Y"] - absolute_nits) / absolute_nits) * 100.0
 
 
+def live_title(recording=False):
+    return "Live Measurement (Recording)" if recording else "Live Measurement"
+
+
+def with_live_title(message, recording=False):
+    lines = str(message).splitlines()
+    if not lines:
+        return live_title(recording)
+    lines[0] = live_title(recording)
+    return "\n".join(lines)
+
+
 def overlay_alert_needed(measurement, spotread_error, status_data,
                          absolute_data, als_error, args):
     if als_error:
@@ -675,8 +687,8 @@ def overlay_alert_needed(measurement, spotread_error, status_data,
 
 
 def format_live_message(measurement, spotread_error, temp, status_data,
-                        absolute_data, als_error):
-    lines = ["Live Measurement"]
+                        absolute_data, als_error, recording=False):
+    lines = [live_title(recording)]
 
     if measurement:
         measured_nits = measurement["Y"]
@@ -800,6 +812,7 @@ def read_control_messages(stdin_closed):
 def apply_control_messages(args, recorder, record_session_index,
                            recorded_samples, next_record_time, stdin_closed):
     messages, stdin_closed = read_control_messages(stdin_closed)
+    recording_changed = False
 
     for message in messages:
         command = str(message.get("command", "")).strip().lower()
@@ -815,27 +828,29 @@ def apply_control_messages(args, recorder, record_session_index,
             continue
 
         if enabled:
-            if recorder is None:
+            if recorder is None and args.record_csv:
                 record_session_index += 1
                 recorder = setup_recorder(args, record_session_index)
                 recorded_samples = 0
                 next_record_time = time.monotonic()
+                recording_changed = recorder is not None
         elif recorder is not None:
             close_recorder(recorder)
             recorder = None
+            recording_changed = True
 
     return (recorder, record_session_index, recorded_samples,
-            next_record_time, stdin_closed)
+            next_record_time, stdin_closed, recording_changed)
 
 
-def setup_display(display, args):
+def setup_display(display, args, recording=False):
     if args.pattern:
         display.command(f"pattern {args.pattern}", required=True)
     display.best_effort("set-metadata-status enable")
     display.best_effort(f"set-metadata-fontsize {args.progress_fontsize}")
     display.best_effort(f"set-metadata-align {args.metadata_align}")
     display.best_effort(f"set-metadata-color {args.normal_color}")
-    display.set_overlay_text(args.initial_text)
+    display.set_overlay_text(with_live_title(args.initial_text, recording))
 
 
 def validate_args(args):
@@ -973,16 +988,18 @@ def main():
     next_record_time = start_time
     last_sensor_missing = False
     stdin_closed = False
+    initial_recording = args.record_csv and args.record_on_start
+    last_overlay_message = with_live_title(args.initial_text, initial_recording)
 
     try:
-        setup_display(display, args)
-        if args.record_csv and args.record_on_start:
+        setup_display(display, args, initial_recording)
+        if initial_recording:
             record_session_index += 1
             recorder = setup_recorder(args, record_session_index)
 
         while not stop_requested():
             (recorder, record_session_index, recorded_samples,
-             next_record_time, stdin_closed) = apply_control_messages(
+             next_record_time, stdin_closed, recording_changed) = apply_control_messages(
                 args,
                 recorder,
                 record_session_index,
@@ -990,6 +1007,12 @@ def main():
                 next_record_time,
                 stdin_closed,
             )
+            if recording_changed:
+                last_overlay_message = with_live_title(
+                    last_overlay_message,
+                    recorder is not None,
+                )
+                display.set_overlay_text(last_overlay_message)
 
             if args.max_samples and samples >= args.max_samples:
                 break
@@ -1012,13 +1035,16 @@ def main():
                     status_data,
                     absolute_data,
                     als_error,
+                    recorder is not None,
                 )
                 if args.sensor_not_found_text:
                     message = args.sensor_not_found_text + "\n" + "\n".join(
                         message.splitlines()[2:]
                     )
+                    message = with_live_title(message, recorder is not None)
                 display.best_effort(f"set-metadata-color {args.alert_color}")
                 display.set_overlay_text(message)
+                last_overlay_message = message
                 if not interruptible_sleep(args.interval_seconds):
                     break
                 continue
@@ -1029,7 +1055,7 @@ def main():
             status_data, absolute_data, als_error = read_als_snapshot(als_reader)
 
             (recorder, record_session_index, recorded_samples,
-             next_record_time, stdin_closed) = apply_control_messages(
+             next_record_time, stdin_closed, recording_changed) = apply_control_messages(
                 args,
                 recorder,
                 record_session_index,
@@ -1037,6 +1063,12 @@ def main():
                 next_record_time,
                 stdin_closed,
             )
+            if recording_changed:
+                last_overlay_message = with_live_title(
+                    last_overlay_message,
+                    recorder is not None,
+                )
+                display.set_overlay_text(last_overlay_message)
 
             message = format_live_message(
                 measurement,
@@ -1045,6 +1077,7 @@ def main():
                 status_data,
                 absolute_data,
                 als_error,
+                recorder is not None,
             )
             alert = overlay_alert_needed(
                 measurement,
@@ -1057,6 +1090,7 @@ def main():
             color = args.alert_color if alert else args.normal_color
             display.best_effort(f"set-metadata-color {color}")
             display.set_overlay_text(message)
+            last_overlay_message = message
             samples += 1
 
             measured = measurement["Y"] if measurement else None
