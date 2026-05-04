@@ -164,9 +164,10 @@ To apply a successful sweep automatically, add `--install-calibration`. The
 child script resolves `/home/pi/als-dimmer/etc/als-dimmer/config.json` and
 copies the CSV into the matching calibration target:
 
-- `config_fpga_opti4001_dimmer2048.json` -> `calibrations/dimmer_2048.csv`
+- `config_fpga_opti4001_dimmer2048.json` -> `calibrations/dimmer_neutral.csv`
 - `config_opti4001_boepwm.json` -> `calibrations/boe_pwm_2khz_reference.csv`
-- any other config -> `calibrations/dimmer_2048.csv`
+- `config_opti4001_ddcutil_rtk_hg560t34.json` -> `calibrations/dimmer_15_6_rtk_hg560t34.csv`
+- any other config -> `calibrations/dimmer_neutral.csv`
 
 It then runs `systemctl restart als-dimmer`. If the script is not running as
 root, it uses `sudo -n` so it fails quickly instead of waiting for a password.

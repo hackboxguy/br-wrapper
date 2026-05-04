@@ -42,6 +42,7 @@ DEFAULT_I2C_TEMP_REGISTER = 0x1002
 CONFIG_CALIBRATION_MAP = {
     "config_fpga_opti4001_dimmer2048.json": "dimmer_neutral.csv",
     "config_opti4001_boepwm.json": "boe_pwm_2khz_reference.csv",
+    "config_opti4001_ddcutil_rtk_hg560t34.json": "dimmer_15_6_rtk_hg560t34.csv",
 }
 DEFAULT_PROGRESS_TEXT = (
     "Brightness Calibration in Progress\\n"
