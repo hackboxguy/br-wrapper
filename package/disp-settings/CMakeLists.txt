@@ -18,6 +18,7 @@ set(CMAKE_AUTOUIC ON)
 set(SOURCES
     src/main.cpp
     src/AlsDimmerController.cpp
+    src/DualDisplayAbsoluteController.cpp
     src/FpgaController.cpp
     src/TemperatureController.cpp
     src/TddiController.cpp
@@ -28,6 +29,7 @@ set(SOURCES
 set(HEADERS
     src/config.h
     src/AlsDimmerController.h
+    src/DualDisplayAbsoluteController.h
     src/FpgaController.h
     src/TemperatureController.h
     src/TddiController.h

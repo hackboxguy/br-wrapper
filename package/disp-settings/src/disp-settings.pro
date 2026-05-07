@@ -7,6 +7,7 @@ TEMPLATE = app
 
 SOURCES += main.cpp \
     AlsDimmerController.cpp \
+    DualDisplayAbsoluteController.cpp \
     FpgaController.cpp \
     TemperatureController.cpp \
     TddiController.cpp \
@@ -15,6 +16,7 @@ SOURCES += main.cpp \
 
 HEADERS += config.h \
     AlsDimmerController.h \
+    DualDisplayAbsoluteController.h \
     FpgaController.h \
     TemperatureController.h \
     TddiController.h \

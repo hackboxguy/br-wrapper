@@ -2,12 +2,14 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QCommandLineParser>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QScreen>
 #include <QFile>
 #include <QTextStream>
 #include "config.h"
 #include "AlsDimmerController.h"
+#include "DualDisplayAbsoluteController.h"
 #include "FpgaController.h"
 #include "TemperatureController.h"
 #include "TddiController.h"
@@ -86,6 +88,10 @@ int main(int argc, char *argv[])
     alsDimmerController.setSocketPath(parser.value(socketOption));
     alsDimmerController.start();
 
+    DualDisplayAbsoluteController dualDisplayController;
+    QObject::connect(&app, &QCoreApplication::aboutToQuit,
+                     &dualDisplayController, &DualDisplayAbsoluteController::cleanup);
+
     FpgaController fpgaController;
     fpgaController.setI2cBus(parser.value(i2cOption));
     fpgaController.start();
@@ -127,6 +133,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("swVersion", incVersion);
     engine.rootContext()->setContextProperty("swBuildDate", incBuildDate);
     engine.rootContext()->setContextProperty("alsDimmer", &alsDimmerController);
+    engine.rootContext()->setContextProperty("dualDisplay", &dualDisplayController);
     engine.rootContext()->setContextProperty("fpga", &fpgaController);
     engine.rootContext()->setContextProperty("tempSensors", &temperatureController);
     engine.rootContext()->setContextProperty("tddi", &tddiController);
