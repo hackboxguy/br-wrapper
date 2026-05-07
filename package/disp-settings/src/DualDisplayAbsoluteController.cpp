@@ -15,6 +15,7 @@ const int kPrimaryPort = 9000;
 const int kSecondaryPort = 9001;
 const int kSocketTimeoutMs = 1000;
 const int kServiceTimeoutMs = 10000;
+const int kBrightnessThrottleMs = 200;
 const char *kSecondaryService = "als-dimmer-pwm.service";
 }
 
@@ -32,7 +33,7 @@ DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     , m_hasRestoreState(false)
     , m_brightnessThrottle(new QTimer(this))
 {
-    m_brightnessThrottle->setInterval(150);
+    m_brightnessThrottle->setInterval(kBrightnessThrottleMs);
     m_brightnessThrottle->setSingleShot(true);
     connect(m_brightnessThrottle, &QTimer::timeout,
             this, &DualDisplayAbsoluteController::processBrightnessUpdate);
@@ -58,8 +59,15 @@ void DualDisplayAbsoluteController::setEnabled(bool enabled, const QString &prim
 
 void DualDisplayAbsoluteController::cleanup()
 {
-    if (m_active || m_busy) {
-        disableMode();
+    m_brightnessThrottle->stop();
+
+    if (m_active && m_brightnessUpdatePending) {
+        QString error;
+        if (!sendAbsoluteBrightnessToBoth(m_pendingNits, &error)) {
+            reportError(error);
+            return;
+        }
+        m_brightnessUpdatePending = false;
     }
 }
 
@@ -378,7 +386,7 @@ void DualDisplayAbsoluteController::setAbsoluteBrightness(double nits)
     m_brightnessUpdatePending = true;
 
     if (!m_brightnessThrottle->isActive()) {
-        processBrightnessUpdate();
+        m_brightnessThrottle->start();
     }
 }
 

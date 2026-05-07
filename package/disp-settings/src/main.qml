@@ -315,7 +315,7 @@ Window {
                                 Layout.preferredHeight: 48
                                 from: brightnessSliderFrom()
                                 to: brightnessSliderTo()
-                                value: dualDisplay.active ? dualDisplay.currentNits : brightnessSlider.value
+                                value: 50
                                 enabled: dualDisplay.active ? !dualDisplay.busy : alsDimmer.connected
                                 stepSize: brightnessSliderStep()
 
@@ -329,8 +329,8 @@ Window {
                                 Binding {
                                     target: brightnessSliderWide
                                     property: "value"
-                                    value: alsDimmer.brightness
-                                    when: !dualDisplay.active && !userDraggingBrightness && alsDimmer.mode === "auto"
+                                    value: brightnessSlider.value
+                                    when: !dualDisplay.active && !userDraggingBrightness
                                 }
 
                                 background: Rectangle {
@@ -433,7 +433,7 @@ Window {
                             }
 
                             Text {
-                                text: "Dual Display Absolute:"
+                                text: "Dual Display Mode:"
                                 font.pixelSize: 20
                                 color: "#cccccc"
                                 Layout.leftMargin: 15
@@ -1242,7 +1242,7 @@ Window {
                         }
 
                         Text {
-                            text: "Dual Display Absolute:"
+                            text: "Dual Display Mode:"
                             font.pixelSize: 20
                             color: "#cccccc"
                             Layout.leftMargin: 15
