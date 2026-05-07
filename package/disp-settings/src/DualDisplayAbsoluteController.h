@@ -9,7 +9,7 @@ class DualDisplayAbsoluteController : public QObject
 {
     Q_OBJECT
 
-    Q_PROPERTY(bool enabled READ enabled NOTIFY enabledChanged)
+    Q_PROPERTY(bool active READ active NOTIFY activeChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(double maxNits READ maxNits NOTIFY rangeChanged)
     Q_PROPERTY(double currentNits READ currentNits NOTIFY currentNitsChanged)
@@ -20,7 +20,7 @@ public:
     explicit DualDisplayAbsoluteController(QObject *parent = nullptr);
     ~DualDisplayAbsoluteController();
 
-    bool enabled() const { return m_enabled; }
+    bool active() const { return m_active; }
     bool busy() const { return m_busy; }
     double maxNits() const { return m_maxNits; }
     double currentNits() const { return m_currentNits; }
@@ -33,7 +33,7 @@ public slots:
     Q_INVOKABLE void cleanup();
 
 signals:
-    void enabledChanged();
+    void activeChanged();
     void busyChanged();
     void rangeChanged();
     void currentNitsChanged();
@@ -63,7 +63,7 @@ private:
     void setStatusText(const QString &text);
     void reportError(const QString &error);
 
-    bool m_enabled;
+    bool m_active;
     bool m_busy;
     double m_maxNits;
     double m_currentNits;

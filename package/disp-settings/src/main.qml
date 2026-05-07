@@ -53,23 +53,23 @@ Window {
     }
 
     function brightnessSliderFrom() {
-        return dualDisplay.enabled ? 0 : 2;
+        return dualDisplay.active ? 0 : 2;
     }
 
     function brightnessSliderTo() {
-        return dualDisplay.enabled ? Math.max(dualDisplay.maxNits, dualDisplay.nitsStep) : 100;
+        return dualDisplay.active ? Math.max(dualDisplay.maxNits, dualDisplay.nitsStep) : 100;
     }
 
     function brightnessSliderStep() {
-        return dualDisplay.enabled ? dualDisplay.nitsStep : 1;
+        return dualDisplay.active ? dualDisplay.nitsStep : 1;
     }
 
     function brightnessSliderText(value) {
-        return dualDisplay.enabled ? Math.round(value) + " nits" : Math.round(value) + "%";
+        return dualDisplay.active ? Math.round(value) + " nits" : Math.round(value) + "%";
     }
 
     function setBrightnessFromSlider(value) {
-        if (dualDisplay.enabled) {
+        if (dualDisplay.active) {
             dualDisplay.setAbsoluteBrightness(value);
         } else {
             alsDimmer.setBrightness(Math.round(value));
@@ -78,7 +78,7 @@ Window {
 
     function setDualDisplayAbsoluteMode(enabled) {
         dualDisplay.setEnabled(enabled, alsDimmer.mode, alsDimmer.brightness);
-        if (dualDisplay.enabled) {
+        if (dualDisplay.active) {
             userPreferAdaptive = false;
             brightnessSlider.value = dualDisplay.currentNits;
         } else if (!enabled) {
@@ -96,7 +96,7 @@ Window {
             }
         }
         function onModeChanged() {
-            if (dualDisplay.enabled) {
+            if (dualDisplay.active) {
                 return;
             }
             // On first real mode update, sync user preference and slider from actual values
@@ -119,7 +119,7 @@ Window {
             }
         }
         function onBrightnessChanged() {
-            if (dualDisplay.enabled) {
+            if (dualDisplay.active) {
                 return;
             }
             // Sync slider when brightness changes in manual/manual_temporary mode
@@ -134,8 +134,8 @@ Window {
 
     Connections {
         target: dualDisplay
-        function onEnabledChanged() {
-            if (dualDisplay.enabled) {
+        function onActiveChanged() {
+            if (dualDisplay.active) {
                 userPreferAdaptive = false;
                 brightnessSlider.value = dualDisplay.currentNits;
             } else if (!userDraggingBrightness) {
@@ -143,7 +143,7 @@ Window {
             }
         }
         function onCurrentNitsChanged() {
-            if (dualDisplay.enabled && !userDraggingBrightness) {
+            if (dualDisplay.active && !userDraggingBrightness) {
                 brightnessSlider.value = dualDisplay.currentNits;
             }
         }
@@ -315,22 +315,22 @@ Window {
                                 Layout.preferredHeight: 48
                                 from: brightnessSliderFrom()
                                 to: brightnessSliderTo()
-                                value: dualDisplay.enabled ? dualDisplay.currentNits : brightnessSlider.value
-                                enabled: dualDisplay.enabled ? !dualDisplay.busy : alsDimmer.connected
+                                value: dualDisplay.active ? dualDisplay.currentNits : brightnessSlider.value
+                                enabled: dualDisplay.active ? !dualDisplay.busy : alsDimmer.connected
                                 stepSize: brightnessSliderStep()
 
                                 Binding {
                                     target: brightnessSliderWide
                                     property: "value"
                                     value: dualDisplay.currentNits
-                                    when: dualDisplay.enabled && !userDraggingBrightness
+                                    when: dualDisplay.active && !userDraggingBrightness
                                 }
 
                                 Binding {
                                     target: brightnessSliderWide
                                     property: "value"
                                     value: alsDimmer.brightness
-                                    when: !dualDisplay.enabled && !userDraggingBrightness && alsDimmer.mode === "auto"
+                                    when: !dualDisplay.active && !userDraggingBrightness && alsDimmer.mode === "auto"
                                 }
 
                                 background: Rectangle {
@@ -364,7 +364,7 @@ Window {
                                     userDraggingBrightness = pressed;
                                     if (!pressed) {
                                         setBrightnessFromSlider(value);
-                                        if (!dualDisplay.enabled) {
+                                        if (!dualDisplay.active) {
                                             brightnessSetCooldown = true;
                                             brightnessCooldownTimer.restart();
                                         }
@@ -383,7 +383,7 @@ Window {
                                 font.pixelSize: 22
                                 font.bold: true
                                 color: "#ffffff"
-                                Layout.preferredWidth: dualDisplay.enabled ? 110 : 50
+                                Layout.preferredWidth: dualDisplay.active ? 110 : 50
                             }
                         }
 
@@ -401,7 +401,7 @@ Window {
                             Switch {
                                 id: adaptiveSwitchWide
                                 checked: userPreferAdaptive
-                                enabled: alsDimmer.connected && !dualDisplay.enabled && !dualDisplay.busy
+                                enabled: alsDimmer.connected && !dualDisplay.active && !dualDisplay.busy
 
                                 indicator: Rectangle {
                                     implicitWidth: 60
@@ -442,7 +442,7 @@ Window {
 
                             Switch {
                                 id: dualAbsoluteSwitchWide
-                                checked: dualDisplay.enabled
+                                checked: dualDisplay.active
                                 enabled: alsDimmer.connected && !dualDisplay.busy
 
                                 indicator: Rectangle {
@@ -1122,14 +1122,14 @@ Window {
                             from: brightnessSliderFrom()
                             to: brightnessSliderTo()
                             value: 50  // Initial default, will be set on connect
-                            enabled: dualDisplay.enabled ? !dualDisplay.busy : alsDimmer.connected
+                            enabled: dualDisplay.active ? !dualDisplay.busy : alsDimmer.connected
                             stepSize: brightnessSliderStep()
 
                             Binding {
                                 target: brightnessSlider
                                 property: "value"
                                 value: dualDisplay.currentNits
-                                when: dualDisplay.enabled && !userDraggingBrightness
+                                when: dualDisplay.active && !userDraggingBrightness
                             }
 
                             // Only sync from controller in auto mode
@@ -1138,7 +1138,7 @@ Window {
                                 target: brightnessSlider
                                 property: "value"
                                 value: alsDimmer.brightness
-                                when: !dualDisplay.enabled && !userDraggingBrightness && alsDimmer.mode === "auto"
+                                when: !dualDisplay.active && !userDraggingBrightness && alsDimmer.mode === "auto"
                             }
 
                             background: Rectangle {
@@ -1174,7 +1174,7 @@ Window {
                                     // Final update on release
                                     setBrightnessFromSlider(value);
                                     // Start cooldown to ignore brightness feedback briefly
-                                    if (!dualDisplay.enabled) {
+                                    if (!dualDisplay.active) {
                                         brightnessSetCooldown = true;
                                         brightnessCooldownTimer.restart();
                                     }
@@ -1192,7 +1192,7 @@ Window {
                             font.pixelSize: 22
                             font.bold: true
                             color: "#ffffff"
-                            Layout.preferredWidth: dualDisplay.enabled ? 110 : 50
+                            Layout.preferredWidth: dualDisplay.active ? 110 : 50
                         }
                     }
 
@@ -1210,7 +1210,7 @@ Window {
                         Switch {
                             id: adaptiveSwitch
                             checked: userPreferAdaptive
-                            enabled: alsDimmer.connected && !dualDisplay.enabled && !dualDisplay.busy
+                            enabled: alsDimmer.connected && !dualDisplay.active && !dualDisplay.busy
 
                             indicator: Rectangle {
                                 implicitWidth: 60
@@ -1251,7 +1251,7 @@ Window {
 
                         Switch {
                             id: dualAbsoluteSwitch
-                            checked: dualDisplay.enabled
+                            checked: dualDisplay.active
                             enabled: alsDimmer.connected && !dualDisplay.busy
 
                             indicator: Rectangle {

@@ -20,7 +20,7 @@ const char *kSecondaryService = "als-dimmer-pwm.service";
 
 DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     : QObject(parent)
-    , m_enabled(false)
+    , m_active(false)
     , m_busy(false)
     , m_maxNits(1000.0)
     , m_currentNits(0.0)
@@ -45,7 +45,7 @@ DualDisplayAbsoluteController::~DualDisplayAbsoluteController()
 
 void DualDisplayAbsoluteController::setEnabled(bool enabled, const QString &primaryMode, int primaryBrightness)
 {
-    if (enabled == m_enabled && !m_busy) {
+    if (enabled == m_active && !m_busy) {
         return;
     }
 
@@ -58,14 +58,14 @@ void DualDisplayAbsoluteController::setEnabled(bool enabled, const QString &prim
 
 void DualDisplayAbsoluteController::cleanup()
 {
-    if (m_enabled || m_busy) {
+    if (m_active || m_busy) {
         disableMode();
     }
 }
 
 bool DualDisplayAbsoluteController::enableMode(const QString &primaryMode, int primaryBrightness)
 {
-    if (m_enabled) {
+    if (m_active) {
         return true;
     }
 
@@ -137,7 +137,7 @@ bool DualDisplayAbsoluteController::enableMode(const QString &primaryMode, int p
 
 void DualDisplayAbsoluteController::disableMode()
 {
-    if (!m_enabled && !m_busy) {
+    if (!m_active && !m_busy) {
         return;
     }
 
@@ -368,7 +368,7 @@ bool DualDisplayAbsoluteController::sendAbsoluteBrightnessToBoth(double nits, QS
 
 void DualDisplayAbsoluteController::setAbsoluteBrightness(double nits)
 {
-    if (!m_enabled || m_busy) {
+    if (!m_active || m_busy) {
         return;
     }
 
@@ -384,7 +384,7 @@ void DualDisplayAbsoluteController::setAbsoluteBrightness(double nits)
 
 void DualDisplayAbsoluteController::processBrightnessUpdate()
 {
-    if (!m_enabled || !m_brightnessUpdatePending) {
+    if (!m_active || !m_brightnessUpdatePending) {
         return;
     }
 
@@ -407,12 +407,12 @@ double DualDisplayAbsoluteController::roundedNits(double nits) const
 
 void DualDisplayAbsoluteController::setEnabledState(bool enabled)
 {
-    if (m_enabled == enabled) {
+    if (m_active == enabled) {
         return;
     }
 
-    m_enabled = enabled;
-    emit enabledChanged();
+    m_active = enabled;
+    emit activeChanged();
 }
 
 void DualDisplayAbsoluteController::setBusy(bool busy)
