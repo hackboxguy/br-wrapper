@@ -3,7 +3,10 @@
 
 #include <QObject>
 #include <QJsonObject>
+#include <QByteArray>
 #include <QTimer>
+
+class QTcpSocket;
 
 class DualDisplayAbsoluteController : public QObject
 {
@@ -42,6 +45,11 @@ signals:
 
 private slots:
     void processBrightnessUpdate();
+    void adoptSavedState();
+    void onAsyncSocketConnected();
+    void onAsyncSocketReadyRead();
+    void onAsyncSocketError();
+    void onAsyncSocketTimeout();
 
 private:
     bool enableMode(const QString &primaryMode, int primaryBrightness);
@@ -52,10 +60,20 @@ private:
                   QJsonObject *data, QString *error);
     bool setMode(int port, const QString &mode, QString *error);
     bool setRelativeBrightness(int port, int brightness, QString *error);
+    bool readStatus(int port, QJsonObject *data, QString *error);
+    bool readAbsoluteBrightness(int port, double *nits, QString *error);
     bool readMaxBrightness(int port, double *maxNits, QString *error);
     bool sendAbsoluteBrightness(int port, double nits, QString *error);
     bool sendAbsoluteBrightnessToBoth(double nits, QString *error);
     double roundedNits(double nits) const;
+    bool loadStateFile(QString *restoreMode, int *restoreBrightness) const;
+    bool saveStateFile() const;
+    void clearStateFile() const;
+    void startAsyncBrightnessSend(double nits);
+    void startAsyncBrightnessSendToPort(int port);
+    void finishAsyncBrightnessSend();
+    void failAsyncBrightnessSend(const QString &error);
+    void closeAsyncSocket();
     void setEnabledState(bool enabled);
     void setBusy(bool busy);
     void setMaxNits(double maxNits);
@@ -75,6 +93,13 @@ private:
     int m_restorePrimaryBrightness;
     bool m_hasRestoreState;
     QTimer *m_brightnessThrottle;
+    QTimer *m_asyncTimeout;
+    QTcpSocket *m_asyncSocket;
+    QByteArray m_asyncReadBuffer;
+    bool m_sendInFlight;
+    bool m_exitFlushed;
+    int m_asyncPort;
+    double m_inFlightNits;
 };
 
 #endif // DUALDISPLAYABSOLUTECONTROLLER_H
