@@ -208,10 +208,10 @@ bool DualDisplayAbsoluteController::enableMode(const QString &primaryMode, int p
         return false;
     }
 
-    setCurrentNits(initialNits);
     m_pendingNits = initialNits;
     m_brightnessUpdatePending = false;
     setEnabledState(true);
+    setCurrentNits(initialNits);
     setStatusText(QString("Dual absolute mode: 0-%1 nits").arg(qRound(sharedMax)));
     saveStateFile();
     m_exitFlushed = false;
@@ -584,10 +584,10 @@ void DualDisplayAbsoluteController::adoptSavedState()
 
     setMaxNits(sharedMax);
     double rounded = roundedNits(currentNits);
-    setCurrentNits(rounded);
     m_pendingNits = rounded;
     m_brightnessUpdatePending = false;
     setEnabledState(true);
+    setCurrentNits(rounded);
     setStatusText(QString("Dual absolute mode: 0-%1 nits").arg(qRound(sharedMax)));
     m_exitFlushed = false;
     setBusy(false);

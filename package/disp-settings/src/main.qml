@@ -24,6 +24,13 @@ Window {
         onTriggered: brightnessSetCooldown = false
     }
 
+    Timer {
+        id: dualDisplaySliderSyncTimer
+        interval: 0
+        repeat: false
+        onTriggered: syncDualDisplaySlider()
+    }
+
     // Track user's preference for adaptive mode (separate from actual als-dimmer mode)
     // This allows the switch to stay ON even when user temporarily adjusts brightness
     property bool userPreferAdaptive: true
@@ -76,11 +83,27 @@ Window {
         }
     }
 
+    function requestDualDisplaySliderSync() {
+        if (dualDisplay.active && !userDraggingBrightness) {
+            dualDisplaySliderSyncTimer.restart();
+        }
+    }
+
+    function syncDualDisplaySlider() {
+        if (!dualDisplay.active || userDraggingBrightness) {
+            return;
+        }
+
+        var nits = dualDisplay.currentNits;
+        brightnessSlider.value = nits;
+        brightnessSliderWide.value = nits;
+    }
+
     function setDualDisplayAbsoluteMode(enabled) {
         dualDisplay.setEnabled(enabled, alsDimmer.mode, alsDimmer.brightness);
         if (dualDisplay.active) {
             userPreferAdaptive = false;
-            brightnessSlider.value = dualDisplay.currentNits;
+            requestDualDisplaySliderSync();
         } else if (!enabled) {
             brightnessSlider.value = alsDimmer.brightness;
         }
@@ -137,15 +160,16 @@ Window {
         function onActiveChanged() {
             if (dualDisplay.active) {
                 userPreferAdaptive = false;
-                brightnessSlider.value = dualDisplay.currentNits;
+                requestDualDisplaySliderSync();
             } else if (!userDraggingBrightness) {
                 brightnessSlider.value = alsDimmer.brightness;
             }
         }
         function onCurrentNitsChanged() {
-            if (dualDisplay.active && !userDraggingBrightness) {
-                brightnessSlider.value = dualDisplay.currentNits;
-            }
+            requestDualDisplaySliderSync();
+        }
+        function onRangeChanged() {
+            requestDualDisplaySliderSync();
         }
     }
 
