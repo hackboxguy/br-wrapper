@@ -60,19 +60,19 @@ Window {
     }
 
     function brightnessSliderFrom() {
-        return dualDisplay.active ? 0 : 2;
+        return dualDisplay.targetActive ? dualDisplay.minNits : 2;
     }
 
     function brightnessSliderTo() {
-        return dualDisplay.active ? Math.max(dualDisplay.maxNits, dualDisplay.nitsStep) : 100;
+        return dualDisplay.targetActive ? Math.max(dualDisplay.maxNits, dualDisplay.nitsStep) : 100;
     }
 
     function brightnessSliderStep() {
-        return dualDisplay.active ? dualDisplay.nitsStep : 1;
+        return dualDisplay.targetActive ? dualDisplay.nitsStep : 1;
     }
 
     function brightnessSliderText(value) {
-        return dualDisplay.active ? Math.round(value) + " nits" : Math.round(value) + "%";
+        return dualDisplay.targetActive ? Math.round(value) + " nits" : Math.round(value) + "%";
     }
 
     function setBrightnessFromSlider(value) {
@@ -101,7 +101,7 @@ Window {
 
     function setDualDisplayAbsoluteMode(enabled) {
         dualDisplay.setEnabled(enabled, alsDimmer.mode, alsDimmer.brightness);
-        if (dualDisplay.active) {
+        if (dualDisplay.targetActive) {
             userPreferAdaptive = false;
             requestDualDisplaySliderSync();
         } else if (!enabled) {
@@ -119,7 +119,7 @@ Window {
             }
         }
         function onModeChanged() {
-            if (dualDisplay.active) {
+            if (dualDisplay.targetActive) {
                 return;
             }
             // On first real mode update, sync user preference and slider from actual values
@@ -142,7 +142,7 @@ Window {
             }
         }
         function onBrightnessChanged() {
-            if (dualDisplay.active) {
+            if (dualDisplay.targetActive) {
                 return;
             }
             // Sync slider when brightness changes in manual/manual_temporary mode
@@ -157,6 +157,14 @@ Window {
 
     Connections {
         target: dualDisplay
+        function onTargetActiveChanged() {
+            if (dualDisplay.targetActive) {
+                userPreferAdaptive = false;
+                requestDualDisplaySliderSync();
+            } else if (!userDraggingBrightness) {
+                brightnessSlider.value = alsDimmer.brightness;
+            }
+        }
         function onActiveChanged() {
             if (dualDisplay.active) {
                 userPreferAdaptive = false;
@@ -340,7 +348,7 @@ Window {
                                 from: brightnessSliderFrom()
                                 to: brightnessSliderTo()
                                 value: 50
-                                enabled: dualDisplay.active ? !dualDisplay.busy : alsDimmer.connected
+                                enabled: !dualDisplay.busy && (dualDisplay.targetActive || alsDimmer.connected)
                                 stepSize: brightnessSliderStep()
 
                                 Binding {
@@ -354,7 +362,7 @@ Window {
                                     target: brightnessSliderWide
                                     property: "value"
                                     value: brightnessSlider.value
-                                    when: !dualDisplay.active && !userDraggingBrightness
+                                    when: !dualDisplay.targetActive && !userDraggingBrightness
                                 }
 
                                 background: Rectangle {
@@ -388,7 +396,7 @@ Window {
                                     userDraggingBrightness = pressed;
                                     if (!pressed) {
                                         setBrightnessFromSlider(value);
-                                        if (!dualDisplay.active) {
+                                        if (!dualDisplay.targetActive) {
                                             brightnessSetCooldown = true;
                                             brightnessCooldownTimer.restart();
                                         }
@@ -407,7 +415,7 @@ Window {
                                 font.pixelSize: 22
                                 font.bold: true
                                 color: "#ffffff"
-                                Layout.preferredWidth: dualDisplay.active ? 110 : 50
+                                Layout.preferredWidth: dualDisplay.targetActive ? 110 : 50
                             }
                         }
 
@@ -425,7 +433,7 @@ Window {
                             Switch {
                                 id: adaptiveSwitchWide
                                 checked: userPreferAdaptive
-                                enabled: alsDimmer.connected && !dualDisplay.active && !dualDisplay.busy
+                                enabled: alsDimmer.connected && !dualDisplay.targetActive && !dualDisplay.busy
 
                                 indicator: Rectangle {
                                     implicitWidth: 60
@@ -466,7 +474,7 @@ Window {
 
                             Switch {
                                 id: dualAbsoluteSwitchWide
-                                checked: dualDisplay.active
+                                checked: dualDisplay.targetActive
                                 enabled: alsDimmer.connected && !dualDisplay.busy
 
                                 indicator: Rectangle {
@@ -1146,7 +1154,7 @@ Window {
                             from: brightnessSliderFrom()
                             to: brightnessSliderTo()
                             value: 50  // Initial default, will be set on connect
-                            enabled: dualDisplay.active ? !dualDisplay.busy : alsDimmer.connected
+                            enabled: !dualDisplay.busy && (dualDisplay.targetActive || alsDimmer.connected)
                             stepSize: brightnessSliderStep()
 
                             Binding {
@@ -1162,7 +1170,7 @@ Window {
                                 target: brightnessSlider
                                 property: "value"
                                 value: alsDimmer.brightness
-                                when: !dualDisplay.active && !userDraggingBrightness && alsDimmer.mode === "auto"
+                                when: !dualDisplay.targetActive && !userDraggingBrightness && alsDimmer.mode === "auto"
                             }
 
                             background: Rectangle {
@@ -1198,7 +1206,7 @@ Window {
                                     // Final update on release
                                     setBrightnessFromSlider(value);
                                     // Start cooldown to ignore brightness feedback briefly
-                                    if (!dualDisplay.active) {
+                                    if (!dualDisplay.targetActive) {
                                         brightnessSetCooldown = true;
                                         brightnessCooldownTimer.restart();
                                     }
@@ -1216,7 +1224,7 @@ Window {
                             font.pixelSize: 22
                             font.bold: true
                             color: "#ffffff"
-                            Layout.preferredWidth: dualDisplay.active ? 110 : 50
+                            Layout.preferredWidth: dualDisplay.targetActive ? 110 : 50
                         }
                     }
 
@@ -1234,7 +1242,7 @@ Window {
                         Switch {
                             id: adaptiveSwitch
                             checked: userPreferAdaptive
-                            enabled: alsDimmer.connected && !dualDisplay.active && !dualDisplay.busy
+                            enabled: alsDimmer.connected && !dualDisplay.targetActive && !dualDisplay.busy
 
                             indicator: Rectangle {
                                 implicitWidth: 60
@@ -1275,7 +1283,7 @@ Window {
 
                         Switch {
                             id: dualAbsoluteSwitch
-                            checked: dualDisplay.active
+                            checked: dualDisplay.targetActive
                             enabled: alsDimmer.connected && !dualDisplay.busy
 
                             indicator: Rectangle {

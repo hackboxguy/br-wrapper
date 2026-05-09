@@ -65,6 +65,12 @@ target_include_directories(disp-settings
 # Installation rules
 include(GNUInstallDirs)
 
+configure_file(
+    src/disp-settings-dual-display-restore.service.in
+    ${CMAKE_CURRENT_BINARY_DIR}/disp-settings-dual-display-restore.service
+    @ONLY
+)
+
 # Install binary
 install(TARGETS disp-settings
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
@@ -79,6 +85,18 @@ install(FILES
     DESTINATION ${DATA_DIR}
 )
 
+install(PROGRAMS
+    src/disp-settings-dual-display-restore.py
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
+install(FILES
+    ${CMAKE_CURRENT_BINARY_DIR}/disp-settings-dual-display-restore.service
+    DESTINATION lib/systemd/system
+)
+
 message(STATUS "disp-settings: configured")
 message(STATUS "  Install binary to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")
 message(STATUS "  Install configs to: ${DATA_DIR}")
+message(STATUS "  Install restore helper to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")
+message(STATUS "  Install restore service to: ${CMAKE_INSTALL_PREFIX}/lib/systemd/system")

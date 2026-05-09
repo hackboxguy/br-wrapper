@@ -2,13 +2,17 @@
 
 #include <QAbstractSocket>
 #include <QDebug>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFutureWatcher>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QProcess>
 #include <QSaveFile>
+#include <QStringList>
 #include <QTcpSocket>
+#include <QtConcurrent>
 #include <QtMath>
 #include <algorithm>
 #include <unistd.h>
@@ -19,8 +23,10 @@ const int kSecondaryPort = 9001;
 const int kSocketTimeoutMs = 1000;
 const int kServiceTimeoutMs = 10000;
 const int kBrightnessThrottleMs = 100;
+const int kStateSaveDelayMs = 750;
 const char *kSecondaryService = "als-dimmer-pwm.service";
-const char *kStateFilePath = "/tmp/disp-settings-dual-display-mode.json";
+const char *kStateDirPath = "/var/lib/disp-settings";
+const char *kStateFilePath = "/var/lib/disp-settings/dual-display-mode.json";
 
 bool parseResponseLine(int port, const QString &command, const QByteArray &line,
                        QJsonObject *data, QString *error)
@@ -69,21 +75,306 @@ bool readNitsValue(const QJsonObject &data, double *nits)
     *nits = parsed;
     return true;
 }
+
+bool blockingRunServiceAction(const QString &action, QString *error)
+{
+    QString program;
+    QStringList args;
+    if (geteuid() == 0) {
+        program = "systemctl";
+        args << action << kSecondaryService;
+    } else {
+        program = "sudo";
+        args << "-n" << "systemctl" << action << kSecondaryService;
+    }
+
+    QProcess process;
+    process.start(program, args);
+    if (!process.waitForStarted(1000)) {
+        if (error) {
+            *error = QString("Failed to start %1: %2").arg(program, process.errorString());
+        }
+        return false;
+    }
+
+    if (!process.waitForFinished(kServiceTimeoutMs)) {
+        process.kill();
+        process.waitForFinished(1000);
+        if (error) {
+            *error = QString("%1 %2 timed out").arg(program, args.join(' '));
+        }
+        return false;
+    }
+
+    if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+        QString detail = QString::fromUtf8(process.readAllStandardError()).trimmed();
+        if (detail.isEmpty()) {
+            detail = QString::fromUtf8(process.readAllStandardOutput()).trimmed();
+        }
+        if (error) {
+            *error = QString("%1 %2 failed: %3").arg(program, args.join(' '), detail);
+        }
+        return false;
+    }
+
+    return true;
+}
+
+bool blockingCallJson(int port, const QString &command,
+                      const QJsonObject &params, QJsonObject *data, QString *error)
+{
+    QTcpSocket socket;
+    socket.connectToHost("127.0.0.1", port);
+    if (!socket.waitForConnected(kSocketTimeoutMs)) {
+        if (error) {
+            *error = QString("als-dimmer port %1 connect failed: %2")
+                .arg(port)
+                .arg(socket.errorString());
+        }
+        return false;
+    }
+
+    QJsonObject request;
+    request["version"] = "1.0";
+    request["command"] = command;
+    if (!params.isEmpty()) {
+        request["params"] = params;
+    }
+
+    QByteArray payload = QJsonDocument(request).toJson(QJsonDocument::Compact);
+    payload.append('\n');
+    socket.write(payload);
+    if (!socket.waitForBytesWritten(kSocketTimeoutMs)) {
+        if (error) {
+            *error = QString("als-dimmer port %1 write failed: %2")
+                .arg(port)
+                .arg(socket.errorString());
+        }
+        return false;
+    }
+
+    QByteArray response;
+    QElapsedTimer timer;
+    timer.start();
+    while (!response.contains('\n') && timer.elapsed() < kSocketTimeoutMs) {
+        int remaining = kSocketTimeoutMs - static_cast<int>(timer.elapsed());
+        if (!socket.waitForReadyRead(qMax(1, remaining))) {
+            break;
+        }
+        response.append(socket.readAll());
+    }
+
+    if (response.isEmpty()) {
+        if (error) {
+            *error = QString("als-dimmer port %1 did not respond to %2")
+                .arg(port)
+                .arg(command);
+        }
+        return false;
+    }
+
+    int newline = response.indexOf('\n');
+    QByteArray line = newline >= 0 ? response.left(newline) : response;
+    return parseResponseLine(port, command, line, data, error);
+}
+
+bool blockingSetMode(int port, const QString &mode, QString *error)
+{
+    QJsonObject params;
+    params["mode"] = mode;
+    return blockingCallJson(port, "set_mode", params, nullptr, error);
+}
+
+bool blockingSetRelativeBrightness(int port, int brightness, QString *error)
+{
+    QJsonObject params;
+    params["brightness"] = qBound(0, brightness, 100);
+    return blockingCallJson(port, "set_brightness", params, nullptr, error);
+}
+
+bool blockingRestorePrimary(const QString &mode, int brightness, bool hasRestoreState,
+                            QString *error)
+{
+    if (!hasRestoreState) {
+        return true;
+    }
+
+    QString restoreMode = mode.toLower();
+    if (restoreMode == "auto") {
+        return blockingSetMode(kPrimaryPort, "auto", error);
+    }
+
+    if (restoreMode == "manual_temporary") {
+        if (!blockingSetMode(kPrimaryPort, "auto", error)) {
+            return false;
+        }
+        return blockingSetRelativeBrightness(kPrimaryPort, brightness, error);
+    }
+
+    if (!blockingSetMode(kPrimaryPort, "manual", error)) {
+        return false;
+    }
+    return blockingSetRelativeBrightness(kPrimaryPort, brightness, error);
+}
+
+bool blockingReadMaxBrightness(int port, double *maxNits, QString *error)
+{
+    QJsonObject data;
+    if (!blockingCallJson(port, "get_calibration_info", QJsonObject(), &data, error)) {
+        return false;
+    }
+
+    if (data.contains("calibrated") && !data.value("calibrated").toBool(false)) {
+        if (error) {
+            *error = QString("als-dimmer port %1 has no brightness calibration").arg(port);
+        }
+        return false;
+    }
+
+    QJsonValue value = data.value("max_nits");
+    if (!value.isDouble() || value.toDouble() <= 0.0) {
+        if (error) {
+            *error = QString("als-dimmer port %1 missing max_nits").arg(port);
+        }
+        return false;
+    }
+
+    *maxNits = value.toDouble();
+    return true;
+}
+
+bool blockingSendAbsoluteBrightness(int port, double nits, QString *error)
+{
+    QJsonObject params;
+    params["nits"] = nits;
+    return blockingCallJson(port, "set_absolute_brightness", params, nullptr, error);
+}
+
+bool blockingSendAbsoluteBrightnessToBoth(double nits, QString *error)
+{
+    return blockingSendAbsoluteBrightness(kPrimaryPort, nits, error) &&
+           blockingSendAbsoluteBrightness(kSecondaryPort, nits, error);
+}
+
+double roundedNitsForRange(double nits, double minNits, double maxNits, double step)
+{
+    double lowerBound = qMin(minNits, maxNits);
+    double clamped = qBound(lowerBound, nits, maxNits);
+    double rounded = qRound(clamped / step) * step;
+    return qBound(lowerBound, rounded, maxNits);
+}
+
+struct ModeOperationResult
+{
+    bool enable = false;
+    bool success = false;
+    QString error;
+    double sharedMax = 0.0;
+    double nits = 0.0;
+    QString restoreMode;
+    int restoreBrightness = 50;
+    bool hasRestoreState = false;
+};
+
+ModeOperationResult runEnableOperation(QString primaryMode, int primaryBrightness,
+                                       double minNits, double nitsStep)
+{
+    ModeOperationResult result;
+    result.enable = true;
+    result.restoreMode = primaryMode.isEmpty() ? "manual" : primaryMode;
+    result.restoreBrightness = qBound(0, primaryBrightness, 100);
+    result.hasRestoreState = true;
+
+    QString error;
+    if (!blockingRunServiceAction("start", &error)) {
+        result.error = error;
+        return result;
+    }
+
+    if (!blockingSetMode(kPrimaryPort, "manual", &error) ||
+        !blockingSetMode(kSecondaryPort, "manual", &error)) {
+        blockingRunServiceAction("stop", nullptr);
+        blockingRestorePrimary(result.restoreMode, result.restoreBrightness,
+                               result.hasRestoreState, nullptr);
+        result.error = error;
+        return result;
+    }
+
+    double primaryMax = 0.0;
+    double secondaryMax = 0.0;
+    if (!blockingReadMaxBrightness(kPrimaryPort, &primaryMax, &error) ||
+        !blockingReadMaxBrightness(kSecondaryPort, &secondaryMax, &error)) {
+        blockingRunServiceAction("stop", nullptr);
+        blockingRestorePrimary(result.restoreMode, result.restoreBrightness,
+                               result.hasRestoreState, nullptr);
+        result.error = error;
+        return result;
+    }
+
+    double sharedMax = std::min(primaryMax, secondaryMax);
+    if (!qIsFinite(sharedMax) || sharedMax <= 0.0) {
+        blockingRunServiceAction("stop", nullptr);
+        blockingRestorePrimary(result.restoreMode, result.restoreBrightness,
+                               result.hasRestoreState, nullptr);
+        result.error = QString("Invalid shared max brightness: %1").arg(sharedMax);
+        return result;
+    }
+
+    double initialNits = roundedNitsForRange(sharedMax / 2.0, minNits, sharedMax, nitsStep);
+    if (!blockingSendAbsoluteBrightnessToBoth(initialNits, &error)) {
+        blockingRunServiceAction("stop", nullptr);
+        blockingRestorePrimary(result.restoreMode, result.restoreBrightness,
+                               result.hasRestoreState, nullptr);
+        result.error = error;
+        return result;
+    }
+
+    result.success = true;
+    result.sharedMax = sharedMax;
+    result.nits = initialNits;
+    return result;
+}
+
+ModeOperationResult runDisableOperation(QString restoreMode, int restoreBrightness,
+                                        bool hasRestoreState)
+{
+    ModeOperationResult result;
+    result.enable = false;
+    result.success = true;
+    result.restoreMode = restoreMode;
+    result.restoreBrightness = restoreBrightness;
+    result.hasRestoreState = hasRestoreState;
+
+    QStringList errors;
+    QString error;
+    if (!blockingRestorePrimary(restoreMode, restoreBrightness, hasRestoreState, &error)) {
+        errors << error;
+    }
+    if (!blockingRunServiceAction("stop", &error)) {
+        errors << error;
+    }
+
+    result.error = errors.join("; ");
+    return result;
+}
 }
 
 DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     : QObject(parent)
     , m_active(false)
+    , m_targetActive(false)
     , m_busy(false)
     , m_maxNits(1000.0)
     , m_currentNits(0.0)
     , m_pendingNits(0.0)
+    , m_minNits(20.0)
     , m_nitsStep(5.0)
     , m_brightnessUpdatePending(false)
     , m_statusText("Dual absolute mode off")
     , m_restorePrimaryBrightness(50)
     , m_hasRestoreState(false)
     , m_brightnessThrottle(new QTimer(this))
+    , m_stateSaveTimer(new QTimer(this))
     , m_asyncTimeout(new QTimer(this))
     , m_asyncSocket(nullptr)
     , m_sendInFlight(false)
@@ -95,6 +386,11 @@ DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     m_brightnessThrottle->setSingleShot(true);
     connect(m_brightnessThrottle, &QTimer::timeout,
             this, &DualDisplayAbsoluteController::processBrightnessUpdate);
+
+    m_stateSaveTimer->setInterval(kStateSaveDelayMs);
+    m_stateSaveTimer->setSingleShot(true);
+    connect(m_stateSaveTimer, &QTimer::timeout,
+            this, &DualDisplayAbsoluteController::flushStateSave);
 
     m_asyncTimeout->setSingleShot(true);
     connect(m_asyncTimeout, &QTimer::timeout,
@@ -110,20 +406,93 @@ DualDisplayAbsoluteController::~DualDisplayAbsoluteController()
 
 void DualDisplayAbsoluteController::setEnabled(bool enabled, const QString &primaryMode, int primaryBrightness)
 {
-    if (enabled == m_active && !m_busy) {
+    if (m_busy) {
         return;
     }
 
+    if (enabled == m_active) {
+        setTargetActive(m_active);
+        return;
+    }
+
+    setTargetActive(enabled);
+    setBusy(true);
+
     if (enabled) {
-        enableMode(primaryMode, primaryBrightness);
+        setStatusText("Starting dual absolute mode...");
     } else {
-        disableMode();
+        setStatusText("Stopping dual absolute mode...");
+        m_brightnessThrottle->stop();
+        m_stateSaveTimer->stop();
+        closeAsyncSocket();
+        m_sendInFlight = false;
+        m_brightnessUpdatePending = false;
+    }
+
+    QFutureWatcher<ModeOperationResult> *watcher =
+        new QFutureWatcher<ModeOperationResult>(this);
+    connect(watcher, &QFutureWatcher<ModeOperationResult>::finished, this,
+            [this, watcher]() {
+                ModeOperationResult result = watcher->result();
+                watcher->deleteLater();
+
+                if (result.enable) {
+                    if (!result.success) {
+                        reportError(result.error);
+                        clearStateFile();
+                        m_hasRestoreState = false;
+                        setTargetActive(m_active);
+                        setBusy(false);
+                        return;
+                    }
+
+                    m_restorePrimaryMode = result.restoreMode;
+                    m_restorePrimaryBrightness = result.restoreBrightness;
+                    m_hasRestoreState = result.hasRestoreState;
+                    setMaxNits(result.sharedMax);
+                    m_pendingNits = result.nits;
+                    m_brightnessUpdatePending = false;
+                    setEnabledState(true);
+                    setTargetActive(true);
+                    setCurrentNits(result.nits);
+                    setStatusText(QString("Dual absolute mode: 0-%1 nits")
+                                      .arg(qRound(result.sharedMax)));
+                    saveStateFile();
+                    m_exitFlushed = false;
+                    setBusy(false);
+                    return;
+                }
+
+                if (!result.error.isEmpty()) {
+                    reportError(result.error);
+                }
+                m_hasRestoreState = false;
+                setEnabledState(false);
+                setTargetActive(false);
+                clearStateFile();
+                setStatusText("Dual absolute mode off");
+                m_exitFlushed = true;
+                setBusy(false);
+            });
+
+    if (enabled) {
+        watcher->setFuture(QtConcurrent::run(runEnableOperation,
+                                             primaryMode,
+                                             primaryBrightness,
+                                             m_minNits,
+                                             m_nitsStep));
+    } else {
+        watcher->setFuture(QtConcurrent::run(runDisableOperation,
+                                             m_restorePrimaryMode,
+                                             m_restorePrimaryBrightness,
+                                             m_hasRestoreState));
     }
 }
 
 void DualDisplayAbsoluteController::cleanup()
 {
     m_brightnessThrottle->stop();
+    m_stateSaveTimer->stop();
     closeAsyncSocket();
     m_sendInFlight = false;
 
@@ -135,6 +504,7 @@ void DualDisplayAbsoluteController::cleanup()
         }
         m_brightnessUpdatePending = false;
         m_exitFlushed = true;
+        saveStateFile();
     }
 }
 
@@ -211,6 +581,7 @@ bool DualDisplayAbsoluteController::enableMode(const QString &primaryMode, int p
     m_pendingNits = initialNits;
     m_brightnessUpdatePending = false;
     setEnabledState(true);
+    setTargetActive(true);
     setCurrentNits(initialNits);
     setStatusText(QString("Dual absolute mode: 0-%1 nits").arg(qRound(sharedMax)));
     saveStateFile();
@@ -227,6 +598,7 @@ void DualDisplayAbsoluteController::disableMode()
 
     setBusy(true);
     m_brightnessThrottle->stop();
+    m_stateSaveTimer->stop();
     closeAsyncSocket();
     m_sendInFlight = false;
     m_brightnessUpdatePending = false;
@@ -241,6 +613,7 @@ void DualDisplayAbsoluteController::disableMode()
 
     m_hasRestoreState = false;
     setEnabledState(false);
+    setTargetActive(false);
     clearStateFile();
     setStatusText("Dual absolute mode off");
     m_exitFlushed = true;
@@ -450,7 +823,8 @@ bool DualDisplayAbsoluteController::sendAbsoluteBrightnessToBoth(double nits, QS
            sendAbsoluteBrightness(kSecondaryPort, nits, error);
 }
 
-bool DualDisplayAbsoluteController::loadStateFile(QString *restoreMode, int *restoreBrightness) const
+bool DualDisplayAbsoluteController::loadStateFile(QString *restoreMode, int *restoreBrightness,
+                                                  double *lastNits, bool *enabled) const
 {
     QFile file(kStateFilePath);
     if (!file.exists()) {
@@ -471,15 +845,45 @@ bool DualDisplayAbsoluteController::loadStateFile(QString *restoreMode, int *res
     }
 
     QJsonObject object = document.object();
+    *enabled = object.value("enabled").toBool(true);
     *restoreMode = object.value("restore_primary_mode").toString("manual");
     *restoreBrightness = qBound(0, object.value("restore_primary_brightness").toInt(50), 100);
+
+    QJsonValue lastNitsValue = object.value("last_nits");
+    if (!lastNitsValue.isDouble() || !qIsFinite(lastNitsValue.toDouble())) {
+        qWarning() << "DualDisplayAbsoluteController: State file missing last_nits";
+        return false;
+    }
+
+    *lastNits = lastNitsValue.toDouble();
+    return true;
+}
+
+bool DualDisplayAbsoluteController::ensureStateDirectory() const
+{
+    QDir dir;
+    if (dir.exists(kStateDirPath)) {
+        return true;
+    }
+    if (!dir.mkpath(kStateDirPath)) {
+        qWarning() << "DualDisplayAbsoluteController: Failed to create state directory"
+                   << kStateDirPath;
+        return false;
+    }
     return true;
 }
 
 bool DualDisplayAbsoluteController::saveStateFile() const
 {
+    if (!m_active || !ensureStateDirectory()) {
+        return false;
+    }
+
     QJsonObject object;
     object["version"] = 1;
+    object["enabled"] = true;
+    object["last_nits"] = m_pendingNits;
+    object["min_nits"] = m_minNits;
     object["restore_primary_mode"] = m_restorePrimaryMode;
     object["restore_primary_brightness"] = m_restorePrimaryBrightness;
 
@@ -501,6 +905,18 @@ bool DualDisplayAbsoluteController::saveStateFile() const
     return true;
 }
 
+void DualDisplayAbsoluteController::scheduleStateSave()
+{
+    if (m_active) {
+        m_stateSaveTimer->start();
+    }
+}
+
+void DualDisplayAbsoluteController::flushStateSave()
+{
+    saveStateFile();
+}
+
 void DualDisplayAbsoluteController::clearStateFile() const
 {
     if (!QFile::exists(kStateFilePath)) {
@@ -520,14 +936,32 @@ void DualDisplayAbsoluteController::adoptSavedState()
 
     QString restoreMode;
     int restoreBrightness = 50;
-    if (!loadStateFile(&restoreMode, &restoreBrightness)) {
+    double savedNits = 0.0;
+    bool stateEnabled = false;
+    if (!loadStateFile(&restoreMode, &restoreBrightness, &savedNits, &stateEnabled) ||
+        !stateEnabled) {
         return;
     }
 
     setBusy(true);
-    setStatusText("Checking dual display mode...");
+    setStatusText("Restoring dual display mode...");
 
     QString error;
+    if (!runServiceAction("start", &error)) {
+        qWarning() << "DualDisplayAbsoluteController: Failed to start saved dual service:" << error;
+        setStatusText("Dual absolute mode off");
+        setBusy(false);
+        return;
+    }
+
+    if (!setMode(kPrimaryPort, "manual", &error) ||
+        !setMode(kSecondaryPort, "manual", &error)) {
+        qWarning() << "DualDisplayAbsoluteController: Failed to set saved dual mode:" << error;
+        setStatusText("Dual absolute mode off");
+        setBusy(false);
+        return;
+    }
+
     QJsonObject primaryStatus;
     QJsonObject secondaryStatus;
     if (!readStatus(kPrimaryPort, &primaryStatus, &error) ||
@@ -559,17 +993,6 @@ void DualDisplayAbsoluteController::adoptSavedState()
         return;
     }
 
-    double currentNits = 0.0;
-    if (!readNitsValue(primaryStatus, &currentNits) &&
-        !readAbsoluteBrightness(kPrimaryPort, &currentNits, &error) &&
-        !readNitsValue(secondaryStatus, &currentNits) &&
-        !readAbsoluteBrightness(kSecondaryPort, &currentNits, &error)) {
-        qWarning() << "DualDisplayAbsoluteController: Failed to read saved dual brightness:" << error;
-        setStatusText("Dual absolute mode off");
-        setBusy(false);
-        return;
-    }
-
     double sharedMax = std::min(primaryMax, secondaryMax);
     if (!qIsFinite(sharedMax) || sharedMax <= 0.0) {
         qWarning() << "DualDisplayAbsoluteController: Invalid saved dual range" << sharedMax;
@@ -583,12 +1006,22 @@ void DualDisplayAbsoluteController::adoptSavedState()
     m_hasRestoreState = true;
 
     setMaxNits(sharedMax);
-    double rounded = roundedNits(currentNits);
+    double rounded = roundedNits(savedNits);
+    if (!sendAbsoluteBrightnessToBoth(rounded, &error)) {
+        qWarning() << "DualDisplayAbsoluteController: Failed to restore saved dual brightness:"
+                   << error;
+        setStatusText("Dual absolute mode off");
+        setBusy(false);
+        return;
+    }
+
     m_pendingNits = rounded;
     m_brightnessUpdatePending = false;
     setEnabledState(true);
+    setTargetActive(true);
     setCurrentNits(rounded);
     setStatusText(QString("Dual absolute mode: 0-%1 nits").arg(qRound(sharedMax)));
+    saveStateFile();
     m_exitFlushed = false;
     setBusy(false);
 }
@@ -731,6 +1164,7 @@ void DualDisplayAbsoluteController::onAsyncSocketTimeout()
 
 void DualDisplayAbsoluteController::finishAsyncBrightnessSend()
 {
+    scheduleStateSave();
     m_sendInFlight = false;
     if (m_active && m_brightnessUpdatePending) {
         m_brightnessThrottle->start();
@@ -763,8 +1197,10 @@ void DualDisplayAbsoluteController::closeAsyncSocket()
 
 double DualDisplayAbsoluteController::roundedNits(double nits) const
 {
-    double clamped = qBound(0.0, nits, m_maxNits);
-    return qRound(clamped / m_nitsStep) * m_nitsStep;
+    double lowerBound = qMin(m_minNits, m_maxNits);
+    double clamped = qBound(lowerBound, nits, m_maxNits);
+    double rounded = qRound(clamped / m_nitsStep) * m_nitsStep;
+    return qBound(lowerBound, rounded, m_maxNits);
 }
 
 void DualDisplayAbsoluteController::setEnabledState(bool enabled)
@@ -775,6 +1211,16 @@ void DualDisplayAbsoluteController::setEnabledState(bool enabled)
 
     m_active = enabled;
     emit activeChanged();
+}
+
+void DualDisplayAbsoluteController::setTargetActive(bool active)
+{
+    if (m_targetActive == active) {
+        return;
+    }
+
+    m_targetActive = active;
+    emit targetActiveChanged();
 }
 
 void DualDisplayAbsoluteController::setBusy(bool busy)

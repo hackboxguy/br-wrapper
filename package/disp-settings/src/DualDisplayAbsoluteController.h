@@ -13,9 +13,11 @@ class DualDisplayAbsoluteController : public QObject
     Q_OBJECT
 
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
+    Q_PROPERTY(bool targetActive READ targetActive NOTIFY targetActiveChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(double maxNits READ maxNits NOTIFY rangeChanged)
     Q_PROPERTY(double currentNits READ currentNits NOTIFY currentNitsChanged)
+    Q_PROPERTY(double minNits READ minNits CONSTANT)
     Q_PROPERTY(double nitsStep READ nitsStep CONSTANT)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
 
@@ -24,9 +26,11 @@ public:
     ~DualDisplayAbsoluteController();
 
     bool active() const { return m_active; }
+    bool targetActive() const { return m_targetActive; }
     bool busy() const { return m_busy; }
     double maxNits() const { return m_maxNits; }
     double currentNits() const { return m_currentNits; }
+    double minNits() const { return m_minNits; }
     double nitsStep() const { return m_nitsStep; }
     QString statusText() const { return m_statusText; }
 
@@ -37,6 +41,7 @@ public slots:
 
 signals:
     void activeChanged();
+    void targetActiveChanged();
     void busyChanged();
     void rangeChanged();
     void currentNitsChanged();
@@ -46,6 +51,7 @@ signals:
 private slots:
     void processBrightnessUpdate();
     void adoptSavedState();
+    void flushStateSave();
     void onAsyncSocketConnected();
     void onAsyncSocketReadyRead();
     void onAsyncSocketError();
@@ -66,8 +72,11 @@ private:
     bool sendAbsoluteBrightness(int port, double nits, QString *error);
     bool sendAbsoluteBrightnessToBoth(double nits, QString *error);
     double roundedNits(double nits) const;
-    bool loadStateFile(QString *restoreMode, int *restoreBrightness) const;
+    bool loadStateFile(QString *restoreMode, int *restoreBrightness,
+                       double *lastNits, bool *enabled) const;
+    bool ensureStateDirectory() const;
     bool saveStateFile() const;
+    void scheduleStateSave();
     void clearStateFile() const;
     void startAsyncBrightnessSend(double nits);
     void startAsyncBrightnessSendToPort(int port);
@@ -75,6 +84,7 @@ private:
     void failAsyncBrightnessSend(const QString &error);
     void closeAsyncSocket();
     void setEnabledState(bool enabled);
+    void setTargetActive(bool active);
     void setBusy(bool busy);
     void setMaxNits(double maxNits);
     void setCurrentNits(double nits);
@@ -82,10 +92,12 @@ private:
     void reportError(const QString &error);
 
     bool m_active;
+    bool m_targetActive;
     bool m_busy;
     double m_maxNits;
     double m_currentNits;
     double m_pendingNits;
+    const double m_minNits;
     const double m_nitsStep;
     bool m_brightnessUpdatePending;
     QString m_statusText;
@@ -93,6 +105,7 @@ private:
     int m_restorePrimaryBrightness;
     bool m_hasRestoreState;
     QTimer *m_brightnessThrottle;
+    QTimer *m_stateSaveTimer;
     QTimer *m_asyncTimeout;
     QTcpSocket *m_asyncSocket;
     QByteArray m_asyncReadBuffer;
