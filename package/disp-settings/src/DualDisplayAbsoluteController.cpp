@@ -23,10 +23,14 @@ const int kSecondaryPort = 9001;
 const int kSocketTimeoutMs = 1000;
 const int kServiceTimeoutMs = 10000;
 const int kBrightnessThrottleMs = 100;
+const int kHardwarePollMs = 3000;
 const int kStateSaveDelayMs = 750;
 const char *kSecondaryService = "als-dimmer-pwm.service";
 const char *kStateDirPath = "/var/lib/disp-settings";
 const char *kStateFilePath = "/var/lib/disp-settings/dual-display-mode.json";
+const char *kUsbDevicesPath = "/sys/bus/usb/devices";
+const char *kI2cTinyUsbVendor = "0403";
+const char *kI2cTinyUsbProduct = "c631";
 
 bool parseResponseLine(int port, const QString &command, const QByteArray &line,
                        QJsonObject *data, QString *error)
@@ -363,6 +367,7 @@ DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     : QObject(parent)
     , m_active(false)
     , m_targetActive(false)
+    , m_hardwareAvailable(false)
     , m_busy(false)
     , m_maxNits(1000.0)
     , m_currentNits(0.0)
@@ -374,6 +379,7 @@ DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     , m_restorePrimaryBrightness(50)
     , m_hasRestoreState(false)
     , m_brightnessThrottle(new QTimer(this))
+    , m_hardwarePollTimer(new QTimer(this))
     , m_stateSaveTimer(new QTimer(this))
     , m_asyncTimeout(new QTimer(this))
     , m_asyncSocket(nullptr)
@@ -386,6 +392,12 @@ DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     m_brightnessThrottle->setSingleShot(true);
     connect(m_brightnessThrottle, &QTimer::timeout,
             this, &DualDisplayAbsoluteController::processBrightnessUpdate);
+
+    m_hardwarePollTimer->setInterval(kHardwarePollMs);
+    connect(m_hardwarePollTimer, &QTimer::timeout,
+            this, &DualDisplayAbsoluteController::refreshHardwareAvailability);
+    refreshHardwareAvailability();
+    m_hardwarePollTimer->start();
 
     m_stateSaveTimer->setInterval(kStateSaveDelayMs);
     m_stateSaveTimer->setSingleShot(true);
@@ -407,6 +419,12 @@ DualDisplayAbsoluteController::~DualDisplayAbsoluteController()
 void DualDisplayAbsoluteController::setEnabled(bool enabled, const QString &primaryMode, int primaryBrightness)
 {
     if (m_busy) {
+        return;
+    }
+
+    if (enabled && !m_hardwareAvailable) {
+        reportError("Dual display PWM controller not detected");
+        setTargetActive(false);
         return;
     }
 
@@ -928,6 +946,43 @@ void DualDisplayAbsoluteController::clearStateFile() const
     }
 }
 
+bool DualDisplayAbsoluteController::detectHardwareAvailability() const
+{
+    QDir usbDevices(kUsbDevicesPath);
+    if (!usbDevices.exists()) {
+        return false;
+    }
+
+    const QFileInfoList entries = usbDevices.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot);
+    for (const QFileInfo &entry : entries) {
+        QFile vendorFile(entry.filePath() + "/idVendor");
+        QFile productFile(entry.filePath() + "/idProduct");
+        if (!vendorFile.open(QIODevice::ReadOnly | QIODevice::Text) ||
+            !productFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            continue;
+        }
+
+        QString vendor = QString::fromLatin1(vendorFile.readAll()).trimmed().toLower();
+        QString product = QString::fromLatin1(productFile.readAll()).trimmed().toLower();
+        if (vendor == QLatin1String(kI2cTinyUsbVendor) &&
+            product == QLatin1String(kI2cTinyUsbProduct)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void DualDisplayAbsoluteController::refreshHardwareAvailability()
+{
+    bool available = detectHardwareAvailability();
+    bool wasAvailable = m_hardwareAvailable;
+    setHardwareAvailable(available);
+    if (available && !wasAvailable && !m_active && !m_busy) {
+        QTimer::singleShot(0, this, &DualDisplayAbsoluteController::adoptSavedState);
+    }
+}
+
 void DualDisplayAbsoluteController::adoptSavedState()
 {
     if (m_active || m_busy) {
@@ -940,6 +995,12 @@ void DualDisplayAbsoluteController::adoptSavedState()
     bool stateEnabled = false;
     if (!loadStateFile(&restoreMode, &restoreBrightness, &savedNits, &stateEnabled) ||
         !stateEnabled) {
+        return;
+    }
+
+    if (!m_hardwareAvailable) {
+        qWarning() << "DualDisplayAbsoluteController: Saved dual mode skipped:"
+                   << "i2c-tiny-usb controller not detected";
         return;
     }
 
@@ -1221,6 +1282,16 @@ void DualDisplayAbsoluteController::setTargetActive(bool active)
 
     m_targetActive = active;
     emit targetActiveChanged();
+}
+
+void DualDisplayAbsoluteController::setHardwareAvailable(bool available)
+{
+    if (m_hardwareAvailable == available) {
+        return;
+    }
+
+    m_hardwareAvailable = available;
+    emit hardwareAvailableChanged();
 }
 
 void DualDisplayAbsoluteController::setBusy(bool busy)

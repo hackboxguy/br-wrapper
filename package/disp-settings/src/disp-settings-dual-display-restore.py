@@ -14,6 +14,9 @@ import time
 STATE_DIR = "/var/lib/disp-settings"
 STATE_FILE = os.path.join(STATE_DIR, "dual-display-mode.json")
 SECONDARY_SERVICE = "als-dimmer-pwm.service"
+USB_DEVICES_PATH = "/sys/bus/usb/devices"
+I2C_TINY_USB_VENDOR = "0403"
+I2C_TINY_USB_PRODUCT = "c631"
 PRIMARY_PORT = 9000
 SECONDARY_PORT = 9001
 MIN_NITS = 20.0
@@ -85,6 +88,30 @@ def save_state(state):
             os.unlink(tmp_path)
 
 
+def read_sysfs_text(path):
+    try:
+        with open(path, "r", encoding="utf-8") as sysfs_file:
+            return sysfs_file.read().strip().lower()
+    except OSError:
+        return None
+
+
+def i2c_tiny_usb_present():
+    try:
+        entries = os.listdir(USB_DEVICES_PATH)
+    except OSError:
+        return False
+
+    for entry in entries:
+        device_path = os.path.join(USB_DEVICES_PATH, entry)
+        vendor = read_sysfs_text(os.path.join(device_path, "idVendor"))
+        product = read_sysfs_text(os.path.join(device_path, "idProduct"))
+        if vendor == I2C_TINY_USB_VENDOR and product == I2C_TINY_USB_PRODUCT:
+            return True
+
+    return False
+
+
 def call_json(port, command, params=None):
     request = {"version": "1.0", "command": command}
     if params:
@@ -149,6 +176,10 @@ def rounded_nits(nits, max_nits):
 
 
 def restore_dual_display(state):
+    if not i2c_tiny_usb_present():
+        log("i2c-tiny-usb controller not detected; skipping restore")
+        return
+
     log("starting secondary als-dimmer instance")
     start_secondary_service()
 

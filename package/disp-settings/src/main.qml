@@ -466,6 +466,7 @@ Window {
 
                             Text {
                                 text: "Dual Display Mode:"
+                                visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
                                 font.pixelSize: 20
                                 color: "#cccccc"
                                 Layout.leftMargin: 15
@@ -474,8 +475,9 @@ Window {
 
                             Switch {
                                 id: dualAbsoluteSwitchWide
+                                visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
                                 checked: dualDisplay.targetActive
-                                enabled: alsDimmer.connected && !dualDisplay.busy
+                                enabled: alsDimmer.connected && dualDisplay.hardwareAvailable && !dualDisplay.busy
 
                                 indicator: Rectangle {
                                     implicitWidth: 60
@@ -1275,6 +1277,7 @@ Window {
 
                         Text {
                             text: "Dual Display Mode:"
+                            visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
                             font.pixelSize: 20
                             color: "#cccccc"
                             Layout.leftMargin: 15
@@ -1283,8 +1286,9 @@ Window {
 
                         Switch {
                             id: dualAbsoluteSwitch
+                            visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
                             checked: dualDisplay.targetActive
-                            enabled: alsDimmer.connected && !dualDisplay.busy
+                            enabled: alsDimmer.connected && dualDisplay.hardwareAvailable && !dualDisplay.busy
 
                             indicator: Rectangle {
                                 implicitWidth: 60

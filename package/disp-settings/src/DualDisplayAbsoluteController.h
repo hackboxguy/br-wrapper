@@ -14,6 +14,7 @@ class DualDisplayAbsoluteController : public QObject
 
     Q_PROPERTY(bool active READ active NOTIFY activeChanged)
     Q_PROPERTY(bool targetActive READ targetActive NOTIFY targetActiveChanged)
+    Q_PROPERTY(bool hardwareAvailable READ hardwareAvailable NOTIFY hardwareAvailableChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
     Q_PROPERTY(double maxNits READ maxNits NOTIFY rangeChanged)
     Q_PROPERTY(double currentNits READ currentNits NOTIFY currentNitsChanged)
@@ -27,6 +28,7 @@ public:
 
     bool active() const { return m_active; }
     bool targetActive() const { return m_targetActive; }
+    bool hardwareAvailable() const { return m_hardwareAvailable; }
     bool busy() const { return m_busy; }
     double maxNits() const { return m_maxNits; }
     double currentNits() const { return m_currentNits; }
@@ -42,6 +44,7 @@ public slots:
 signals:
     void activeChanged();
     void targetActiveChanged();
+    void hardwareAvailableChanged();
     void busyChanged();
     void rangeChanged();
     void currentNitsChanged();
@@ -52,6 +55,7 @@ private slots:
     void processBrightnessUpdate();
     void adoptSavedState();
     void flushStateSave();
+    void refreshHardwareAvailability();
     void onAsyncSocketConnected();
     void onAsyncSocketReadyRead();
     void onAsyncSocketError();
@@ -78,6 +82,7 @@ private:
     bool saveStateFile() const;
     void scheduleStateSave();
     void clearStateFile() const;
+    bool detectHardwareAvailability() const;
     void startAsyncBrightnessSend(double nits);
     void startAsyncBrightnessSendToPort(int port);
     void finishAsyncBrightnessSend();
@@ -85,6 +90,7 @@ private:
     void closeAsyncSocket();
     void setEnabledState(bool enabled);
     void setTargetActive(bool active);
+    void setHardwareAvailable(bool available);
     void setBusy(bool busy);
     void setMaxNits(double maxNits);
     void setCurrentNits(double nits);
@@ -93,6 +99,7 @@ private:
 
     bool m_active;
     bool m_targetActive;
+    bool m_hardwareAvailable;
     bool m_busy;
     double m_maxNits;
     double m_currentNits;
@@ -105,6 +112,7 @@ private:
     int m_restorePrimaryBrightness;
     bool m_hasRestoreState;
     QTimer *m_brightnessThrottle;
+    QTimer *m_hardwarePollTimer;
     QTimer *m_stateSaveTimer;
     QTimer *m_asyncTimeout;
     QTcpSocket *m_asyncSocket;
