@@ -1,10 +1,12 @@
 #include "DualDisplayAbsoluteController.h"
 
 #include <QAbstractSocket>
+#include <QDateTime>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QFutureWatcher>
 #include <QJsonDocument>
 #include <QJsonValue>
@@ -28,9 +30,18 @@ const int kStateSaveDelayMs = 750;
 const char *kSecondaryService = "als-dimmer-pwm.service";
 const char *kStateDirPath = "/var/lib/disp-settings";
 const char *kStateFilePath = "/var/lib/disp-settings/dual-display-mode.json";
+const char *kSessionStateFilePath = "/tmp/disp-settings-dual-display-mode.json";
 const char *kUsbDevicesPath = "/sys/bus/usb/devices";
 const char *kI2cTinyUsbVendor = "0403";
 const char *kI2cTinyUsbProduct = "c631";
+
+struct DualDisplayStateFile {
+    QString restoreMode;
+    int restoreBrightness = 50;
+    double lastNits = 0.0;
+    bool enabled = false;
+    qint64 modifiedMsecs = 0;
+};
 
 bool parseResponseLine(int port, const QString &command, const QByteArray &line,
                        QJsonObject *data, QString *error)
@@ -77,6 +88,64 @@ bool readNitsValue(const QJsonObject &data, double *nits)
     }
 
     *nits = parsed;
+    return true;
+}
+
+bool readDualDisplayStateFile(const QString &path, DualDisplayStateFile *state)
+{
+    QFile file(path);
+    if (!file.exists()) {
+        return false;
+    }
+    if (!file.open(QIODevice::ReadOnly)) {
+        qWarning() << "DualDisplayAbsoluteController: Failed to open state file"
+                   << path << file.errorString();
+        return false;
+    }
+
+    QJsonParseError parseError;
+    QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
+    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
+        qWarning() << "DualDisplayAbsoluteController: Invalid state file"
+                   << path << parseError.errorString();
+        return false;
+    }
+
+    QJsonObject object = document.object();
+    state->enabled = object.value("enabled").toBool(true);
+    state->restoreMode = object.value("restore_primary_mode").toString("manual");
+    state->restoreBrightness =
+        qBound(0, object.value("restore_primary_brightness").toInt(50), 100);
+
+    QJsonValue lastNitsValue = object.value("last_nits");
+    if (!lastNitsValue.isDouble() || !qIsFinite(lastNitsValue.toDouble())) {
+        qWarning() << "DualDisplayAbsoluteController: State file missing last_nits"
+                   << path;
+        return false;
+    }
+
+    state->lastNits = lastNitsValue.toDouble();
+    state->modifiedMsecs = QFileInfo(path).lastModified().toMSecsSinceEpoch();
+    return true;
+}
+
+bool writeDualDisplayStateFile(const QString &path, const QJsonObject &object)
+{
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly)) {
+        qWarning() << "DualDisplayAbsoluteController: Failed to write state file"
+                   << path << file.errorString();
+        return false;
+    }
+
+    file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
+    file.write("\n");
+    if (!file.commit()) {
+        qWarning() << "DualDisplayAbsoluteController: Failed to commit state file"
+                   << path << file.errorString();
+        return false;
+    }
+
     return true;
 }
 
@@ -844,36 +913,28 @@ bool DualDisplayAbsoluteController::sendAbsoluteBrightnessToBoth(double nits, QS
 bool DualDisplayAbsoluteController::loadStateFile(QString *restoreMode, int *restoreBrightness,
                                                   double *lastNits, bool *enabled) const
 {
-    QFile file(kStateFilePath);
-    if (!file.exists()) {
-        return false;
-    }
-    if (!file.open(QIODevice::ReadOnly)) {
-        qWarning() << "DualDisplayAbsoluteController: Failed to open state file"
-                   << kStateFilePath << file.errorString();
-        return false;
-    }
+    DualDisplayStateFile persistentState;
+    DualDisplayStateFile sessionState;
+    bool hasPersistentState = readDualDisplayStateFile(kStateFilePath, &persistentState);
+    bool hasSessionState = readDualDisplayStateFile(kSessionStateFilePath, &sessionState);
 
-    QJsonParseError parseError;
-    QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &parseError);
-    if (parseError.error != QJsonParseError::NoError || !document.isObject()) {
-        qWarning() << "DualDisplayAbsoluteController: Invalid state file:"
-                   << parseError.errorString();
+    if (!hasPersistentState && !hasSessionState) {
         return false;
     }
 
-    QJsonObject object = document.object();
-    *enabled = object.value("enabled").toBool(true);
-    *restoreMode = object.value("restore_primary_mode").toString("manual");
-    *restoreBrightness = qBound(0, object.value("restore_primary_brightness").toInt(50), 100);
-
-    QJsonValue lastNitsValue = object.value("last_nits");
-    if (!lastNitsValue.isDouble() || !qIsFinite(lastNitsValue.toDouble())) {
-        qWarning() << "DualDisplayAbsoluteController: State file missing last_nits";
-        return false;
+    const DualDisplayStateFile *selectedState = &persistentState;
+    if (hasSessionState &&
+        (!hasPersistentState ||
+         sessionState.modifiedMsecs > persistentState.modifiedMsecs)) {
+        selectedState = &sessionState;
+        qWarning() << "DualDisplayAbsoluteController: Using session dual-display state"
+                   << kSessionStateFilePath;
     }
 
-    *lastNits = lastNitsValue.toDouble();
+    *enabled = selectedState->enabled;
+    *restoreMode = selectedState->restoreMode;
+    *restoreBrightness = selectedState->restoreBrightness;
+    *lastNits = selectedState->lastNits;
     return true;
 }
 
@@ -893,7 +954,7 @@ bool DualDisplayAbsoluteController::ensureStateDirectory() const
 
 bool DualDisplayAbsoluteController::saveStateFile() const
 {
-    if (!m_active || !ensureStateDirectory()) {
+    if (!m_active) {
         return false;
     }
 
@@ -905,22 +966,21 @@ bool DualDisplayAbsoluteController::saveStateFile() const
     object["restore_primary_mode"] = m_restorePrimaryMode;
     object["restore_primary_brightness"] = m_restorePrimaryBrightness;
 
-    QSaveFile file(kStateFilePath);
-    if (!file.open(QIODevice::WriteOnly)) {
-        qWarning() << "DualDisplayAbsoluteController: Failed to write state file"
-                   << kStateFilePath << file.errorString();
-        return false;
+    if (ensureStateDirectory() && writeDualDisplayStateFile(kStateFilePath, object)) {
+        if (QFile::exists(kSessionStateFilePath) && !QFile::remove(kSessionStateFilePath)) {
+            qWarning() << "DualDisplayAbsoluteController: Failed to remove session state file"
+                       << kSessionStateFilePath;
+        }
+        return true;
     }
 
-    file.write(QJsonDocument(object).toJson(QJsonDocument::Compact));
-    file.write("\n");
-    if (!file.commit()) {
-        qWarning() << "DualDisplayAbsoluteController: Failed to commit state file"
-                   << kStateFilePath << file.errorString();
-        return false;
+    if (writeDualDisplayStateFile(kSessionStateFilePath, object)) {
+        qWarning() << "DualDisplayAbsoluteController: Persistent state unavailable;"
+                   << "saved session fallback" << kSessionStateFilePath;
+        return true;
     }
 
-    return true;
+    return false;
 }
 
 void DualDisplayAbsoluteController::scheduleStateSave()
@@ -937,12 +997,31 @@ void DualDisplayAbsoluteController::flushStateSave()
 
 void DualDisplayAbsoluteController::clearStateFile() const
 {
-    if (!QFile::exists(kStateFilePath)) {
-        return;
-    }
-    if (!QFile::remove(kStateFilePath)) {
+    bool persistentRemoveFailed = false;
+    if (QFile::exists(kStateFilePath) && !QFile::remove(kStateFilePath)) {
         qWarning() << "DualDisplayAbsoluteController: Failed to remove state file"
                    << kStateFilePath;
+        persistentRemoveFailed = true;
+    }
+
+    if (persistentRemoveFailed) {
+        QJsonObject object;
+        object["version"] = 1;
+        object["enabled"] = false;
+        object["last_nits"] = m_pendingNits;
+        object["min_nits"] = m_minNits;
+        object["restore_primary_mode"] = m_restorePrimaryMode;
+        object["restore_primary_brightness"] = m_restorePrimaryBrightness;
+        if (!writeDualDisplayStateFile(kSessionStateFilePath, object)) {
+            qWarning() << "DualDisplayAbsoluteController: Failed to write disabled session state"
+                       << kSessionStateFilePath;
+        }
+        return;
+    }
+
+    if (QFile::exists(kSessionStateFilePath) && !QFile::remove(kSessionStateFilePath)) {
+        qWarning() << "DualDisplayAbsoluteController: Failed to remove state file"
+                   << kSessionStateFilePath;
     }
 }
 

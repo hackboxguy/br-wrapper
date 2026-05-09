@@ -6,6 +6,9 @@ Before=qt-demo-launcher.service
 
 [Service]
 Type=oneshot
+ExecStartPre=/bin/mkdir -p /var/lib/disp-settings
+ExecStartPre=-/bin/chown pi:pi /var/lib/disp-settings
+ExecStartPre=/bin/chmod 755 /var/lib/disp-settings
 ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/disp-settings-dual-display-restore.py
 TimeoutStartSec=25
 StandardOutput=journal
