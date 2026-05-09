@@ -25,7 +25,7 @@ Item {
     // Performance: skip expensive effects on high-res displays
     property bool hiRes: (Screen.width * Screen.height) >= (1920 * 1080)
     property string digitalFormat: "%1"
-    property color dialColor: "#0a0a0a"
+    property color dialColor: "#000000"
     property color tickColor: "#ffffff"
     property color needleColor: "#ff2200"
     property color redlineColor: "#ff0000"
