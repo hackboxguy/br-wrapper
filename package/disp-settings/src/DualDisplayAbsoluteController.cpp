@@ -438,6 +438,7 @@ DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     , m_targetActive(false)
     , m_hardwareAvailable(false)
     , m_busy(false)
+    , m_loadingSavedState(false)
     , m_maxNits(1000.0)
     , m_currentNits(0.0)
     , m_pendingNits(0.0)
@@ -457,6 +458,14 @@ DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     , m_asyncPort(0)
     , m_inFlightNits(0.0)
 {
+    QString restoreMode;
+    int restoreBrightness = 50;
+    double savedNits = 0.0;
+    bool stateEnabled = false;
+    m_loadingSavedState =
+        loadStateFile(&restoreMode, &restoreBrightness, &savedNits, &stateEnabled) &&
+        stateEnabled;
+
     m_brightnessThrottle->setInterval(kBrightnessThrottleMs);
     m_brightnessThrottle->setSingleShot(true);
     connect(m_brightnessThrottle, &QTimer::timeout,
@@ -1074,15 +1083,18 @@ void DualDisplayAbsoluteController::adoptSavedState()
     bool stateEnabled = false;
     if (!loadStateFile(&restoreMode, &restoreBrightness, &savedNits, &stateEnabled) ||
         !stateEnabled) {
+        setLoadingSavedState(false);
         return;
     }
 
     if (!m_hardwareAvailable) {
         qWarning() << "DualDisplayAbsoluteController: Saved dual mode skipped:"
                    << "i2c-tiny-usb controller not detected";
+        setLoadingSavedState(false);
         return;
     }
 
+    setLoadingSavedState(true);
     setBusy(true);
     setStatusText("Restoring dual display mode...");
 
@@ -1090,6 +1102,7 @@ void DualDisplayAbsoluteController::adoptSavedState()
     if (!runServiceAction("start", &error)) {
         qWarning() << "DualDisplayAbsoluteController: Failed to start saved dual service:" << error;
         setStatusText("Dual absolute mode off");
+        setLoadingSavedState(false);
         setBusy(false);
         return;
     }
@@ -1098,6 +1111,7 @@ void DualDisplayAbsoluteController::adoptSavedState()
         !setMode(kSecondaryPort, "manual", &error)) {
         qWarning() << "DualDisplayAbsoluteController: Failed to set saved dual mode:" << error;
         setStatusText("Dual absolute mode off");
+        setLoadingSavedState(false);
         setBusy(false);
         return;
     }
@@ -1108,6 +1122,7 @@ void DualDisplayAbsoluteController::adoptSavedState()
         !readStatus(kSecondaryPort, &secondaryStatus, &error)) {
         qWarning() << "DualDisplayAbsoluteController: Saved dual mode not active:" << error;
         setStatusText("Dual absolute mode off");
+        setLoadingSavedState(false);
         setBusy(false);
         return;
     }
@@ -1119,6 +1134,7 @@ void DualDisplayAbsoluteController::adoptSavedState()
                    << "primary" << primaryMode << "secondary" << secondaryMode;
         clearStateFile();
         setStatusText("Dual absolute mode off");
+        setLoadingSavedState(false);
         setBusy(false);
         return;
     }
@@ -1129,6 +1145,7 @@ void DualDisplayAbsoluteController::adoptSavedState()
         !readMaxBrightness(kSecondaryPort, &secondaryMax, &error)) {
         qWarning() << "DualDisplayAbsoluteController: Failed to read saved dual range:" << error;
         setStatusText("Dual absolute mode off");
+        setLoadingSavedState(false);
         setBusy(false);
         return;
     }
@@ -1137,6 +1154,7 @@ void DualDisplayAbsoluteController::adoptSavedState()
     if (!qIsFinite(sharedMax) || sharedMax <= 0.0) {
         qWarning() << "DualDisplayAbsoluteController: Invalid saved dual range" << sharedMax;
         setStatusText("Dual absolute mode off");
+        setLoadingSavedState(false);
         setBusy(false);
         return;
     }
@@ -1151,6 +1169,7 @@ void DualDisplayAbsoluteController::adoptSavedState()
         qWarning() << "DualDisplayAbsoluteController: Failed to restore saved dual brightness:"
                    << error;
         setStatusText("Dual absolute mode off");
+        setLoadingSavedState(false);
         setBusy(false);
         return;
     }
@@ -1163,6 +1182,7 @@ void DualDisplayAbsoluteController::adoptSavedState()
     setStatusText(QString("Dual absolute mode: 0-%1 nits").arg(qRound(sharedMax)));
     saveStateFile();
     m_exitFlushed = false;
+    setLoadingSavedState(false);
     setBusy(false);
 }
 
@@ -1381,6 +1401,16 @@ void DualDisplayAbsoluteController::setBusy(bool busy)
 
     m_busy = busy;
     emit busyChanged();
+}
+
+void DualDisplayAbsoluteController::setLoadingSavedState(bool loading)
+{
+    if (m_loadingSavedState == loading) {
+        return;
+    }
+
+    m_loadingSavedState = loading;
+    emit loadingSavedStateChanged();
 }
 
 void DualDisplayAbsoluteController::setMaxNits(double maxNits)

@@ -40,6 +40,9 @@ Window {
     property bool wideScreen: Screen.width / Screen.height > 2.0
 
     function absoluteNitsText() {
+        if (dualDisplay.loadingSavedState || dualDisplay.busy) {
+            return "Nits: Loading...";
+        }
         if (!alsDimmer.connected) {
             return "Nits: ---";
         }
@@ -50,6 +53,9 @@ Window {
     }
 
     function absoluteNitsColor() {
+        if (dualDisplay.loadingSavedState || dualDisplay.busy) {
+            return "#888888";
+        }
         if (!alsDimmer.connected) {
             return "#888888";
         }
@@ -348,7 +354,8 @@ Window {
                                 from: brightnessSliderFrom()
                                 to: brightnessSliderTo()
                                 value: 50
-                                enabled: !dualDisplay.busy && (dualDisplay.targetActive || alsDimmer.connected)
+                                enabled: !dualDisplay.loadingSavedState && !dualDisplay.busy &&
+                                         (dualDisplay.targetActive || alsDimmer.connected)
                                 stepSize: brightnessSliderStep()
 
                                 Binding {
@@ -433,7 +440,8 @@ Window {
                             Switch {
                                 id: adaptiveSwitchWide
                                 checked: userPreferAdaptive
-                                enabled: alsDimmer.connected && !dualDisplay.targetActive && !dualDisplay.busy
+                                enabled: alsDimmer.connected && !dualDisplay.loadingSavedState &&
+                                         !dualDisplay.targetActive && !dualDisplay.busy
 
                                 indicator: Rectangle {
                                     implicitWidth: 60
@@ -477,7 +485,8 @@ Window {
                                 id: dualAbsoluteSwitchWide
                                 visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
                                 checked: dualDisplay.targetActive
-                                enabled: alsDimmer.connected && dualDisplay.hardwareAvailable && !dualDisplay.busy
+                                enabled: alsDimmer.connected && dualDisplay.hardwareAvailable &&
+                                         !dualDisplay.loadingSavedState && !dualDisplay.busy
 
                                 indicator: Rectangle {
                                     implicitWidth: 60
@@ -1156,7 +1165,8 @@ Window {
                             from: brightnessSliderFrom()
                             to: brightnessSliderTo()
                             value: 50  // Initial default, will be set on connect
-                            enabled: !dualDisplay.busy && (dualDisplay.targetActive || alsDimmer.connected)
+                            enabled: !dualDisplay.loadingSavedState && !dualDisplay.busy &&
+                                     (dualDisplay.targetActive || alsDimmer.connected)
                             stepSize: brightnessSliderStep()
 
                             Binding {
@@ -1244,7 +1254,8 @@ Window {
                         Switch {
                             id: adaptiveSwitch
                             checked: userPreferAdaptive
-                            enabled: alsDimmer.connected && !dualDisplay.targetActive && !dualDisplay.busy
+                            enabled: alsDimmer.connected && !dualDisplay.loadingSavedState &&
+                                     !dualDisplay.targetActive && !dualDisplay.busy
 
                             indicator: Rectangle {
                                 implicitWidth: 60
@@ -1288,7 +1299,8 @@ Window {
                             id: dualAbsoluteSwitch
                             visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
                             checked: dualDisplay.targetActive
-                            enabled: alsDimmer.connected && dualDisplay.hardwareAvailable && !dualDisplay.busy
+                            enabled: alsDimmer.connected && dualDisplay.hardwareAvailable &&
+                                     !dualDisplay.loadingSavedState && !dualDisplay.busy
 
                             indicator: Rectangle {
                                 implicitWidth: 60

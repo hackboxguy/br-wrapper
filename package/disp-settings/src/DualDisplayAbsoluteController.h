@@ -16,6 +16,7 @@ class DualDisplayAbsoluteController : public QObject
     Q_PROPERTY(bool targetActive READ targetActive NOTIFY targetActiveChanged)
     Q_PROPERTY(bool hardwareAvailable READ hardwareAvailable NOTIFY hardwareAvailableChanged)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool loadingSavedState READ loadingSavedState NOTIFY loadingSavedStateChanged)
     Q_PROPERTY(double maxNits READ maxNits NOTIFY rangeChanged)
     Q_PROPERTY(double currentNits READ currentNits NOTIFY currentNitsChanged)
     Q_PROPERTY(double minNits READ minNits CONSTANT)
@@ -30,6 +31,7 @@ public:
     bool targetActive() const { return m_targetActive; }
     bool hardwareAvailable() const { return m_hardwareAvailable; }
     bool busy() const { return m_busy; }
+    bool loadingSavedState() const { return m_loadingSavedState; }
     double maxNits() const { return m_maxNits; }
     double currentNits() const { return m_currentNits; }
     double minNits() const { return m_minNits; }
@@ -46,6 +48,7 @@ signals:
     void targetActiveChanged();
     void hardwareAvailableChanged();
     void busyChanged();
+    void loadingSavedStateChanged();
     void rangeChanged();
     void currentNitsChanged();
     void statusTextChanged();
@@ -92,6 +95,7 @@ private:
     void setTargetActive(bool active);
     void setHardwareAvailable(bool available);
     void setBusy(bool busy);
+    void setLoadingSavedState(bool loading);
     void setMaxNits(double maxNits);
     void setCurrentNits(double nits);
     void setStatusText(const QString &text);
@@ -101,6 +105,7 @@ private:
     bool m_targetActive;
     bool m_hardwareAvailable;
     bool m_busy;
+    bool m_loadingSavedState;
     double m_maxNits;
     double m_currentNits;
     double m_pendingNits;
