@@ -68,8 +68,8 @@ Item {
                 height: root.height * 0.78
                 radius: 6
                 color: isOn ? Qt.rgba(modelData.color.r, modelData.color.g,
-                                      modelData.color.b, 0.25) : "#111111"
-                border.color: isOn ? modelData.color : "#2a2a2a"
+                                      modelData.color.b, 0.25) : "#080808"
+                border.color: isOn ? modelData.color : "#1a1a1a"
                 border.width: isOn ? 2.5 : 1
 
                 opacity: {
@@ -82,7 +82,7 @@ Item {
                     anchors.centerIn: parent
                     width: parent.width - 6
                     text: modelData.label
-                    color: parent.isOn ? modelData.color : "#444444"
+                    color: parent.isOn ? modelData.color : "#363636"
                     font.pixelSize: modelData.blink ? parent.height * 0.65
                                     : Math.min(parent.height * 0.45, parent.width * 0.38)
                     font.bold: true
