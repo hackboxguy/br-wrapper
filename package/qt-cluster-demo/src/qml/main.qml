@@ -20,6 +20,8 @@ Window {
 
     // Performance: detect high-res displays (fullHD or larger)
     property bool hiResDisplay: (Screen.width * Screen.height) >= (1920 * 1080)
+    property bool telltaleMinDarkLevelEnabled: true
+    property bool bottomBarEnabled: true
 
     // Telltale row (top)
     TelltaleRow {
@@ -28,6 +30,7 @@ Window {
         anchors.left: parent.left
         anchors.right: parent.right
         height: topBarHeight
+        minDarkLevelEnabled: root.telltaleMinDarkLevelEnabled
     }
 
     // Separator line
@@ -36,7 +39,7 @@ Window {
         anchors.top: telltaleRow.bottom
         width: parent.width
         height: 1
-        color: "#333333"
+        color: root.telltaleMinDarkLevelEnabled ? "#333333" : "#000000"
     }
 
     // Tachometer (left)
@@ -96,7 +99,7 @@ Window {
         anchors.bottom: infoBar.top
         width: parent.width
         height: 1
-        color: "#333333"
+        color: root.bottomBarEnabled ? "#333333" : "#000000"
     }
 
     // Info bar (bottom)
@@ -106,12 +109,17 @@ Window {
         anchors.left: parent.left
         anchors.right: parent.right
         height: bottomBarHeight
+        barVisible: root.bottomBarEnabled
     }
 
     // Exit button overlay (highest z-order)
     ExitButton {
         anchors.fill: parent
         z: 100
+        minDarkLevelEnabled: root.telltaleMinDarkLevelEnabled
+        bottomBarEnabled: root.bottomBarEnabled
+        onMinDarkLevelToggled: root.telltaleMinDarkLevelEnabled = !root.telltaleMinDarkLevelEnabled
+        onBottomBarToggled: root.bottomBarEnabled = !root.bottomBarEnabled
     }
 
     // Escape key to quit (for keyboard-attached setups)

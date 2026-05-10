@@ -3,6 +3,7 @@ import QtQuick 2.12
 Item {
     id: root
     property int telltales: cluster.telltales
+    property bool minDarkLevelEnabled: true
 
     // Telltale bit definitions (must match CanReader/DemoSimulator)
     readonly property int bitEngine:   (1 << 0)
@@ -38,7 +39,7 @@ Item {
     // Dark background for contrast
     Rectangle {
         anchors.fill: parent
-        color: "#050505"
+        color: root.minDarkLevelEnabled ? "#050505" : "#000000"
     }
 
     Row {
@@ -68,12 +69,14 @@ Item {
                 height: root.height * 0.78
                 radius: 6
                 color: isOn ? Qt.rgba(modelData.color.r, modelData.color.g,
-                                      modelData.color.b, 0.25) : "#050505"
-                border.color: isOn ? modelData.color : "#121212"
-                border.width: isOn ? 2.5 : 1
+                                      modelData.color.b, 0.25)
+                            : (root.minDarkLevelEnabled ? "#050505" : "#000000")
+                border.color: isOn ? modelData.color
+                                   : (root.minDarkLevelEnabled ? "#121212" : "#000000")
+                border.width: isOn ? 2.5 : (root.minDarkLevelEnabled ? 1 : 0)
 
                 opacity: {
-                    if (!isOn) return 0.35;
+                    if (!isOn) return root.minDarkLevelEnabled ? 0.35 : 0.0;
                     if (modelData.blink) return blinkVisible ? 1.0 : 0.0;
                     return 1.0;
                 }
@@ -82,7 +85,8 @@ Item {
                     anchors.centerIn: parent
                     width: parent.width - 6
                     text: modelData.label
-                    color: parent.isOn ? modelData.color : "#2e2e2e"
+                    color: parent.isOn ? modelData.color
+                                       : (root.minDarkLevelEnabled ? "#2e2e2e" : "#000000")
                     font.pixelSize: modelData.blink ? parent.height * 0.65
                                     : Math.min(parent.height * 0.45, parent.width * 0.38)
                     font.bold: true

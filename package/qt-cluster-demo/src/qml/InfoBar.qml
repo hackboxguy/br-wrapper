@@ -2,14 +2,16 @@ import QtQuick 2.12
 
 Item {
     id: root
+    property bool barVisible: true
 
     Rectangle {
         anchors.fill: parent
-        color: "#111111"
-        border.color: "#333333"
-        border.width: 1
+        color: root.barVisible ? "#111111" : "#000000"
+        border.color: root.barVisible ? "#333333" : "#000000"
+        border.width: root.barVisible ? 1 : 0
 
         Row {
+            visible: root.barVisible
             anchors.centerIn: parent
             spacing: parent.width * 0.05
 
