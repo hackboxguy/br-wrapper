@@ -1718,18 +1718,18 @@ Window {
             // FPGA Settings Section
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 150
+                Layout.preferredHeight: 110
                 color: "#0f3460"
                 radius: 10
 
                 ColumnLayout {
                     anchors.fill: parent
-                    anchors.margins: 15
-                    spacing: 8
+                    anchors.margins: 10
+                    spacing: 5
 
                     Text {
                         text: "FPGA Settings"
-                        font.pixelSize: 22
+                        font.pixelSize: 20
                         font.bold: true
                         color: "#ffffff"
                     }
@@ -1742,7 +1742,7 @@ Window {
                             spacing: 10
                             Text {
                                 text: "Privacy Mode:"
-                                font.pixelSize: 22
+                                font.pixelSize: 20
                                 // TODO: Re-enable after testing: fpga.connected ? "#cccccc" : "#666666"
                                 color: "#666666"
                             }
@@ -1787,7 +1787,7 @@ Window {
                             spacing: 10
                             Text {
                                 text: "Local Dimming:"
-                                font.pixelSize: 22
+                                font.pixelSize: 20
                                 color: "#666666"
                             }
                             Switch {
@@ -1823,7 +1823,7 @@ Window {
                             spacing: 10
                             Text {
                                 text: "Pixel Compensation:"
-                                font.pixelSize: 22
+                                font.pixelSize: 20
                                 color: "#666666"
                             }
                             Switch {
@@ -1859,7 +1859,7 @@ Window {
                             spacing: 10
                             Text {
                                 text: "Vision Booster:"
-                                font.pixelSize: 22
+                                font.pixelSize: 20
                                 color: "#666666"
                             }
                             Switch {
