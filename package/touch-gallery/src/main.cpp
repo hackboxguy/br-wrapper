@@ -7,6 +7,7 @@
 #include <QFontDatabase>
 #include <QDebug>
 #include "GalleryController.h"
+#include "FpgaController.h"
 
 int main(int argc, char *argv[])
 {
@@ -38,6 +39,12 @@ int main(int argc, char *argv[])
                                        "Enable slideshow mode with interval in seconds",
                                        "interval");
     parser.addOption(slideshowOption);
+
+    // FPGA I2C bus option (for local-dimming / pixel-compensation overlay toggles)
+    QCommandLineOption i2cOption(QStringList() << "i" << "i2c",
+                                 "FPGA I2C bus device (default: /dev/i2c-1)",
+                                 "i2c", "/dev/i2c-1");
+    parser.addOption(i2cOption);
 
     parser.process(app);
 
@@ -80,9 +87,15 @@ int main(int argc, char *argv[])
         qDebug() << "Network interface started on port" << port;
     }
 
+    // FPGA controller for optional local-dimming / pixel-compensation overlay toggles
+    FpgaController fpgaController;
+    fpgaController.setI2cBus(parser.value(i2cOption));
+    fpgaController.start();
+
     // Setup QML engine
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("galleryController", &galleryController);
+    engine.rootContext()->setContextProperty("fpga", &fpgaController);
     engine.rootContext()->setContextProperty("picturesPath", QUrl::fromLocalFile(picturesDir));
     engine.rootContext()->setContextProperty("slideshowMode", slideshowMode);
     engine.rootContext()->setContextProperty("slideshowInterval", slideshowInterval * 1000); // Convert to milliseconds

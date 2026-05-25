@@ -290,6 +290,7 @@ ApplicationWindow {
             }
 
             Rectangle {
+                id: exitButton
                 anchors.top: parent.top
                 anchors.right: parent.right
                 anchors.margins: 20
@@ -313,6 +314,80 @@ ApplicationWindow {
                 MouseArea {
                     anchors.fill: parent
                     onClicked: Qt.quit()
+                }
+            }
+
+            // LD / PC overlay toggle buttons (top-right, below the exit button).
+            // Shown only when the FPGA responds to register 0x2C / 0x2D with a valid
+            // value (0x00 or 0x01). Styled as toggles: green when enabled, gray when off.
+            Row {
+                id: fpgaToggleRow
+                anchors.top: exitButton.bottom
+                anchors.right: parent.right
+                anchors.topMargin: 12
+                anchors.rightMargin: 20
+                spacing: 12
+                visible: fpga.localDimmingSupported || fpga.pixelCompSupported
+
+                // Local Dimming toggle
+                Rectangle {
+                    width: 70
+                    height: 60
+                    radius: 8
+                    visible: fpga.localDimmingSupported
+                    color: fpga.localDimmingEnabled ? "#C016803A" : "#C0444444"
+                    border.color: fpga.localDimmingEnabled ? "#33CC66" : "#777777"
+                    border.width: 1
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "LD"
+                        color: "white"
+                        font.pixelSize: 24
+                        font.family: "DejaVu Sans"
+                        font.bold: true
+                        renderType: Text.NativeRendering
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: {
+                            fpga.setLocalDimming(!fpga.localDimmingEnabled)
+                            showUITemporarily()
+                        }
+                    }
+                }
+
+                // Pixel Compensation toggle — only meaningful while local dimming is on
+                Rectangle {
+                    width: 70
+                    height: 60
+                    radius: 8
+                    visible: fpga.pixelCompSupported
+                    property bool pcInteractive: fpga.localDimmingEnabled
+                    color: (fpga.pixelCompEnabled && pcInteractive) ? "#C016803A" : "#C0444444"
+                    border.color: (fpga.pixelCompEnabled && pcInteractive) ? "#33CC66" : "#777777"
+                    border.width: 1
+                    opacity: pcInteractive ? 1.0 : 0.4
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "PC"
+                        color: "white"
+                        font.pixelSize: 24
+                        font.family: "DejaVu Sans"
+                        font.bold: true
+                        renderType: Text.NativeRendering
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: parent.pcInteractive
+                        onClicked: {
+                            fpga.setPixelCompensation(!fpga.pixelCompEnabled)
+                            showUITemporarily()
+                        }
+                    }
                 }
             }
 

@@ -19,12 +19,14 @@ set(SOURCES
     src/main.cpp
     src/NetworkInterface.cpp
     src/GalleryController.cpp
+    src/FpgaController.cpp
 )
 
 # Header files
 set(HEADERS
     src/NetworkInterface.h
     src/GalleryController.h
+    src/FpgaController.h
 )
 
 # QML resource files

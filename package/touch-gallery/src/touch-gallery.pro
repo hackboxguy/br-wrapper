@@ -6,9 +6,11 @@ TEMPLATE = app
 
 SOURCES += main.cpp \
            NetworkInterface.cpp \
-           GalleryController.cpp
+           GalleryController.cpp \
+           FpgaController.cpp
 
 HEADERS += NetworkInterface.h \
-           GalleryController.h
+           GalleryController.h \
+           FpgaController.h
 
 RESOURCES += qml.qrc
