@@ -7,12 +7,14 @@ TARGET = disp-tester
 SOURCES += \
     main.cpp \
     PatternController.cpp \
-    NetworkInterface.cpp
+    NetworkInterface.cpp \
+    FpgaController.cpp
 
 HEADERS += \
     PatternController.h \
     NetworkInterface.h \
-    PatternParameters.h
+    PatternParameters.h \
+    FpgaController.h
 
 RESOURCES += qml.qrc
 

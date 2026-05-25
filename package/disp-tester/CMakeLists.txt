@@ -19,12 +19,14 @@ set(SOURCES
     src/main.cpp
     src/PatternController.cpp
     src/NetworkInterface.cpp
+    src/FpgaController.cpp
 )
 
 set(HEADERS
     src/PatternController.h
     src/NetworkInterface.h
     src/PatternParameters.h
+    src/FpgaController.h
 )
 
 # QML resource files
