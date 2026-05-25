@@ -9,17 +9,26 @@
 // Register addresses (from disptool)
 #define REG_VERSION         0x00    // 4 bytes: month, day, binary, version (BCD)
 #define REG_FPGA_ID         0x10    // 4 bytes: reserved, resolution, board_type|size_hi, size_lo
+#define REG_BUILD_TIME      0x14    // 4 bytes: year, hour, minute, second (BCD) — optional
+#define REG_LOCAL_DIMMING   0x2C    // 1 byte: 0x00=enabled (default), 0x01=disabled — optional
+#define REG_PIXEL_COMP      0x2D    // 1 byte: 0x00=enabled (default), 0x01=disabled — optional
 #define REG_PRIVACY_MODE    0x34    // 1 byte: 0=off, 1=on
 
 // Data sizes
 #define VERSION_SIZE        4
 #define FPGA_ID_SIZE        4
+#define BUILD_TIME_SIZE     4
 
 FpgaController::FpgaController(QObject *parent)
     : QObject(parent)
     , m_i2cBus(DEFAULT_I2C_BUS)
     , m_i2cAddress(FPGA_I2C_ADDR)
+    , m_buildTimeValid(false)
     , m_privacyMode(false)
+    , m_localDimmingSupported(false)
+    , m_localDimmingEnabled(false)
+    , m_pixelCompSupported(false)
+    , m_pixelCompEnabled(false)
     , m_connected(false)
     , m_refreshTimer(new QTimer(this))
 {
@@ -106,6 +115,11 @@ bool FpgaController::writeRegister(int fd, uint8_t reg, uint8_t value)
 // Helper to convert BCD byte to decimal
 static uint8_t bcdToDecimal(uint8_t bcd) {
     return ((bcd >> 4) & 0x0F) * 10 + (bcd & 0x0F);
+}
+
+// Helper to validate a BCD byte (both nibbles must be 0-9)
+static bool isValidBcd(uint8_t value) {
+    return (((value >> 4) & 0x0F) <= 9) && ((value & 0x0F) <= 9);
 }
 
 // Helper to get month name from BCD value
@@ -205,6 +219,46 @@ void FpgaController::parseBoardInfo(const uint8_t *data)
     }
 }
 
+void FpgaController::parseBuildTime(const uint8_t *data)
+{
+    // Build time register format (BCD): byte0=year, byte1=hour, byte2=min, byte3=sec
+    // Only present on FPGA builds that implement register 0x14. Validate the BCD
+    // and ranges; unimplemented registers typically read 0xFF and fail validation.
+    bool valid = isValidBcd(data[0]) && isValidBcd(data[1]) &&
+                 isValidBcd(data[2]) && isValidBcd(data[3]);
+
+    uint8_t hour = bcdToDecimal(data[1]);
+    uint8_t minute = bcdToDecimal(data[2]);
+    uint8_t second = bcdToDecimal(data[3]);
+    if (valid) {
+        valid = (hour <= 23) && (minute <= 59) && (second <= 59);
+    }
+
+    if (!valid) {
+        if (m_buildTimeValid) {
+            m_buildTimeValid = false;
+            emit buildDateTimeChanged();
+        }
+        return;
+    }
+
+    // Combine with existing "Month Day" (from register 0x00) into
+    // "Month Day Year HH:MM:SS", e.g. "November 14 2026 13:45:30"
+    int year = 2000 + bcdToDecimal(data[0]);
+    QString dateTime = QString("%1 %2 %3:%4:%5")
+        .arg(m_buildDate)
+        .arg(year)
+        .arg(hour,   2, 10, QChar('0'))
+        .arg(minute, 2, 10, QChar('0'))
+        .arg(second, 2, 10, QChar('0'));
+
+    if (dateTime != m_buildDateTime || !m_buildTimeValid) {
+        m_buildDateTime = dateTime;
+        m_buildTimeValid = true;
+        emit buildDateTimeChanged();
+    }
+}
+
 void FpgaController::refresh()
 {
     int fd = openI2c();
@@ -235,6 +289,16 @@ void FpgaController::refresh()
         success = false;
     }
 
+    // Read optional build time (register 0x14, 4 bytes: year, hour, min, sec BCD)
+    // Not all FPGA builds implement this; parseBuildTime validates and hides if absent
+    uint8_t buildTimeData[BUILD_TIME_SIZE];
+    if (readRegister(fd, REG_BUILD_TIME, buildTimeData, BUILD_TIME_SIZE)) {
+        parseBuildTime(buildTimeData);
+    } else if (m_buildTimeValid) {
+        m_buildTimeValid = false;
+        emit buildDateTimeChanged();
+    }
+
     // Read privacy mode (register 0x34, 1 byte)
     if (readRegister(fd, REG_PRIVACY_MODE, &privacyData, 1)) {
         bool privacy = (privacyData != 0);
@@ -245,6 +309,9 @@ void FpgaController::refresh()
     } else {
         success = false;
     }
+
+    // Read optional local-dimming (0x2C) and pixel-compensation (0x2D) toggles
+    readToggleSettings(fd);
 
     closeI2c(fd);
 
@@ -271,6 +338,99 @@ void FpgaController::setPrivacyMode(bool enabled)
         qDebug() << "FpgaController: Privacy mode set successfully";
     } else {
         emit errorOccurred("Failed to set privacy mode");
+    }
+
+    closeI2c(fd);
+}
+
+void FpgaController::readToggleSettings(int fd)
+{
+    // Local dimming (0x2C) and pixel compensation (0x2D) are write-only registers
+    // that echo back the last-written value (block-RAM, powers up at 0). A valid
+    // response is exactly 0x00 (enabled) or 0x01 (disabled); anything else means
+    // the register is not supported/wired on this bitstream.
+    uint8_t val;
+
+    bool ldSupported = false;
+    bool ldEnabled = m_localDimmingEnabled;
+    if (readRegister(fd, REG_LOCAL_DIMMING, &val, 1) && (val == 0x00 || val == 0x01)) {
+        ldSupported = true;
+        ldEnabled = (val == 0x00);  // 0x00 = enabled, 0x01 = disabled
+    }
+    if (ldSupported != m_localDimmingSupported || ldEnabled != m_localDimmingEnabled) {
+        m_localDimmingSupported = ldSupported;
+        m_localDimmingEnabled = ldEnabled;
+        emit localDimmingChanged();
+    }
+
+    bool pcSupported = false;
+    bool pcEnabled = m_pixelCompEnabled;
+    if (readRegister(fd, REG_PIXEL_COMP, &val, 1) && (val == 0x00 || val == 0x01)) {
+        pcSupported = true;
+        pcEnabled = (val == 0x00);  // 0x00 = enabled, 0x01 = disabled
+    }
+    if (pcSupported != m_pixelCompSupported || pcEnabled != m_pixelCompEnabled) {
+        m_pixelCompSupported = pcSupported;
+        m_pixelCompEnabled = pcEnabled;
+        emit pixelCompChanged();
+    }
+}
+
+void FpgaController::setLocalDimming(bool enabled)
+{
+    qDebug() << "FpgaController: Setting local dimming to" << enabled;
+
+    int fd = openI2c();
+    if (fd < 0) {
+        emit errorOccurred("Failed to open I2C bus");
+        return;
+    }
+
+    // Inverted semantics: 0x00 = enabled, 0x01 = disabled
+    uint8_t value = enabled ? 0x00 : 0x01;
+    if (writeRegister(fd, REG_LOCAL_DIMMING, value)) {
+        // Read back to confirm the write took effect
+        uint8_t readBack;
+        if (readRegister(fd, REG_LOCAL_DIMMING, &readBack, 1) &&
+            (readBack == 0x00 || readBack == 0x01)) {
+            m_localDimmingSupported = true;
+            m_localDimmingEnabled = (readBack == 0x00);
+        } else {
+            m_localDimmingEnabled = enabled;
+        }
+        emit localDimmingChanged();
+    } else {
+        emit errorOccurred("Failed to set local dimming");
+    }
+
+    closeI2c(fd);
+}
+
+void FpgaController::setPixelCompensation(bool enabled)
+{
+    qDebug() << "FpgaController: Setting pixel compensation to" << enabled;
+
+    int fd = openI2c();
+    if (fd < 0) {
+        emit errorOccurred("Failed to open I2C bus");
+        return;
+    }
+
+    // Inverted semantics: 0x00 = enabled, 0x01 = disabled
+    uint8_t value = enabled ? 0x00 : 0x01;
+    if (writeRegister(fd, REG_PIXEL_COMP, value)) {
+        // Read back to confirm the write took effect
+        uint8_t readBack;
+        if (readRegister(fd, REG_PIXEL_COMP, &readBack, 1) &&
+            (readBack == 0x00 || readBack == 0x01)) {
+            m_pixelCompSupported = true;
+            m_pixelCompEnabled = (readBack == 0x00);
+        } else {
+            m_pixelCompEnabled = enabled;
+        }
+        emit pixelCompChanged();
+    } else {
+        emit errorOccurred("Failed to set pixel compensation");
     }
 
     closeI2c(fd);

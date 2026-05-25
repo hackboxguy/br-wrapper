@@ -889,7 +889,7 @@ Window {
                             Text { text: fpga.connected ? fpga.firmwareVersion : "N/A"; font.pixelSize: 18; color: "#ffffff" }
 
                             Text { text: "Build Date:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.buildDate : "N/A"; font.pixelSize: 18; color: "#ffffff" }
+                            Text { text: !fpga.connected ? "N/A" : (fpga.buildTimeValid ? fpga.buildDateTime : fpga.buildDate); font.pixelSize: 18; color: "#ffffff" }
 
                             Text { text: "Firmware ID:"; font.pixelSize: 18; color: "#888888" }
                             Text { text: fpga.connected ? fpga.firmwareId : "N/A"; font.pixelSize: 18; color: "#ffffff" }
@@ -936,23 +936,38 @@ Window {
                         Text {
                             text: "Dimming"
                             font.pixelSize: 14
-                            color: "#666666"
+                            color: fpga.localDimmingSupported ? "#cccccc" : "#666666"
                         }
                         Switch {
-                            checked: true
-                            enabled: false
+                            id: localDimmingSwitchWide
+                            enabled: fpga.connected && fpga.localDimmingSupported
                             scale: 0.7
+                            onClicked: fpga.setLocalDimming(checked)
+
+                            Binding {
+                                target: localDimmingSwitchWide
+                                property: "checked"
+                                value: fpga.localDimmingEnabled
+                            }
                         }
 
                         Text {
                             text: "PixelComp"
                             font.pixelSize: 14
-                            color: "#666666"
+                            color: (fpga.pixelCompSupported && fpga.localDimmingEnabled) ? "#cccccc" : "#666666"
                         }
                         Switch {
-                            checked: false
-                            enabled: false
+                            id: pixelCompSwitchWide
+                            // Pixel compensation only meaningful while local dimming is on
+                            enabled: fpga.connected && fpga.pixelCompSupported && fpga.localDimmingEnabled
                             scale: 0.7
+                            onClicked: fpga.setPixelCompensation(checked)
+
+                            Binding {
+                                target: pixelCompSwitchWide
+                                property: "checked"
+                                value: fpga.pixelCompEnabled
+                            }
                         }
 
                         Text {
@@ -1698,7 +1713,7 @@ Window {
                         Text { text: fpga.connected ? fpga.firmwareVersion : "N/A"; font.pixelSize: 22; color: "#ffffff" }
 
                         Text { text: "Build Date:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.buildDate : "N/A"; font.pixelSize: 22; color: "#ffffff" }
+                        Text { text: !fpga.connected ? "N/A" : (fpga.buildTimeValid ? fpga.buildDateTime : fpga.buildDate); font.pixelSize: 22; color: "#ffffff" }
 
                         Text { text: "Firmware ID:"; font.pixelSize: 22; color: "#888888" }
                         Text { text: fpga.connected ? fpga.firmwareId : "N/A"; font.pixelSize: 22; color: "#ffffff" }
@@ -1788,32 +1803,39 @@ Window {
                             Text {
                                 text: "Local Dimming:"
                                 font.pixelSize: 20
-                                color: "#666666"
+                                color: fpga.localDimmingSupported ? "#cccccc" : "#666666"
                             }
                             Switch {
                                 id: localDimmingSwitch
-                                checked: true  // Show as ON (but disabled)
-                                enabled: false
+                                enabled: fpga.connected && fpga.localDimmingSupported
+                                onClicked: fpga.setLocalDimming(checked)
+
+                                Binding {
+                                    target: localDimmingSwitch
+                                    property: "checked"
+                                    value: fpga.localDimmingEnabled
+                                }
 
                                 indicator: Rectangle {
                                     implicitWidth: 60
                                     implicitHeight: 32
                                     radius: 16
-                                    color: "#1a5c3a"  // Dimmed green to indicate ON but disabled
-                                    opacity: 0.5
+                                    color: localDimmingSwitch.checked ? "#27ae60" : "#2c3e50"
+                                    opacity: localDimmingSwitch.enabled ? 1.0 : 0.5
 
                                     Rectangle {
-                                        x: parent.width - width - 2  // ON position
+                                        x: localDimmingSwitch.checked ? parent.width - width - 2 : 2
                                         y: 2
                                         width: 28
                                         height: 28
                                         radius: 14
-                                        color: "#666666"
+                                        color: localDimmingSwitch.enabled ? "#ffffff" : "#666666"
+                                        Behavior on x { NumberAnimation { duration: 150 } }
                                     }
                                 }
                             }
                             Text {
-                                text: "(N/A)"
+                                text: fpga.localDimmingSupported ? "" : "(N/A)"
                                 font.pixelSize: 16
                                 color: "#666666"
                             }
@@ -1824,32 +1846,40 @@ Window {
                             Text {
                                 text: "Pixel Compensation:"
                                 font.pixelSize: 20
-                                color: "#666666"
+                                color: (fpga.pixelCompSupported && fpga.localDimmingEnabled) ? "#cccccc" : "#666666"
                             }
                             Switch {
                                 id: pixelCompSwitch
-                                checked: false
-                                enabled: false
+                                // Pixel compensation only meaningful while local dimming is on
+                                enabled: fpga.connected && fpga.pixelCompSupported && fpga.localDimmingEnabled
+                                onClicked: fpga.setPixelCompensation(checked)
+
+                                Binding {
+                                    target: pixelCompSwitch
+                                    property: "checked"
+                                    value: fpga.pixelCompEnabled
+                                }
 
                                 indicator: Rectangle {
                                     implicitWidth: 60
                                     implicitHeight: 32
                                     radius: 16
-                                    color: "#1a1a2e"
-                                    opacity: 0.5
+                                    color: pixelCompSwitch.checked ? "#27ae60" : "#2c3e50"
+                                    opacity: pixelCompSwitch.enabled ? 1.0 : 0.5
 
                                     Rectangle {
-                                        x: 2
+                                        x: pixelCompSwitch.checked ? parent.width - width - 2 : 2
                                         y: 2
                                         width: 28
                                         height: 28
                                         radius: 14
-                                        color: "#666666"
+                                        color: pixelCompSwitch.enabled ? "#ffffff" : "#666666"
+                                        Behavior on x { NumberAnimation { duration: 150 } }
                                     }
                                 }
                             }
                             Text {
-                                text: "(Disabled)"
+                                text: fpga.pixelCompSupported ? "" : "(N/A)"
                                 font.pixelSize: 16
                                 color: "#666666"
                             }

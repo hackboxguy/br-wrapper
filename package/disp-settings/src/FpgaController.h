@@ -19,10 +19,16 @@ class FpgaController : public QObject
     Q_PROPERTY(QString firmwareVersion READ firmwareVersion NOTIFY firmwareVersionChanged)
     Q_PROPERTY(QString firmwareId READ firmwareId NOTIFY firmwareIdChanged)
     Q_PROPERTY(QString buildDate READ buildDate NOTIFY buildDateChanged)
+    Q_PROPERTY(QString buildDateTime READ buildDateTime NOTIFY buildDateTimeChanged)
+    Q_PROPERTY(bool buildTimeValid READ buildTimeValid NOTIFY buildDateTimeChanged)
     Q_PROPERTY(QString boardType READ boardType NOTIFY boardTypeChanged)
     Q_PROPERTY(QString displaySize READ displaySize NOTIFY displaySizeChanged)
     Q_PROPERTY(QString displayResolution READ displayResolution NOTIFY displayResolutionChanged)
     Q_PROPERTY(bool privacyMode READ privacyMode NOTIFY privacyModeChanged)
+    Q_PROPERTY(bool localDimmingSupported READ localDimmingSupported NOTIFY localDimmingChanged)
+    Q_PROPERTY(bool localDimmingEnabled READ localDimmingEnabled NOTIFY localDimmingChanged)
+    Q_PROPERTY(bool pixelCompSupported READ pixelCompSupported NOTIFY pixelCompChanged)
+    Q_PROPERTY(bool pixelCompEnabled READ pixelCompEnabled NOTIFY pixelCompChanged)
     Q_PROPERTY(bool connected READ connected NOTIFY connectedChanged)
 
 public:
@@ -36,24 +42,35 @@ public:
     QString firmwareVersion() const { return m_firmwareVersion; }
     QString firmwareId() const { return m_firmwareId; }
     QString buildDate() const { return m_buildDate; }
+    QString buildDateTime() const { return m_buildDateTime; }
+    bool buildTimeValid() const { return m_buildTimeValid; }
     QString boardType() const { return m_boardType; }
     QString displaySize() const { return m_displaySize; }
     QString displayResolution() const { return m_displayResolution; }
     bool privacyMode() const { return m_privacyMode; }
+    bool localDimmingSupported() const { return m_localDimmingSupported; }
+    bool localDimmingEnabled() const { return m_localDimmingEnabled; }
+    bool pixelCompSupported() const { return m_pixelCompSupported; }
+    bool pixelCompEnabled() const { return m_pixelCompEnabled; }
     bool connected() const { return m_connected; }
 
 public slots:
     void setPrivacyMode(bool enabled);
+    void setLocalDimming(bool enabled);
+    void setPixelCompensation(bool enabled);
     void refresh();
 
 signals:
     void firmwareVersionChanged();
     void firmwareIdChanged();
     void buildDateChanged();
+    void buildDateTimeChanged();
     void boardTypeChanged();
     void displaySizeChanged();
     void displayResolutionChanged();
     void privacyModeChanged();
+    void localDimmingChanged();
+    void pixelCompChanged();
     void connectedChanged();
     void errorOccurred(const QString &message);
 
@@ -64,6 +81,8 @@ private:
     bool writeRegister(int fd, uint8_t reg, uint8_t value);
     void parseFirmwareInfo(const uint8_t *data);
     void parseBoardInfo(const uint8_t *data);
+    void parseBuildTime(const uint8_t *data);
+    void readToggleSettings(int fd);
 
 private:
     QString m_i2cBus;
@@ -72,10 +91,16 @@ private:
     QString m_firmwareVersion;
     QString m_firmwareId;
     QString m_buildDate;
+    QString m_buildDateTime;
+    bool m_buildTimeValid;
     QString m_boardType;
     QString m_displaySize;
     QString m_displayResolution;
     bool m_privacyMode;
+    bool m_localDimmingSupported;
+    bool m_localDimmingEnabled;
+    bool m_pixelCompSupported;
+    bool m_pixelCompEnabled;
     bool m_connected;
 
     QTimer *m_refreshTimer;
