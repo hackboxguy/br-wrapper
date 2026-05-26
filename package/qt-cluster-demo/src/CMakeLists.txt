@@ -12,6 +12,7 @@ add_executable(qt-cluster-demo
     CanReader.cpp
     ClusterModel.cpp
     DemoSimulator.cpp
+    FpgaController.cpp
     qml.qrc
 )
 

@@ -8,6 +8,7 @@
 #include "ClusterModel.h"
 #include "CanReader.h"
 #include "DemoSimulator.h"
+#include "FpgaController.h"
 
 int main(int argc, char *argv[])
 {
@@ -31,6 +32,11 @@ int main(int argc, char *argv[])
     QCommandLineOption noSweepOption(
         "no-sweep", "Skip startup diagnostic sweep");
     parser.addOption(noSweepOption);
+
+    QCommandLineOption i2cOption(
+        QStringList() << "i" << "i2c",
+        "FPGA I2C bus device (default: /dev/i2c-1)", "i2c", "/dev/i2c-1");
+    parser.addOption(i2cOption);
 
     parser.process(app);
 
@@ -101,8 +107,14 @@ int main(int argc, char *argv[])
                          &model, &ClusterModel::setTelltales);
     }
 
+    // FPGA controller for optional local-dimming / pixel-compensation overlay toggles
+    FpgaController fpgaController;
+    fpgaController.setI2cBus(parser.value(i2cOption));
+    fpgaController.start();
+
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("cluster", &model);
+    engine.rootContext()->setContextProperty("fpga", &fpgaController);
     engine.load(QUrl("qrc:/qml/main.qml"));
 
     if (engine.rootObjects().isEmpty())
