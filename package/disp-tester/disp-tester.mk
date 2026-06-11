@@ -17,6 +17,8 @@ define DISP_TESTER_INSTALL_TARGET_CMDS
     $(INSTALL) -D -m 0755 $(@D)/disp-tester $(TARGET_DIR)/usr/bin/disp-tester
     $(INSTALL) -D -m 0755 $(@D)/als-dimmer-sweep-child.py $(TARGET_DIR)/usr/bin/als-dimmer-sweep-child.py
     $(INSTALL) -D -m 0755 $(@D)/live-measurements-child.py $(TARGET_DIR)/usr/bin/live-measurements-child.py
+    $(INSTALL) -D -m 0755 $(@D)/white-point-profile-child.py $(TARGET_DIR)/usr/bin/white-point-profile-child.py
+    $(INSTALL) -D -m 0755 $(@D)/white-point-match-child.py $(TARGET_DIR)/usr/bin/white-point-match-child.py
 endef
 
 $(eval $(generic-package))

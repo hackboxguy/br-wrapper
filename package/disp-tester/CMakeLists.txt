@@ -64,6 +64,8 @@ install(TARGETS disp-tester
 install(PROGRAMS
     src/als-dimmer-sweep-child.py
     src/live-measurements-child.py
+    src/white-point-profile-child.py
+    src/white-point-match-child.py
     DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 

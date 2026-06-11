@@ -682,6 +682,17 @@ void PatternController::handleNetworkCommand(const QString &command)
         }
     } else if (cmd == "get-user-interaction") {
         m_networkInterface->sendResponse(m_userInteractionEnabled ? "enable" : "disable");
+    } else if (cmd == "set-child-action-active" && parts.size() >= 2) {
+        QString state = parts[1].toLower();
+        if (state == "enable" || state == "active" || state == "on" || state == "true" || state == "1") {
+            setChildActionActive(true);
+            m_networkInterface->sendResponse("OK");
+        } else if (state == "disable" || state == "inactive" || state == "off" || state == "false" || state == "0") {
+            setChildActionActive(false);
+            m_networkInterface->sendResponse("OK");
+        } else {
+            m_networkInterface->sendResponse("ERROR: Invalid child action state (use: enable, disable)");
+        }
     } else if (cmd == "get-resolution") {
         m_networkInterface->sendResponse(getResolution());
     } else if (cmd == "get-pattern") {

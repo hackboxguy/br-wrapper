@@ -238,6 +238,79 @@ the measured-vs-ALS delta exceeds `--delta-alert-percent` (default 5%).
 Spotread failures are shown as a short `Measured: sensor error` line so the
 overlay size stays stable.
 
+### White Point Profiling Child Script
+
+The package also installs `/usr/bin/white-point-profile-child.py`, a profiling
+script for studying how the FPGA write-only white-point registers affect the
+target display's measured white. It shows a white pattern through the parent
+`disp-tester`, checks for an i1 Display Pro, waits for placement on the target
+display, writes `wpx/wpy/wpz` values with `/home/pi/micropanel/bin/disptool`,
+takes five valid `spotread` XYZ/xyY samples per point by default, and restores
+`256/256/256` on exit. Transient `spotread` failures are retried so a short
+instrument-initialization hiccup does not abort the run.
+
+Example:
+
+```bash
+disp-tester --script /usr/bin/white-point-profile-child.py \
+  --script-arg=--output-prefix --script-arg=/home/pi/test-data/wp-profile
+```
+
+By default the profile includes baseline `256/256/256` plus single-axis
+one-step sweeps from `255` down to `246` for each of `wpx`, `wpy`, and `wpz`.
+Paired and all-channel interaction points are disabled by default so the run
+stays focused on small white-point shifts. It writes:
+
+- `<prefix>.json` with full per-sample data and averages
+- `<prefix>-summary.csv` with one averaged row per register point
+- `<prefix>-samples.csv` with every accepted spotread sample
+
+Useful tuning options include `--axis-values`, `--samples`, `--max-retries`,
+`--point-failure-budget`, `--settle-seconds`, `--placement-min-nits`,
+`--point label,wpx,wpy,wpz`, and `--include-pairs` / `--include-all` when
+interaction points are needed.
+
+### White Point Color Matching Child Script
+
+The package also installs `/usr/bin/white-point-match-child.py`, which matches
+the target display white point to a reference display. It assumes the Pi HDMI
+output is split to both displays, so both show the same full-white pattern. The
+script first shows `Place the Sensor on Reference Display and Click Start
+button`; after the operator presses Start, it averages five valid XYZ/xyY
+samples. It then shows `Now connect Sensor on Target Display and Click Start
+button`; after the second Start press, it measures the target at
+`wpx/wpy/wpz = 256/256/256`, chooses integer white-point reductions from the
+profiled small-signal model, writes them through `disptool`, and verifies the
+target against the reference.
+
+The default tolerance is `0.002` in xy distance. Matched and best-effort runs
+write:
+
+```text
+/home/pi/als-dimmer/etc/als-dimmer/calibrations/white-point-calibration.json
+```
+
+The calibration JSON keeps top-level `wpx`, `wpy`, and `wpz` fields for simple
+startup replay by `als-dimmer`, plus reference/target measurements and the
+model used for traceability. Best-effort files are written with
+`"status": "best_effort"` when the measured error does not reach tolerance. The
+script loads `/home/pi/test-data/wp-profile.json` for its model when present
+and falls back to built-in slopes derived from the same profiling format.
+
+Launcher usage with the shared child-action button:
+
+```bash
+disp-tester \
+  --child-action-button \
+  --child-action-start-text "Start Color-Match" \
+  --child-action-stop-text "Stop Color-Match" \
+  --script /usr/bin/white-point-match-child.py
+```
+
+At each placement prompt, Start advances to the next measurement phase. While
+sampling or correcting, the active button stops the run. After completion or
+abort, the child process waits for either Start or EXIT.
+
 ### Touch Navigation
 - **Left edge tap** (25%): Previous pattern
 - **Right edge tap** (25%): Next pattern  
@@ -301,6 +374,9 @@ set-metadata-color  <r> <g> <b>        # OR set-metadata-color <named-color>
 get-metadata-align
 get-metadata-fontsize
 get-metadata-color
+
+# Child action button state (used by supervised child scripts)
+set-child-action-active <enable|disable>
 ```
 
 ### Information Commands
