@@ -320,7 +320,7 @@
           "--hide-navigation-help",
           "--script", "/home/pi/micropanel/bin/white-point-match-child.py",
           "--script-arg=--calibration-output",
-          "--script-arg=/home/pi/als-dimmer/etc/als-dimmer/calibrations/white-point-calibration.json"
+          "--script-arg=/home/pi/system-settings/white-point-calibration.json"
         ],
         "working_directory": "/tmp",
         "position": {

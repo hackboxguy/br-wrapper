@@ -31,10 +31,11 @@ DEFAULT_DISP_HOST = os.environ.get("DISP_TESTER_HOST", "127.0.0.1")
 DEFAULT_DISP_PORT = int(os.environ.get("DISP_TESTER_PORT", "8082"))
 DEFAULT_DISPTOOL = "/home/pi/micropanel/bin/disptool"
 DEFAULT_PROFILE_JSON = "/home/pi/test-data/wp-profile.json"
-DEFAULT_CALIBRATION_OUTPUT = (
-    "/home/pi/als-dimmer/etc/als-dimmer/calibrations/"
-    "white-point-calibration.json"
-)
+DEFAULT_CALIBRATION_OUTPUT = "/home/pi/system-settings/white-point-calibration.json"
+LEGACY_CALIBRATION_OUTPUTS = {
+    "etc/als-dimmer/calibrations/white-point-calibration.json",
+    "/home/pi/als-dimmer/etc/als-dimmer/calibrations/white-point-calibration.json",
+}
 DEFAULT_COLORIMETER_MATCH = [
     "i1display",
     "i1 display",
@@ -282,13 +283,12 @@ def one_line(text, max_len=160):
 
 
 def normalize_calibration_output(path):
-    if path == "etc/als-dimmer/calibrations/white-point-calibration.json":
-        return DEFAULT_CALIBRATION_OUTPUT
-
     duplicate_prefix = "/home/pi/als-dimmer/etc/als-dimmer/etc/als-dimmer/"
     canonical_prefix = "/home/pi/als-dimmer/etc/als-dimmer/"
     while path.startswith(duplicate_prefix):
         path = canonical_prefix + path[len(duplicate_prefix):]
+    if path in LEGACY_CALIBRATION_OUTPUTS:
+        return DEFAULT_CALIBRATION_OUTPUT
     return path
 
 

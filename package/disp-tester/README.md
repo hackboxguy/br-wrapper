@@ -292,7 +292,7 @@ The default tolerance is `0.002` in xy distance. Matched and best-effort runs
 write:
 
 ```text
-/home/pi/als-dimmer/etc/als-dimmer/calibrations/white-point-calibration.json
+/home/pi/system-settings/white-point-calibration.json
 ```
 
 The calibration JSON keeps top-level `wpx`, `wpy`, and `wpz` fields for simple
@@ -314,7 +314,7 @@ disp-tester \
   --hide-navigation-help \
   --script /usr/bin/white-point-match-child.py \
   --script-arg=--calibration-output \
-  --script-arg=/home/pi/als-dimmer/etc/als-dimmer/calibrations/white-point-calibration.json
+  --script-arg=/home/pi/system-settings/white-point-calibration.json
 ```
 
 At each placement prompt, Start advances to the next measurement phase. While
