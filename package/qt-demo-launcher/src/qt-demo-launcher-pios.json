@@ -315,7 +315,12 @@
           "--child-action-stop-text", "Stop Color-Match",
           "--child-action-start-color", "green",
           "--child-action-stop-color", "red",
-          "--script", "/home/pi/micropanel/bin/white-point-match-child.py"
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/home/pi/micropanel/bin/white-point-match-child.py",
+          "--script-arg=--calibration-output",
+          "--script-arg=/home/pi/als-dimmer/etc/als-dimmer/calibrations/white-point-calibration.json"
         ],
         "working_directory": "/tmp",
         "position": {

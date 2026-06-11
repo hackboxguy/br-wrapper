@@ -27,6 +27,9 @@ class PatternController : public QObject
     Q_PROPERTY(int metadataFontSize READ getMetadataFontSize NOTIFY metadataFontSizeChanged)
     Q_PROPERTY(QColor metadataColor READ getMetadataColor NOTIFY metadataColorChanged)
     Q_PROPERTY(bool userInteractionEnabled READ getUserInteractionEnabled NOTIFY userInteractionEnabledChanged)
+    Q_PROPERTY(bool patternNavigationEnabled READ getPatternNavigationEnabled NOTIFY patternNavigationEnabledChanged)
+    Q_PROPERTY(bool uiAutoHideEnabled READ getUiAutoHideEnabled NOTIFY uiAutoHideEnabledChanged)
+    Q_PROPERTY(bool navigationHelpVisible READ getNavigationHelpVisible NOTIFY navigationHelpVisibleChanged)
     Q_PROPERTY(bool childActionButtonVisible READ childActionButtonVisible NOTIFY childActionButtonChanged)
     Q_PROPERTY(bool childActionActive READ childActionActive NOTIFY childActionStateChanged)
     Q_PROPERTY(QString childActionStartText READ childActionStartText NOTIFY childActionButtonChanged)
@@ -49,11 +52,17 @@ public:
     QString childActionStopText() const { return m_childActionStopText; }
     QColor childActionStartColor() const { return m_childActionStartColor; }
     QColor childActionStopColor() const { return m_childActionStopColor; }
+    bool getPatternNavigationEnabled() const { return m_patternNavigationEnabled; }
+    bool getUiAutoHideEnabled() const { return m_uiAutoHideEnabled; }
+    bool getNavigationHelpVisible() const { return m_navigationHelpVisible; }
 
     bool startNetworkInterface(int port);
     bool startChildScript(const QString &program, const QStringList &arguments);
     void configureChildActionButton(bool visible, const QString &startText, const QString &stopText,
                                     const QColor &startColor, const QColor &stopColor);
+    void setPatternNavigationEnabled(bool enabled);
+    void setUiAutoHideEnabled(bool enabled);
+    void setNavigationHelpVisible(bool visible);
     void requestQuit(const QString &reason);
 
 public slots:
@@ -83,6 +92,9 @@ signals:
     void metadataFontSizeChanged();
     void metadataColorChanged();
     void userInteractionEnabledChanged();
+    void patternNavigationEnabledChanged();
+    void uiAutoHideEnabledChanged();
+    void navigationHelpVisibleChanged();
     void childActionButtonChanged();
     void childActionStateChanged();
 
@@ -112,6 +124,9 @@ private:
     int m_metadataFontSize;    // Font size (8-48)
     QColor m_metadataColor;    // Text color
     bool m_userInteractionEnabled; // Enable/disable user touch interaction
+    bool m_patternNavigationEnabled;
+    bool m_uiAutoHideEnabled;
+    bool m_navigationHelpVisible;
     bool m_childActionButtonVisible;
     bool m_childActionActive;
     QString m_childActionStartText;

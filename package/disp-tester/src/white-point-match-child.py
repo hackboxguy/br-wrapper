@@ -281,6 +281,17 @@ def one_line(text, max_len=160):
     return collapsed
 
 
+def normalize_calibration_output(path):
+    if path == "etc/als-dimmer/calibrations/white-point-calibration.json":
+        return DEFAULT_CALIBRATION_OUTPUT
+
+    duplicate_prefix = "/home/pi/als-dimmer/etc/als-dimmer/etc/als-dimmer/"
+    canonical_prefix = "/home/pi/als-dimmer/etc/als-dimmer/"
+    while path.startswith(duplicate_prefix):
+        path = canonical_prefix + path[len(duplicate_prefix):]
+    return path
+
+
 def now_iso():
     return datetime.datetime.now().astimezone().isoformat()
 
@@ -1075,7 +1086,9 @@ def parse_args():
     parser.add_argument("--usb-sysfs-root", default="/sys/bus/usb/devices")
     parser.add_argument("--exit-after-match", action="store_true",
                         help="Exit child after one run instead of waiting for restart.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    args.calibration_output = normalize_calibration_output(args.calibration_output)
+    return args
 
 
 def main():

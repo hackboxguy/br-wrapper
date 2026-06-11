@@ -16,18 +16,26 @@ Window {
 
     // Pattern navigation functions
     function nextPattern() {
+        if (!patternController.patternNavigationEnabled) {
+            return
+        }
         patternController.nextPattern()
         showUITemporarily()
     }
 
     function previousPattern() {
+        if (!patternController.patternNavigationEnabled) {
+            return
+        }
         patternController.previousPattern()
         showUITemporarily()
     }
 
     function showUITemporarily() {
         uiVisible = true
-        uiHideTimer.restart()
+        if (patternController.uiAutoHideEnabled) {
+            uiHideTimer.restart()
+        }
     }
 
     function showEmergencyExitTemporarily() {
@@ -77,7 +85,8 @@ Window {
 
         MouseArea {
             anchors.fill: parent
-            enabled: patternController.userInteractionEnabled  // Disable touch when user interaction is disabled
+            enabled: patternController.userInteractionEnabled &&
+                     patternController.patternNavigationEnabled
 
             property real startX: 0
             property real startY: 0
@@ -201,6 +210,7 @@ Window {
             radius: 8
             border.color: "white"
             border.width: 1
+            visible: patternController.navigationHelpVisible
 
             Text {
                 id: instructionText
@@ -429,7 +439,7 @@ Window {
         interval: 4000
         running: false
         onTriggered: {
-            if (patternController.userInteractionEnabled) {
+            if (patternController.userInteractionEnabled && patternController.uiAutoHideEnabled) {
                 uiVisible = false  // Only auto-hide if user interaction is enabled
             }
         }
@@ -444,7 +454,9 @@ Window {
 
     // Show UI initially
     Component.onCompleted: {
-        if (patternController.userInteractionEnabled) {
+        if (!patternController.uiAutoHideEnabled) {
+            uiVisible = true
+        } else if (patternController.userInteractionEnabled) {
             showUITemporarily()
         }
     }

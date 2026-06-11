@@ -26,6 +26,9 @@ PatternController::PatternController(QObject *parent)
     , m_metadataFontSize(16)       // Default font size
     , m_metadataColor(255, 255, 255) // Default white color
     , m_userInteractionEnabled(true) // Default user interaction enabled
+    , m_patternNavigationEnabled(true)
+    , m_uiAutoHideEnabled(true)
+    , m_navigationHelpVisible(true)
     , m_childActionButtonVisible(false)
     , m_childActionActive(false)
     , m_childActionStartText("Start Recording")
@@ -124,6 +127,39 @@ void PatternController::configureChildActionButton(bool visible, const QString &
     }
     setChildActionActive(false);
     emit childActionButtonChanged();
+}
+
+void PatternController::setPatternNavigationEnabled(bool enabled)
+{
+    if (m_patternNavigationEnabled == enabled) {
+        return;
+    }
+
+    m_patternNavigationEnabled = enabled;
+    emit patternNavigationEnabledChanged();
+    qDebug() << "Pattern navigation" << (enabled ? "enabled" : "disabled");
+}
+
+void PatternController::setUiAutoHideEnabled(bool enabled)
+{
+    if (m_uiAutoHideEnabled == enabled) {
+        return;
+    }
+
+    m_uiAutoHideEnabled = enabled;
+    emit uiAutoHideEnabledChanged();
+    qDebug() << "UI auto-hide" << (enabled ? "enabled" : "disabled");
+}
+
+void PatternController::setNavigationHelpVisible(bool visible)
+{
+    if (m_navigationHelpVisible == visible) {
+        return;
+    }
+
+    m_navigationHelpVisible = visible;
+    emit navigationHelpVisibleChanged();
+    qDebug() << "Navigation help" << (visible ? "visible" : "hidden");
 }
 
 bool PatternController::isChildScriptRunning() const

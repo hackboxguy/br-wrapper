@@ -69,6 +69,11 @@ Options:
   -p, --port <port>     TCP server port (default: 8082)
   --script <program>    Start a supervised child script/program
   --script-arg <arg>    Argument for the child script (repeatable)
+  --disable-pattern-navigation
+                         Disable background edge taps and swipe navigation
+  --disable-ui-autohide Keep overlay controls visible
+  --hide-navigation-help
+                         Hide the generic tap/swipe navigation help box
   -h, --help            Display help
   -v, --version         Display version
 ```
@@ -304,12 +309,19 @@ disp-tester \
   --child-action-button \
   --child-action-start-text "Start Color-Match" \
   --child-action-stop-text "Stop Color-Match" \
-  --script /usr/bin/white-point-match-child.py
+  --disable-pattern-navigation \
+  --disable-ui-autohide \
+  --hide-navigation-help \
+  --script /usr/bin/white-point-match-child.py \
+  --script-arg=--calibration-output \
+  --script-arg=/home/pi/als-dimmer/etc/als-dimmer/calibrations/white-point-calibration.json
 ```
 
 At each placement prompt, Start advances to the next measurement phase. While
 sampling or correcting, the active button stops the run. After completion or
 abort, the child process waits for either Start or EXIT.
+The launcher-mode flags keep the full-white pattern locked, keep overlay
+buttons visible, and hide the generic tap/swipe navigation hint.
 
 ### Touch Navigation
 - **Left edge tap** (25%): Previous pattern

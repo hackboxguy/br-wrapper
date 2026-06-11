@@ -122,6 +122,18 @@ int main(int argc, char *argv[])
                                                   "color", "red");
     parser.addOption(childActionStopColorOption);
 
+    QCommandLineOption disablePatternNavigationOption(QStringList() << "disable-pattern-navigation",
+                                                      "Disable background tap/swipe pattern navigation.");
+    parser.addOption(disablePatternNavigationOption);
+
+    QCommandLineOption disableUiAutoHideOption(QStringList() << "disable-ui-autohide",
+                                               "Keep overlay controls visible instead of auto-hiding them.");
+    parser.addOption(disableUiAutoHideOption);
+
+    QCommandLineOption hideNavigationHelpOption(QStringList() << "hide-navigation-help",
+                                                "Hide the tap/swipe navigation help box.");
+    parser.addOption(hideNavigationHelpOption);
+
     QCommandLineOption i2cOption(QStringList() << "i" << "i2c",
                                  "FPGA I2C bus device (default: /dev/i2c-1)",
                                  "i2c", "/dev/i2c-1");
@@ -156,6 +168,9 @@ int main(int argc, char *argv[])
         parser.value(childActionStopTextOption),
         childActionStartColor,
         childActionStopColor);
+    patternController.setPatternNavigationEnabled(!parser.isSet(disablePatternNavigationOption));
+    patternController.setUiAutoHideEnabled(!parser.isSet(disableUiAutoHideOption));
+    patternController.setNavigationHelpVisible(!parser.isSet(hideNavigationHelpOption));
 
     QSocketNotifier *signalNotifier = nullptr;
     if (setupUnixSignalHandlers()) {
