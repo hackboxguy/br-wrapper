@@ -1193,7 +1193,11 @@ def main():
 
     try:
         display.command("pattern white", required=not args.simulate)
-        display.best_effort("set-user-interaction disable")
+        # Unlike the legacy profiler, do NOT send "set-user-interaction
+        # disable" here: the QML gates the overlay and the child-action
+        # Start/Stop buttons on userInteractionEnabled, so disabling it hides
+        # the buttons this flow depends on. Pattern locking is already
+        # handled by the parent's --disable-pattern-navigation flag.
         display.best_effort("set-metadata-status enable")
         display.best_effort(f"set-metadata-fontsize {args.progress_fontsize}")
         display.best_effort(f"set-metadata-align {args.metadata_align}")
