@@ -66,6 +66,9 @@ install(PROGRAMS
     src/live-measurements-child.py
     src/white-point-profile-child.py
     src/white-point-match-child.py
+    src/new-white-point-match-child.py
+    src/new-white-point-profile-child.py
+    src/d65-calibration-child.py
     DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 

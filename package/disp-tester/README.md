@@ -323,6 +323,104 @@ abort, the child process waits for either Start or EXIT.
 The launcher-mode flags keep the full-white pattern locked, keep overlay
 buttons visible, and hide the generic tap/swipe navigation hint.
 
+### White Point Color Matching Child Script (wp_adjust, New)
+
+The package also installs `/usr/bin/new-white-point-match-child.py`, which
+performs the same reference/target operator flow against the new `wp_adjust`
+FPGA block (scalar v1 register map from the `fpga-wp-adjust` repo) instead of
+the legacy write-only `wpx/wpy/wpz` registers. The legacy script above is
+untouched and both can coexist; the launcher exposes them as separate buttons
+(`White Point Matching` and `White Point Matching New`).
+
+Differences from the legacy flow:
+
+- Q4.12 gains step at 1/4096 (16x finer than the legacy 1/256 registers), so
+  correction resolution is far below the 0.002 xy matching tolerance.
+- After measuring the target white, the script measures the target's
+  full-field `red`/`green`/`blue` primaries and solves the correction
+  colorimetrically (3x3 linear-light solve, gamma conversion to code domain),
+  then refines with damped measured iterations. `--no-measure-primaries`
+  skips the patch measurements and relies on iteration alone.
+- Corrections are headroom-preserving: the strongest channel stays at unity,
+  minimizing the luminance cost of the chromaticity match.
+- Register updates are readback-verified before COMMIT and latch atomically
+  at a frame boundary, so no partial-frame tint is visible during matching.
+- Results report both xy distance and delta u'v' and are written to
+  `/home/pi/system-settings/white-point-calibration-v2.json` (schema
+  `disp-tester-white-point-match-v2`), including the measured primaries,
+  per-iteration data, and the pair target for traceability.
+
+Register transport is selected with `--backend`:
+
+- `simulate` (current default): a behavioral wp_adjust register bank plus a
+  simulated two-display panel model, so the complete operator flow,
+  convergence loop, and JSON output can be exercised end-to-end before the
+  new RTL is integrated. Useful flags for headless testing:
+  `--auto-start --exit-after-match --samples 2 --settle-seconds 0`.
+- `i2cdev`: direct `/dev/i2c-N` access using the FPGA new-slave framing
+  (write `[PAGE,REG,DATA...]`; read `[PAGE,REG]` then read bytes, 16-bit
+  big-endian), pure stdlib. Options: `--i2c-dev` (default `/dev/i2c-1`),
+  `--i2c-addr` (default `0x1E`), and `--wp-page` (default `0x03`, a
+  placeholder until the FPGA integration assigns the wp_adjust page).
+
+Once the new RTL is integrated and bench-verified, switch the launcher button
+arguments from `--backend simulate` to `--backend i2cdev` plus the final
+`--wp-page` value. See `fpga-wp-adjust/docs/pair-matching.md` for the full
+side-by-side matching procedure (common-target selection, luminance
+co-matching, gray-ramp pair checks).
+
+### White Point Profiling Child Script (wp_adjust, New)
+
+`/usr/bin/new-white-point-profile-child.py` is the wp_adjust counterpart of
+the legacy profiler. After one operator Start (sensor on the display), it
+optionally measures the full-field `red`/`green`/`blue` primaries at unity
+gain, then sweeps each Q4.12 gain channel through `--axis-values` (default
+mixes -4/-16 LSB fine steps with coarse steps down to 0.875) while the other
+channels stay at unity. Every point is committed atomically at a frame
+boundary and averaged over `--samples` valid readings.
+
+Outputs (default prefix `/home/pi/test-data/<ts>-wp-profile-v2`):
+
+```text
+<prefix>.json          schema disp-tester-white-point-profile-v2
+<prefix>-summary.csv   one averaged row per point (+ stddev)
+<prefix>-samples.csv   every raw sample
+```
+
+The JSON includes the unity-gain primaries and per-point gains in both int
+and hex, sized for offline analysis of per-LSB response, linearity,
+monotonicity, and gamma estimation. `wp_adjust` DEFAULTS (pass-through) is
+restored on exit. Backend selection is identical to the match child
+(`--backend simulate|i2cdev`).
+
+### D65 Calibration Child Script (wp_adjust)
+
+`/usr/bin/d65-calibration-child.py` calibrates a single display toward an
+absolute target (default D65, `x=0.3127 y=0.3290`, tolerance `0.005` xy per
+the fpga-wp-adjust PRD) using the same measure-primaries -> colorimetric
+solve -> damped iteration loop as the match child, but with one sensor
+placement and no reference display.
+
+Matched and best-effort runs write **two** files:
+
+```text
+/home/pi/system-settings/wp-cal-d65.json           wp-cal-v1 schema profile
+/home/pi/system-settings/wp-cal-d65-session.json   full session log
+```
+
+The first file conforms to the fpga-wp-adjust
+`host/schema/wp-cal-v1.schema.json` and is directly loadable by that repo's
+boot loader (`python3 -m host.wp_load --cal wp-cal-d65.json`), so a bench
+calibration becomes the boot-time profile with no conversion. The session log
+carries the measured primaries, every iteration, and raw samples for
+analysis. Target, panel identity, gamma, and tolerance are all CLI-settable
+(`--target-x/--target-y/--panel-id/--panel-serial/--gamma/--tolerance-xy`).
+
+Suggested validation order: run `White Point Profiling New` and review the
+profile data; then `D65 Calibration` on one display; then
+`White Point Matching New` against the reference display. All three buttons
+currently launch with `--backend simulate` until the new RTL is integrated.
+
 ### Touch Navigation
 - **Left edge tap** (25%): Previous pattern
 - **Right edge tap** (25%): Next pattern  

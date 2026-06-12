@@ -19,6 +19,9 @@ define DISP_TESTER_INSTALL_TARGET_CMDS
     $(INSTALL) -D -m 0755 $(@D)/live-measurements-child.py $(TARGET_DIR)/usr/bin/live-measurements-child.py
     $(INSTALL) -D -m 0755 $(@D)/white-point-profile-child.py $(TARGET_DIR)/usr/bin/white-point-profile-child.py
     $(INSTALL) -D -m 0755 $(@D)/white-point-match-child.py $(TARGET_DIR)/usr/bin/white-point-match-child.py
+    $(INSTALL) -D -m 0755 $(@D)/new-white-point-match-child.py $(TARGET_DIR)/usr/bin/new-white-point-match-child.py
+    $(INSTALL) -D -m 0755 $(@D)/new-white-point-profile-child.py $(TARGET_DIR)/usr/bin/new-white-point-profile-child.py
+    $(INSTALL) -D -m 0755 $(@D)/d65-calibration-child.py $(TARGET_DIR)/usr/bin/d65-calibration-child.py
 endef
 
 $(eval $(generic-package))

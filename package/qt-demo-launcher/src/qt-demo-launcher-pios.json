@@ -18,7 +18,7 @@
     "layout": {
       "type": "grid",
       "columns": 3,
-      "rows": 4,
+      "rows": 5,
       "spacing": 30,
       "margins": {
         "top": 100,
@@ -339,6 +339,124 @@
         "font_size": 30,
         "background_color": "#006C8E",
         "hover_color": "#005A78",
+        "border_radius": 20
+      },
+      {
+        "id": "color-matching-new",
+        "enabled": true,
+        "text": "White Point Matching New",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start Color-Match",
+          "--child-action-stop-text", "Stop Color-Match",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/home/pi/micropanel/bin/new-white-point-match-child.py",
+          "--script-arg=--backend",
+          "--script-arg=simulate",
+          "--script-arg=--calibration-output",
+          "--script-arg=/home/pi/system-settings/white-point-calibration-v2.json"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 3,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#008E6C",
+        "hover_color": "#00785A",
+        "border_radius": 20
+      },
+      {
+        "id": "white-point-profiling-new",
+        "enabled": true,
+        "text": "White Point Profiling New",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start Profiling",
+          "--child-action-stop-text", "Stop Profiling",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/home/pi/micropanel/bin/new-white-point-profile-child.py",
+          "--script-arg=--backend",
+          "--script-arg=simulate"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 4,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#6C5D8E",
+        "hover_color": "#574878",
+        "border_radius": 20
+      },
+      {
+        "id": "d65-calibration",
+        "enabled": true,
+        "text": "D65 Calibration",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start D65-Cal",
+          "--child-action-stop-text", "Stop D65-Cal",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/home/pi/micropanel/bin/d65-calibration-child.py",
+          "--script-arg=--backend",
+          "--script-arg=simulate",
+          "--script-arg=--calibration-output",
+          "--script-arg=/home/pi/system-settings/wp-cal-d65.json"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 4,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#8E6C00",
+        "hover_color": "#785A00",
         "border_radius": 20
       }
     ]
