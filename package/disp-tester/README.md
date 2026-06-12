@@ -349,6 +349,14 @@ Differences from the legacy flow:
   `/home/pi/system-settings/white-point-calibration-v2.json` (schema
   `disp-tester-white-point-match-v2`), including the measured primaries,
   per-iteration data, and the pair target for traceability.
+- Matched/best-effort runs additionally write a boot-replayable
+  **wp-cal-v1** profile to `/home/pi/system-settings/wp-cal-match.json`
+  (target = the reference display's measured white; `--peer-serial` records
+  which unit it was matched against). This file is what als-dimmer /
+  `wp_load.py` replay at boot. It is deliberately a separate file: the
+  legacy `white-point-calibration.json` stays owned by the legacy
+  wpx/wpy/wpz flow (live on Lattice displays) and is never written by the
+  new scripts (a built-in guard refuses it).
 
 Register transport is selected with `--backend`:
 

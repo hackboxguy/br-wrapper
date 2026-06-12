@@ -486,7 +486,10 @@ class I2CDevWpAdjust:
         fcntl.ioctl(self.fd, self.I2C_SLAVE_IOCTL, self.slave_addr)
 
     def read16(self, addr):
-        os.write(self.fd, bytes([self.page, addr & 0xFF]))
+        # Page-3 byte mapping: 2 bytes per logical register, big-endian
+        # (byte_addr = logical << 1). See fpga-wp-adjust
+        # docs/i2c-master-sw-integration-guideline.md section 1.2.
+        os.write(self.fd, bytes([self.page, (addr << 1) & 0xFF]))
         data = os.read(self.fd, 2)
         if len(data) != 2:
             raise RuntimeError(f"short I2C read at page 0x{self.page:02X} reg 0x{addr:02X}")
@@ -494,7 +497,7 @@ class I2CDevWpAdjust:
 
     def write16(self, addr, value):
         value &= 0xFFFF
-        payload = bytes([self.page, addr & 0xFF, (value >> 8) & 0xFF, value & 0xFF])
+        payload = bytes([self.page, (addr << 1) & 0xFF, (value >> 8) & 0xFF, value & 0xFF])
         if os.write(self.fd, payload) != len(payload):
             raise RuntimeError(f"short I2C write at page 0x{self.page:02X} reg 0x{addr:02X}")
 
