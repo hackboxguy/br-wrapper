@@ -1,0 +1,9 @@
+config BR2_PACKAGE_QT_MPV_WRAPPER
+	bool "qt-mpv-wrapper"
+	depends on BR2_PACKAGE_QT5
+	select BR2_PACKAGE_QT5BASE
+	select BR2_PACKAGE_QT5DECLARATIVE
+	select BR2_PACKAGE_QT5QUICKCONTROLS2
+	help
+	  Qt-based video player wrapper for mpv.
+	  Provides file browser with touch-optimized playback controls.

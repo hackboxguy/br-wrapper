@@ -1,0 +1,12 @@
+[Unit]
+Description=disp-can-ctrl
+After=systemd-mpvdemo.service
+
+[Service]
+Type=oneshot
+ExecStart=/etc/init.d/S99DispCanCtrl start
+ExecStop=/etc/init.d/S99DispCanCtrl stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,10 @@
+config BR2_PACKAGE_ALS_DIMMER
+	bool "als-dimmer"
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_LIBDDCUTIL
+	default n
+	help
+	  ALS-Dimmer: Ambient Light Sensor based display brightness
+	  control daemon with DDC/CI support.
+
+	  https://github.com/hackboxguy/als-dimmer

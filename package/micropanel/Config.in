@@ -1,0 +1,8 @@
+config BR2_PACKAGE_MICROPANEL
+        bool "micropanel"
+        select BR2_PACKAGE_I2C_TOOLS
+        select BR2_PACKAGE_JSON_FOR_MODERN_CPP
+	default n
+	depends on BR2_PACKAGE_HAS_UDEV
+        help
+          SSD1306 and keyinput HMI interface device service

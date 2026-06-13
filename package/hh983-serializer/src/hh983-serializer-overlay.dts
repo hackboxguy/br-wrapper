@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Device Tree Overlay for HH983 FPDLink Serializer
+ *
+ * Usage: Add to /boot/config.txt:
+ *   dtoverlay=hh983-serializer
+ *
+ * Optional parameters:
+ *   dtoverlay=hh983-serializer,addr=0x18
+ *
+ * The driver mode (983+984 vs 983+988) is controlled via module parameter:
+ *   /etc/modprobe.d/hh983.conf: options hh983-serializer config_mode=1
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2711";
+
+	/* Define configurable parameters */
+	fragment@0 {
+		target = <&i2c1>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "okay";
+
+			hh983: serializer@18 {
+				compatible = "ti,hh983-serializer";
+				reg = <0x18>;
+				status = "okay";
+			};
+		};
+	};
+
+	/* Allow address override via dtoverlay parameter */
+	__overrides__ {
+		addr = <&hh983>,"reg:0";
+	};
+};

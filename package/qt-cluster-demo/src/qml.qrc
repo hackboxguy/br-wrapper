@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>qml/main.qml</file>
+        <file>qml/NeedleGauge.qml</file>
+        <file>qml/Speedometer.qml</file>
+        <file>qml/Tachometer.qml</file>
+        <file>qml/FuelGauge.qml</file>
+        <file>qml/TempGauge.qml</file>
+        <file>qml/TelltaleRow.qml</file>
+        <file>qml/InfoBar.qml</file>
+        <file>qml/ExitButton.qml</file>
+    </qresource>
+</RCC>

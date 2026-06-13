@@ -1,0 +1,15 @@
+config BR2_PACKAGE_DISP_SETTINGS
+	bool "disp-settings"
+	depends on BR2_PACKAGE_QT5
+	select BR2_PACKAGE_QT5BASE_GUI
+	select BR2_PACKAGE_QT5DECLARATIVE
+	select BR2_PACKAGE_QT5QUICKCONTROLS2
+	help
+	  Qt5-based display settings application for embedded systems.
+	  Provides UI for controlling display brightness, viewing FPGA
+	  firmware info, temperature sensors, and touch controller status.
+
+	  Communicates with als-dimmer service for brightness control
+	  and directly with FPGA over I2C for hardware settings.
+
+	  https://github.com/anthropics/disp-settings

@@ -1,0 +1,84 @@
+#!/bin/sh
+#
+# Qt Demo Launcher startup script
+#
+
+DAEMON="qt_demo_launcher"
+DAEMON_PATH="/usr/bin"
+DAEMON_ARGS="/etc/launcher.json"
+PIDFILE="/var/run/$DAEMON.pid"
+
+# Detect touchscreen device
+detect_touch_device() {
+    # Search for touch device by name (himax, touchscreen, touch, etc.)
+    for dev in /dev/input/event*; do
+        if [ -e "$dev" ]; then
+            name=$(cat /sys/class/input/$(basename "$dev")/device/name 2>/dev/null || echo "")
+            case "$name" in
+                *himax*|*Himax*|*touchscreen*|*Touchscreen*|*TOUCHSCREEN*|*touch*|*Touch*)
+                    echo "$dev"
+                    return 0
+                    ;;
+            esac
+        fi
+    done
+    # Fallback to event0 if no touchscreen found
+    echo "/dev/input/event0"
+}
+
+# Set Qt environment variables
+export QT_QPA_PLATFORM=linuxfb
+export QT_QPA_FONTDIR=/usr/share/fonts/dejavu/
+# Auto-detect and set touchscreen device
+export QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=$(detect_touch_device)
+
+start() {
+    printf "Starting $DAEMON: "
+    echo "Using touchscreen device: $QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS"
+
+    # Wait for framebuffer to be ready
+    sleep 2
+    
+    start-stop-daemon -S -q -p $PIDFILE -b -m --exec $DAEMON_PATH/$DAEMON -- $DAEMON_ARGS
+    
+    if [ $? -eq 0 ]; then
+        echo "OK"
+    else
+        echo "FAIL"
+    fi
+}
+
+stop() {
+    printf "Stopping $DAEMON: "
+    start-stop-daemon -K -q -p $PIDFILE
+    
+    if [ $? -eq 0 ]; then
+        echo "OK"
+    else
+        echo "FAIL"
+    fi
+    
+    rm -f $PIDFILE
+}
+
+restart() {
+    stop
+    start
+}
+
+case "$1" in
+    start)
+        start
+        ;;
+    stop)
+        stop
+        ;;
+    restart|reload)
+        restart
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart}"
+        exit 1
+esac
+
+exit $?

@@ -1,0 +1,84 @@
+[Unit]
+Description=Qt Demo Launcher - Touch Application Launcher
+Documentation=file:///home/pi/micropanel/qt-apps/README.md
+# Start after basic system is ready
+After=multi-user.target systemd-user-sessions.service getty.target systemd-udevd.service
+# Wait for network to be available (optional dependency)
+Wants=network-online.target
+After=network-online.target
+# Conflicts with getty on tty1 to prevent login prompt from overwriting the display
+# NOTE: You must disable getty@tty1.service manually with:
+#   sudo systemctl mask getty@tty1.service
+Conflicts=getty@tty1.service
+# Ensure input devices are ready
+Requires=systemd-udevd.service
+
+[Service]
+Type=simple
+User=pi
+Group=video
+WorkingDirectory=/home/pi/micropanel/qt-apps
+
+# Qt Platform Configuration for LinuxFB (framebuffer, no X11 required)
+Environment="QT_QPA_PLATFORM=linuxfb"
+# Explicitly show mouse cursor (0=visible, 1=hidden)
+Environment="QT_QPA_FB_HIDECURSOR=0"
+# Disable input module to hide blinking text cursor
+Environment="QT_IM_MODULE=none"
+Environment="QT_QPA_EGLFS_PHYSICAL_WIDTH=155"
+Environment="QT_QPA_EGLFS_PHYSICAL_HEIGHT=86"
+Environment="QT_QPA_FONTDIR=/usr/share/fonts/dejavu/"
+Environment="QT_LOGGING_RULES=*.debug=false"
+# Disable libinput plugin to use direct evdev for touch - prevents touch event filtering
+# that can cause thin/dotted lines in drawing applications
+Environment="QT_QPA_FB_NO_LIBINPUT=1"
+Environment="QT_QPA_EGLFS_NO_LIBINPUT=1"
+
+# Runtime directory
+Environment="XDG_RUNTIME_DIR=/tmp/runtime-root-pi"
+
+# GPU and DRM permissions
+SupplementaryGroups=input render
+
+# Application command
+# Detect and set the correct touchscreen device dynamically
+ExecStartPre=/bin/sh -c 'for dev in /dev/input/event*; do name=$(cat /sys/class/input/$(basename $dev)/device/name 2>/dev/null || echo ""); if echo "$name" | grep -iq "himax\\|touchscreen\\|touch"; then echo "QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=$dev" > /tmp/qt-touch-env; exit 0; fi; done; echo "QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS=/dev/input/event0" > /tmp/qt-touch-env'
+# Load the dynamically detected touchscreen device
+EnvironmentFile=-/tmp/qt-touch-env
+ExecStartPre=/bin/mkdir -p /tmp/runtime-root-pi
+ExecStartPre=/bin/chmod 700 /tmp/runtime-root-pi
+ExecStartPre=/bin/mkdir -p /home/pi/micropanel/qt-apps/Pictures
+ExecStartPre=/bin/mkdir -p /home/pi/micropanel/qt-apps/Patterns
+ExecStartPre=/bin/mkdir -p /home/pi/micropanel/qt-apps/Videos
+# Suppress kernel messages to console and clear framebuffer before starting
+# Note: These require root privileges, so they run with elevated permissions
+ExecStartPre=+/bin/sh -c 'echo 0 > /proc/sys/kernel/printk'
+# Disable cursor blinking on tty1
+ExecStartPre=+/bin/sh -c 'echo 0 > /sys/class/graphics/fbcon/cursor_blink 2>/dev/null || true'
+# Small delay to let all boot services finish printing their messages
+ExecStartPre=/bin/sleep 4
+# Wait for input devices to have proper permissions set by udev
+# This loop waits until at least one event device is readable by the input group
+ExecStartPre=/bin/sh -c 'for i in 1 2 3 4 5; do for dev in /dev/input/event*; do [ -r "$dev" ] && exit 0; done; sleep 1; done; exit 0'
+# Clear the framebuffer after all boot messages
+ExecStartPre=+/bin/sh -c 'printf "\033c" > /dev/tty1'
+ExecStart=/home/pi/micropanel/qt-apps/qt-demo-launcher --config /home/pi/micropanel/qt-apps/qt-demo-launcher.json --port 8081
+
+# Restart policy
+Restart=always
+RestartSec=5
+TimeoutStartSec=30
+TimeoutStopSec=10
+
+# Security and resource limits
+LimitNOFILE=4096
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qt-demo-launcher
+
+# Clean shutdown
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

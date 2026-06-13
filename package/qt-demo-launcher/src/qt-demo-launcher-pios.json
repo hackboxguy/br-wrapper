@@ -1,0 +1,464 @@
+{
+  "launcher": {
+    "title": {
+      "text": "Display-Diagnostics-Tool",
+      "logo": "/usr/share/icons/company-logo-large.png",
+      "logo_size": {
+        "width": 200,
+        "height": 80
+      },
+      "layout": "text_only",
+      "font_size": 32,
+      "color": "#ffffff"
+    },
+    "window": {
+      "width": 2560,
+      "height": 1440
+    },
+    "layout": {
+      "type": "grid",
+      "columns": 3,
+      "rows": 5,
+      "spacing": 30,
+      "margins": {
+        "top": 100,
+        "bottom": 100,
+        "left": 150,
+        "right": 150
+      }
+    },
+    "buttons": [
+      {
+        "id": "gallery",
+        "enabled": true,
+        "text": "Photo Gallery",
+        "icon": "/usr/share/icons/gallery-large.png",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": ["/Pictures"],
+        "working_directory": "/Pictures",
+        "position": {
+          "row": 0,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#34495E",
+        "hover_color": "#2C3E50",
+        "border_radius": 20
+      },
+      {
+        "id": "slideshow",
+        "enabled": true,
+        "text": "Slideshow",
+        "icon": "/usr/share/icons/slideshow-large.png",
+        "program": "/usr/share/qt-apps/kodi-slideshow.sh",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 0,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#27AE60",
+        "hover_color": "#229954",
+        "border_radius": 20
+      },
+      {
+        "id": "drawing",
+        "enabled": true,
+        "text": "Drawing App",
+        "icon": "/usr/share/icons/paint-large.png",
+        "program": "/usr/lib/qt/examples/widgets/touch/fingerpaint/fingerpaint",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 1,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#E74C3C",
+        "hover_color": "#C0392B",
+        "border_radius": 20
+      },
+      {
+        "id": "pattern-generator",
+        "enabled": true,
+        "text": "Pattern Generator",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 1,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#8E44AD",
+        "hover_color": "#7D3C98",
+        "border_radius": 20
+      },
+      {
+        "id": "test-pictures",
+        "enabled": true,
+        "text": "Test Pictures",
+        "icon": "/usr/share/icons/gallery-large.png",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": ["/Patterns"],
+        "working_directory": "/Patterns",
+        "position": {
+          "row": 0,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#8E4450",
+        "hover_color": "#2C3E50",
+        "border_radius": 20
+      },
+      {
+        "id": "media-player",
+        "enabled": true,
+        "text": "Media Player",
+        "icon": "/usr/share/icons/video-large.png",
+        "program": "/usr/share/qt-apps/kodi-video.sh",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 1,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#E67E22",
+        "hover_color": "#D35400",
+        "border_radius": 20
+      },
+      {
+        "id": "disp-settings",
+        "enabled": true,
+        "text": "Display Settings",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-settings",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 2,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#16A085",
+        "hover_color": "#1ABC9C",
+        "border_radius": 20
+      },
+      {
+        "id": "cluster-demo",
+        "enabled": true,
+        "text": "Cluster Demo",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/share/qt-apps/cluster-launcher.sh",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 2,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F",
+        "border_radius": 20
+      },
+      {
+        "id": "brightness-calibration",
+        "enabled": true,
+        "text": "Brightness Calibration",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--script", "/home/pi/micropanel/bin/als-dimmer-sweep-child.py",
+          "--script-arg=--output", "--script-arg=/tmp/warm.csv",
+          "--script-arg=--label", "--script-arg=warm",
+          "--script-arg=--warmup-seconds", "--script-arg=5",
+          "--script-arg=--install-calibration"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 2,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#006C8E",
+        "hover_color": "#005A78",
+        "border_radius": 20
+      },
+      {
+        "id": "live-measurement",
+        "enabled": true,
+        "text": "Live Measurement",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start Recording",
+          "--child-action-stop-text", "Stop Recording",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--script", "/home/pi/micropanel/bin/live-measurements-child.py",
+          "--script-arg=--interval-seconds", "--script-arg=2.0",
+          "--script-arg=--no-record-on-start"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 3,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#5B6C5D",
+        "hover_color": "#465748",
+        "border_radius": 20
+      },
+      {
+        "id": "color-matching",
+        "enabled": true,
+        "text": "White Point Matching",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start Color-Match",
+          "--child-action-stop-text", "Stop Color-Match",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/home/pi/micropanel/bin/white-point-match-child.py",
+          "--script-arg=--calibration-output",
+          "--script-arg=/home/pi/system-settings/white-point-calibration.json"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 3,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#006C8E",
+        "hover_color": "#005A78",
+        "border_radius": 20
+      },
+      {
+        "id": "color-matching-new",
+        "enabled": true,
+        "text": "White Point Matching New",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start Color-Match",
+          "--child-action-stop-text", "Stop Color-Match",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/home/pi/micropanel/bin/new-white-point-match-child.py",
+          "--script-arg=--backend",
+          "--script-arg=simulate",
+          "--script-arg=--calibration-output",
+          "--script-arg=/home/pi/system-settings/white-point-calibration-v2.json"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 3,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#008E6C",
+        "hover_color": "#00785A",
+        "border_radius": 20
+      },
+      {
+        "id": "white-point-profiling-new",
+        "enabled": true,
+        "text": "White Point Profiling New",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start Profiling",
+          "--child-action-stop-text", "Stop Profiling",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/home/pi/micropanel/bin/new-white-point-profile-child.py",
+          "--script-arg=--backend",
+          "--script-arg=simulate"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 4,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#6C5D8E",
+        "hover_color": "#574878",
+        "border_radius": 20
+      },
+      {
+        "id": "d65-calibration",
+        "enabled": true,
+        "text": "D65 Calibration",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start D65-Cal",
+          "--child-action-stop-text", "Stop D65-Cal",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/home/pi/micropanel/bin/d65-calibration-child.py",
+          "--script-arg=--backend",
+          "--script-arg=simulate",
+          "--script-arg=--calibration-output",
+          "--script-arg=/home/pi/system-settings/wp-cal-d65.json"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 4,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#8E6C00",
+        "hover_color": "#785A00",
+        "border_radius": 20
+      }
+    ]
+  }
+}

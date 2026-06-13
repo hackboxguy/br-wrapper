@@ -1,0 +1,51 @@
+/*
+ * Device Tree Overlay for Himax TDDI Touch Controller
+ * with TI HH983 FPDLink-III Serializer on Raspberry Pi 4
+ *
+ * Enable in /boot/config.txt:
+ *   dtoverlay=himax-touch
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2711";
+
+	/* Fragment 0: Add I2C devices to i2c1 */
+	fragment@0 {
+		target = <&i2c1>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/* TI HH983 FPDLink-III Serializer */
+			serializer@18 {
+				compatible = "ti,hh983-serializer";
+				reg = <0x18>;
+				status = "okay";
+			};
+
+			/* Himax TDDI Touch Controller */
+			hxchipset_ts@48 {
+				compatible = "himax,hxcommon";
+				reg = <0x48>;
+				status = "okay";
+				report_type = <1>;
+				himax,TSIX = <&gpio 17 0>; /* GPIO17 for interrupt */
+			};
+		};
+	};
+
+	/* Fragment 1: Configure GPIO17 as input with pull-up */
+	fragment@1 {
+		target = <&gpio>;
+		__overlay__ {
+			himax_pins: himax_pins {
+				brcm,pins = <17>;
+				brcm,function = <0>; /* Input */
+				brcm,pull = <2>; /* Pull-up */
+			};
+		};
+	};
+};

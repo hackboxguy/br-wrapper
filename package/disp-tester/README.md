@@ -1,0 +1,825 @@
+# Qt Pattern Generator(QT-Pattern Backend)
+
+A Qt5-based display pattern generator application designed for testing displays color accuracy, and display uniformity. Features touch navigation and TCP network interface for automated testing integration.
+![Sample-Pattern.](images/sample-pattern.png "Sample-Pattern.")
+
+## Features
+
+- **15 Test Patterns**: Comprehensive pattern library for display testing
+- **Touch Navigation**: Intuitive touch interface with forward/backward navigation  
+- **Network Control**: TCP socket interface for automated testing
+- **Auto-scaling**: Adapts to any display resolution
+- **Fullscreen Mode**: Clean, distraction-free pattern display
+- **Embedded Optimized**: Designed for embedded Linux systems
+
+## Supported Patterns
+
+### **Basic Test Patterns**
+- **grayscale-ramp**: 16-step grayscale gradient for brightness calibration
+- **ansi-checker**: Black/white checkerboard for uniformity testing  
+- **colorbar**: SMPTE color bars for color accuracy testing
+
+### **Solid Color Patterns**
+- **white**: Full white screen (255,255,255)
+- **black**: Full black screen (0,0,0)
+- **red**: Full red screen (255,0,0)
+- **green**: Full green screen (0,255,0)
+- **blue**: Full blue screen (0,0,255)
+- **cyan**: Full cyan screen (0,255,255)
+- **magenta**: Full magenta screen (255,0,255)
+- **yellow**: Full yellow screen (255,255,0)
+
+### **Advanced Display Testing**
+- **zone-boundary-grid**: Grid pattern for local dimming zone mapping (1008 zones, configurable)
+- **blooming-detection**: Single pulsing pixel for blooming measurement
+- **cross-dimming**: 4 corner spots with pulsing animation for zone interference testing
+
+### **Custom Patterns**
+- **RGB patches**: Custom colors with `pattern rgb R G B` (values 0-255)
+
+## Installation
+
+### Dependencies
+- **Qt5**: qt5base, qt5declarative, qt5quickcontrols2
+- **Platform**: Linux with framebuffer support (linuxfb)
+- **Touch**: Standard Linux input events (`/dev/input/eventX`)
+
+### Build Methods
+
+#### **Option 1: Buildroot Package**
+The application can be integrated as a Buildroot package for embedded systems.
+
+#### **Option 2: Standalone Build**
+```bash
+cd src/
+qmake
+make
+./disp-tester --port=8080
+```
+
+For cross-compilation, ensure Qt5 development tools and target toolchain are configured.
+
+## Usage
+
+### Command Line Options
+```bash
+qt-pattern-generator [options]
+
+Options:
+  -p, --port <port>     TCP server port (default: 8082)
+  --script <program>    Start a supervised child script/program
+  --script-arg <arg>    Argument for the child script (repeatable)
+  --disable-pattern-navigation
+                         Disable background edge taps and swipe navigation
+  --disable-ui-autohide Keep overlay controls visible
+  --hide-navigation-help
+                         Hide the generic tap/swipe navigation help box
+  -h, --help            Display help
+  -v, --version         Display version
+```
+
+### Supervised Child Script
+
+`disp-tester` can optionally start one child script after the UI and TCP
+server are ready:
+
+```bash
+./disp-tester --port=8082 --script /usr/bin/my-measurement.sh \
+  --script-arg sequence-a --script-arg panel-42
+```
+
+The child inherits the normal environment plus:
+
+- `DISP_TESTER_HOST=127.0.0.1`
+- `DISP_TESTER_PORT=<configured port>`
+
+The parent never waits synchronously for the child while the Qt event loop is
+running. On touch exit, TCP `quit`, SIGTERM, or SIGINT, `disp-tester` sends
+SIGTERM to the child and falls back to SIGKILL after 3 seconds.
+
+### ALS Dimmer Sweep Child Script
+
+The package also installs `/usr/bin/als-dimmer-sweep-child.py`, a simplified
+child-script variant of the ALS brightness-to-nits sweep. It assumes
+`disp-tester` is already running as its parent, sets a white pattern through
+the parent socket, drives `als-dimmer`, records `spotread` results to CSV, and
+leaves `disp-tester` open with a completion overlay when the sweep finishes.
+
+Example through `disp-tester`:
+
+```bash
+disp-tester --script /usr/bin/als-dimmer-sweep-child.py \
+  --script-arg=--output --script-arg=/tmp/sweep.csv \
+  --script-arg=--label --script-arg=warm
+```
+
+For `qt-demo-launcher` JSON, pass script options with the `--script-arg=...`
+form, especially for values that begin with `--`:
+
+```json
+"program": "/usr/bin/disp-tester",
+"arguments": [
+  "--script", "/usr/bin/als-dimmer-sweep-child.py",
+  "--script-arg=--output", "--script-arg=/tmp/sweep.csv",
+  "--script-arg=--label", "--script-arg=warm"
+]
+```
+
+The script handles SIGTERM/SIGINT by stopping any active `spotread`, restoring
+the original ALS dimmer mode/brightness when possible, flushing the partial
+CSV, and exiting. It does not send `quit` to `disp-tester`.
+
+Before starting the sweep, the child script checks `/sys/bus/usb/devices` for
+an i1 Display Pro style USB colorimeter. The known i1 Display Pro USB ID
+`0765:5020` is accepted by default. If it is not found, the script leaves
+brightness untouched and shows an `i1 Display Pro Not Found` message in the
+bottom-right info box. Use `--no-require-colorimeter` only for dry-runs or
+lab debugging.
+
+During the sweep, the script re-checks USB presence before each measurement
+step. This is only a sysfs scan, so the cost is negligible compared with the
+brightness settle time and `spotread`; if the colorimeter disappears, the
+partial CSV is preserved, calibration install is skipped, and the info box
+shows `i1 Display Pro Disconnected`.
+
+Each row can also include `backlight_temp_c`. By default the script probes
+`/dev/i2c-1`, slave `0x66`, register `0x1002`, and reads the display_manager
+backlight NTC temperature as signed big-endian `degC x10`. If that I2C slave
+is not present or a row read fails, the temperature field is left blank and
+the sweep continues. Use `--no-i2c-temp` to disable this native probe, or
+`--temp-cmd` to override it with a custom temperature command.
+
+For local-dimming displays, `spotread` can fail at the final 0% black reading
+even when the preceding low-brightness rows are valid. By default, a failed
+measurement at exactly 0% is tried once, then written as `0.0000` nits with
+`OK` status if `spotread` cannot parse a value. This avoids a long low-light
+retry cycle that can make the i1 Display Pro disappear briefly from USB. Other
+brightness levels remain strict failures. Use `--zero-nits-max-retries` to tune
+the 0% retry count, or `--no-zero-nits-on-zero-fail` to disable this fallback.
+
+After the USB check passes, the script sets the display to a white pattern and
+100% brightness, then waits until `spotread` sees at least 250 nits. This is a
+placement check for the colorimeter: if the reading is too low, the bottom-right
+info box asks the user to place the i1 Display Pro at the center of the lit
+screen. The default wait has no timeout and can be cancelled with the on-screen
+EXIT button. Use `--placement-min-nits`, `--placement-timeout-seconds`, or
+`--no-placement-check` to tune this behavior.
+
+To apply a successful sweep automatically, add `--install-calibration`. The
+child script resolves `/home/pi/als-dimmer/etc/als-dimmer/config.json` and
+copies the CSV into the matching calibration target:
+
+- `config_fpga_opti4001_dimmer2048.json` -> `calibrations/dimmer_neutral.csv`
+- `config_opti4001_boepwm.json` -> `calibrations/boe_pwm_2khz_reference.csv`
+- `config_opti4001_ddcutil_rtk_hg560t34.json` -> `calibrations/dimmer_15_6_rtk_hg560t34.csv`
+- any other config -> `calibrations/dimmer_neutral.csv`
+
+It then runs `systemctl restart als-dimmer`. If the script is not running as
+root, it uses `sudo -n` so it fails quickly instead of waiting for a password.
+Before copying, the script re-opens the CSV on disk and checks that the header,
+row count, brightness steps, row status, nits values, and 100% brightness sanity
+look valid. A partial or broken `/tmp/warm.csv` is not copied over the existing
+calibration. After the copy and restart succeed, the info box shows
+`Brightness Calibration Success`.
+
+```json
+"arguments": [
+  "--script", "/usr/bin/als-dimmer-sweep-child.py",
+  "--script-arg=--output", "--script-arg=/tmp/warm.csv",
+  "--script-arg=--label", "--script-arg=warm",
+  "--script-arg=--warmup-seconds", "--script-arg=5",
+  "--script-arg=--install-calibration"
+]
+```
+
+### Live Measurement Child Script
+
+The package also installs `/usr/bin/live-measurements-child.py`, a read-only
+child script for live spot checks. It shows a white pattern, repeatedly takes
+one `spotread` XYZ/xyY sample, reads backlight temperature from the
+display-manager I2C diagnostics register when available, reads `als-dimmer`
+status plus `get_absolute_brightness` for brightness percent and absolute
+nits, and updates the bottom-right overlay. It does not change ALS mode,
+brightness, or calibration.
+
+```bash
+disp-tester --script /usr/bin/live-measurements-child.py \
+  --script-arg=--interval-seconds --script-arg=2.0
+```
+
+The update cadence is one `spotread` attempt, immediate overlay update, then
+`--interval-seconds` sleep before the next attempt. The default interval is 2s;
+use `--interval-seconds 0` only for short lab/debug runs.
+
+By default, each invocation also creates a timestamped CSV under
+`/home/pi/test-data/` and records the next clean XYZ/xyY sample at startup and
+then every 30 seconds. Clean means `spotread` parsed both XYZ and xyY; a
+transient sensor error is shown live but not written to the drift log. The CSV
+is flushed after every row and keeps growing until the user exits. Use
+`--record-dir`, `--record-output`, `--record-interval-seconds`,
+`--no-record-on-start`, or `--no-record-csv` to adjust this behavior.
+
+For operator-controlled recording, start `disp-tester` with its child action
+button enabled and pass `--no-record-on-start` to the child:
+
+```bash
+disp-tester \
+  --child-action-button \
+  --child-action-start-text "Start Recording" \
+  --child-action-stop-text "Stop Recording" \
+  --script /usr/bin/live-measurements-child.py \
+  --script-arg=--no-record-on-start
+```
+
+The button auto-hides with the normal touch overlay. Pressing Start sends a
+child-process control command over stdin and creates a new timestamped CSV.
+Pressing Stop flushes and closes that CSV. Pressing Start again creates a new
+file rather than appending to the previous recording session. While recording,
+the live overlay title changes to `Live Measurement (Recording)`.
+
+The live overlay uses the normal metadata color when readings are healthy and
+turns the whole overlay red for sensor read errors, ALS read errors, or when
+the measured-vs-ALS delta exceeds `--delta-alert-percent` (default 5%).
+Spotread failures are shown as a short `Measured: sensor error` line so the
+overlay size stays stable.
+
+### White Point Profiling Child Script
+
+The package also installs `/usr/bin/white-point-profile-child.py`, a profiling
+script for studying how the FPGA write-only white-point registers affect the
+target display's measured white. It shows a white pattern through the parent
+`disp-tester`, checks for an i1 Display Pro, waits for placement on the target
+display, writes `wpx/wpy/wpz` values with `/home/pi/micropanel/bin/disptool`,
+takes five valid `spotread` XYZ/xyY samples per point by default, and restores
+`256/256/256` on exit. Transient `spotread` failures are retried so a short
+instrument-initialization hiccup does not abort the run.
+
+Example:
+
+```bash
+disp-tester --script /usr/bin/white-point-profile-child.py \
+  --script-arg=--output-prefix --script-arg=/home/pi/test-data/wp-profile
+```
+
+By default the profile includes baseline `256/256/256` plus single-axis
+one-step sweeps from `255` down to `246` for each of `wpx`, `wpy`, and `wpz`.
+Paired and all-channel interaction points are disabled by default so the run
+stays focused on small white-point shifts. It writes:
+
+- `<prefix>.json` with full per-sample data and averages
+- `<prefix>-summary.csv` with one averaged row per register point
+- `<prefix>-samples.csv` with every accepted spotread sample
+
+Useful tuning options include `--axis-values`, `--samples`, `--max-retries`,
+`--point-failure-budget`, `--settle-seconds`, `--placement-min-nits`,
+`--point label,wpx,wpy,wpz`, and `--include-pairs` / `--include-all` when
+interaction points are needed.
+
+### White Point Color Matching Child Script
+
+The package also installs `/usr/bin/white-point-match-child.py`, which matches
+the target display white point to a reference display. It assumes the Pi HDMI
+output is split to both displays, so both show the same full-white pattern. The
+script first shows `Place the Sensor on Reference Display and Click Start
+button`; after the operator presses Start, it averages five valid XYZ/xyY
+samples. It then shows `Now connect Sensor on Target Display and Click Start
+button`; after the second Start press, it measures the target at
+`wpx/wpy/wpz = 256/256/256`, chooses integer white-point reductions from the
+profiled small-signal model, writes them through `disptool`, and verifies the
+target against the reference.
+
+The default tolerance is `0.002` in xy distance. Matched and best-effort runs
+write:
+
+```text
+/home/pi/system-settings/white-point-calibration.json
+```
+
+The calibration JSON keeps top-level `wpx`, `wpy`, and `wpz` fields for simple
+startup replay by `als-dimmer`, plus reference/target measurements and the
+model used for traceability. Best-effort files are written with
+`"status": "best_effort"` when the measured error does not reach tolerance. The
+script loads `/home/pi/test-data/wp-profile.json` for its model when present
+and falls back to built-in slopes derived from the same profiling format.
+
+Launcher usage with the shared child-action button:
+
+```bash
+disp-tester \
+  --child-action-button \
+  --child-action-start-text "Start Color-Match" \
+  --child-action-stop-text "Stop Color-Match" \
+  --disable-pattern-navigation \
+  --disable-ui-autohide \
+  --hide-navigation-help \
+  --script /usr/bin/white-point-match-child.py \
+  --script-arg=--calibration-output \
+  --script-arg=/home/pi/system-settings/white-point-calibration.json
+```
+
+At each placement prompt, Start advances to the next measurement phase. While
+sampling or correcting, the active button stops the run. After completion or
+abort, the child process waits for either Start or EXIT.
+The launcher-mode flags keep the full-white pattern locked, keep overlay
+buttons visible, and hide the generic tap/swipe navigation hint.
+
+### White Point Color Matching Child Script (wp_adjust, New)
+
+The package also installs `/usr/bin/new-white-point-match-child.py`, which
+performs the same reference/target operator flow against the new `wp_adjust`
+FPGA block (scalar v1 register map from the `fpga-wp-adjust` repo) instead of
+the legacy write-only `wpx/wpy/wpz` registers. The legacy script above is
+untouched and both can coexist; the launcher exposes them as separate buttons
+(`White Point Matching` and `White Point Matching New`).
+
+Differences from the legacy flow:
+
+- Q4.12 gains step at 1/4096 (16x finer than the legacy 1/256 registers), so
+  correction resolution is far below the 0.002 xy matching tolerance.
+- After measuring the target white, the script measures the target's
+  full-field `red`/`green`/`blue` primaries and solves the correction
+  colorimetrically (3x3 linear-light solve, gamma conversion to code domain),
+  then refines with damped measured iterations. `--no-measure-primaries`
+  skips the patch measurements and relies on iteration alone.
+- Corrections are headroom-preserving: the strongest channel stays at unity,
+  minimizing the luminance cost of the chromaticity match.
+- Register updates are readback-verified before COMMIT and latch atomically
+  at a frame boundary, so no partial-frame tint is visible during matching.
+- Results report both xy distance and delta u'v' and are written to
+  `/home/pi/system-settings/white-point-calibration-v2.json` (schema
+  `disp-tester-white-point-match-v2`), including the measured primaries,
+  per-iteration data, and the pair target for traceability.
+- Matched/best-effort runs additionally write a boot-replayable
+  **wp-cal-v1** profile to `/home/pi/system-settings/wp-cal-match.json`
+  (target = the reference display's measured white; `--peer-serial` records
+  which unit it was matched against). This file is what als-dimmer /
+  `wp_load.py` replay at boot. It is deliberately a separate file: the
+  legacy `white-point-calibration.json` stays owned by the legacy
+  wpx/wpy/wpz flow (live on Lattice displays) and is never written by the
+  new scripts (a built-in guard refuses it).
+
+Register transport is selected with `--backend`:
+
+- `simulate` (current default): a behavioral wp_adjust register bank plus a
+  simulated two-display panel model, so the complete operator flow,
+  convergence loop, and JSON output can be exercised end-to-end before the
+  new RTL is integrated. Useful flags for headless testing:
+  `--auto-start --exit-after-match --samples 2 --settle-seconds 0`.
+- `i2cdev`: direct `/dev/i2c-N` access using the FPGA new-slave framing
+  (write `[PAGE,REG,DATA...]`; read `[PAGE,REG]` then read bytes, 16-bit
+  big-endian), pure stdlib. Options: `--i2c-dev` (default `/dev/i2c-1`),
+  `--i2c-addr` (default `0x1E`), and `--wp-page` (default `0x03`, a
+  placeholder until the FPGA integration assigns the wp_adjust page).
+
+Once the new RTL is integrated and bench-verified, switch the launcher button
+arguments from `--backend simulate` to `--backend i2cdev` plus the final
+`--wp-page` value. See `fpga-wp-adjust/docs/pair-matching.md` for the full
+side-by-side matching procedure (common-target selection, luminance
+co-matching, gray-ramp pair checks).
+
+### White Point Profiling Child Script (wp_adjust, New)
+
+`/usr/bin/new-white-point-profile-child.py` is the wp_adjust counterpart of
+the legacy profiler. After one operator Start (sensor on the display), it
+optionally measures the full-field `red`/`green`/`blue` primaries at unity
+gain, then sweeps each Q4.12 gain channel through `--axis-values` (default
+mixes -4/-16 LSB fine steps with coarse steps down to 0.875) while the other
+channels stay at unity. Every point is committed atomically at a frame
+boundary and averaged over `--samples` valid readings.
+
+Outputs (default prefix `/home/pi/test-data/<ts>-wp-profile-v2`):
+
+```text
+<prefix>.json          schema disp-tester-white-point-profile-v2
+<prefix>-summary.csv   one averaged row per point (+ stddev)
+<prefix>-samples.csv   every raw sample
+```
+
+The JSON includes the unity-gain primaries and per-point gains in both int
+and hex, sized for offline analysis of per-LSB response, linearity,
+monotonicity, and gamma estimation. `wp_adjust` DEFAULTS (pass-through) is
+restored on exit. Backend selection is identical to the match child
+(`--backend simulate|i2cdev`).
+
+### D65 Calibration Child Script (wp_adjust)
+
+`/usr/bin/d65-calibration-child.py` calibrates a single display toward an
+absolute target (default D65, `x=0.3127 y=0.3290`, tolerance `0.005` xy per
+the fpga-wp-adjust PRD) using the same measure-primaries -> colorimetric
+solve -> damped iteration loop as the match child, but with one sensor
+placement and no reference display.
+
+Matched and best-effort runs write **two** files:
+
+```text
+/home/pi/system-settings/wp-cal-d65.json           wp-cal-v1 schema profile
+/home/pi/system-settings/wp-cal-d65-session.json   full session log
+```
+
+The first file conforms to the fpga-wp-adjust
+`host/schema/wp-cal-v1.schema.json` and is directly loadable by that repo's
+boot loader (`python3 -m host.wp_load --cal wp-cal-d65.json`), so a bench
+calibration becomes the boot-time profile with no conversion. The session log
+carries the measured primaries, every iteration, and raw samples for
+analysis. Target, panel identity, gamma, and tolerance are all CLI-settable
+(`--target-x/--target-y/--panel-id/--panel-serial/--gamma/--tolerance-xy`).
+
+Suggested validation order: run `White Point Profiling New` and review the
+profile data; then `D65 Calibration` on one display; then
+`White Point Matching New` against the reference display. All three buttons
+currently launch with `--backend simulate` until the new RTL is integrated.
+
+### Touch Navigation
+- **Left edge tap** (25%): Previous pattern
+- **Right edge tap** (25%): Next pattern  
+- **Center tap** (50%): Toggle UI overlay
+- **Swipe left**: Next pattern
+- **Swipe right**: Previous pattern
+
+### UI Elements
+- **Pattern counter**: Shows current position (e.g., "5/15")
+- **Pattern name**: Displays current pattern (e.g., "RED")
+- **EXIT button**: Always available in top-right corner
+- **Resolution info**: Display dimensions (e.g., "2560x1440")
+- **Network info**: TCP server status (e.g., "TCP:192.168.1.100:8080")
+- **Auto-hide**: UI disappears after 4 seconds, tap center to toggle
+
+## Network API
+
+### Connection
+```bash
+# Telnet (interactive)
+telnet <display-ip> 8080
+
+# Netcat (scripting) 
+echo "pattern red" | nc -q 1 <display-ip> 8080
+```
+
+### Pattern Commands
+```bash
+# Basic patterns
+pattern grayscale-ramp      # 16-step grayscale gradient
+pattern ansi-checker        # Black/white checkerboard
+pattern colorbar            # SMPTE color bars
+
+# Solid colors
+pattern white               # Full white screen
+pattern black               # Full black screen  
+pattern red                 # Full red screen
+pattern green               # Full green screen
+pattern blue                # Full blue screen
+pattern cyan                # Full cyan screen
+pattern magenta             # Full magenta screen
+pattern yellow              # Full yellow screen
+
+# Advanced patterns
+pattern zone-boundary-grid  # Local dimming zone grid
+pattern blooming-detection  # Single pixel blooming test
+pattern cross-dimming       # Zone interference test
+
+# Custom RGB
+pattern rgb 255 128 64      # Custom color (R G B values 0-255)
+
+# Bottom-right metadata text overlay
+set-metadata-text <message>            # Set the overlay text (literal \n becomes newline)
+clear-metadata-text                    # Clear back to default IP:port display
+set-metadata-status <autohide|enable|disable>  # Visibility mode (autohide is default)
+get-metadata-status                    # Read current visibility mode
+get-metadata-text                      # Read current text (default = empty)
+set-metadata-align  <left|center|right>
+set-metadata-fontsize <8..48>
+set-metadata-color  <r> <g> <b>        # OR set-metadata-color <named-color>
+get-metadata-align
+get-metadata-fontsize
+get-metadata-color
+
+# Child action button state (used by supervised child scripts)
+set-child-action-active <enable|disable>
+```
+
+### Information Commands
+```bash
+get-resolution              # Returns display resolution
+get-pattern                 # Returns current pattern name  
+list-patterns              # Returns all available patterns
+quit                       # Exit application
+```
+
+### Response Format
+```bash
+OK                         # Command successful
+ERROR: <description>       # Command failed
+<data>                     # Information response
+```
+
+### Connection Model & Pitfalls
+
+These are easy to miss and have bitten clients in the past. Read them
+before writing automation against this daemon.
+
+**1. Single client at a time.** disp-tester accepts exactly one TCP
+client. While that client is connected, additional `connect()` attempts
+are accepted-and-immediately-closed (no error code, no response) until
+the existing client disconnects. Symptom from the client side: connect
+succeeds, send may succeed, recv returns 0 immediately. From disp-tester's
+debug log: `Rejecting connection - client already connected`.
+
+**2. ~100ms close-detection latency.** disp-tester polls its client
+socket every 100ms. After a client closes its end, disp-tester takes up
+to ~100ms to notice and free the slot for the next connect. **A new
+connect that arrives inside that window gets silently rejected** by
+mechanism #1 above.
+
+What this means for clients:
+
+- **Use one connection for many commands** when possible. The protocol
+  is line-based, so one TCP session can carry an arbitrary number of
+  newline-terminated commands and read each `OK` / `ERROR: ...` /
+  data-line reply in turn. This avoids the rate-limit entirely.
+- **If you must use one connect-per-command**, leave at least **150ms
+  between successive connections**. Tools that fire commands in tight
+  loops (e.g. shell `for ... done` with `nc`, or rapid Python
+  `subprocess.run`) WILL hit silent drops if you don't.
+- **Treat overlay updates as best-effort**. When a drop happens, the
+  command is lost without notification. Don't rely on every per-step
+  text update landing — use the message content for "current state",
+  not "history of state transitions".
+
+If you've already taken the one-connection-per-command path and your
+calls are landing back-to-back, a quick `time.sleep(0.15)` between
+connections is the simplest fix.
+
+## Text Overlay Feature
+
+### Overview
+The application supports displaying custom text messages in a semi-transparent overlay box positioned at the bottom-right corner of the screen. This feature is useful for:
+- **Test identification**: Label different test sequences
+- **Measurement notes**: Display current test parameters
+- **Status information**: Show testing progress or conditions
+- **Documentation**: Add context to recorded test results
+
+### Two-Step Setup — Read This First
+
+A correct overlay-up sequence requires **both** a text and a status call:
+
+```bash
+# 1. Set the text. Without step 2 the overlay stays hidden.
+echo 'set-metadata-text Hello World' | nc -q 1 $HOST $PORT
+# 2. Make the overlay always visible. Default is `autohide` which follows
+#    the on-screen UI: visible for 4s after touch, then hidden.
+echo 'set-metadata-status enable' | nc -q 1 $HOST $PORT
+```
+
+Skipping step 2 is the most common mistake: text gets set, but the overlay
+hides as soon as the auto-hide timer fires. If you want classic
+"only on touch" behavior, leave the status at `autohide`.
+
+### Overlay Commands
+```bash
+# Text content - everything after the first space is the message
+set-metadata-text <message>          # literal \n becomes a newline
+clear-metadata-text                  # back to default (IP:port display)
+get-metadata-text                    # read current text (literal \n returned)
+
+# Visibility mode
+set-metadata-status <mode>           # mode: autohide | enable | disable
+get-metadata-status                  #   autohide = follow main UI visibility
+                                     #   enable   = always visible
+                                     #   disable  = always hidden
+
+# Cosmetics
+set-metadata-align    <left|center|right>
+set-metadata-fontsize <8..48>
+set-metadata-color    <r> <g> <b>    # 0..255 each
+set-metadata-color    <named>        # e.g. red, green, blue, white, ...
+get-metadata-align
+get-metadata-fontsize
+get-metadata-color                   # returns "r g b"
+```
+
+### Overlay Behavior
+- **Position**: Bottom-right corner with 20px margins (fixed, not configurable)
+- **Background**: Semi-transparent black (80% opacity)
+- **Default text color**: White; configurable via `set-metadata-color`
+- **Default font size**: 16px; configurable 8-48 via `set-metadata-fontsize`
+- **Auto-sizing**: Box adjusts to text content
+- **Persistence**: Text and status are sticky across `pattern` commands
+- **Reset**: Closing/restarting disp-tester resets all metadata to defaults
+  (status=autohide, text="", align=center, fontsize=16, color=white)
+
+### Default Text vs Custom Text
+When `set-metadata-text` has been given a non-empty string, that string is
+shown. When the text is empty (initial state, or after `clear-metadata-text`),
+the box shows the daemon's listening `IP:port` instead — handy for clients
+that need to discover where to connect.
+
+### Examples
+
+#### Test Sequence Labeling
+```bash
+#!/bin/bash
+HOST="192.168.1.100"
+PORT="8080"
+
+# One-time setup: keep overlay visible regardless of UI auto-hide
+echo "set-metadata-status enable" | nc -q 1 $HOST $PORT
+
+# Per-step: update text and pattern
+echo 'set-metadata-text Color Accuracy Test - Sequence 1' | nc -q 1 $HOST $PORT
+echo "pattern red"   | nc -q 1 $HOST $PORT
+sleep 3
+
+echo 'set-metadata-text Color Accuracy Test - Sequence 2' | nc -q 1 $HOST $PORT
+echo "pattern green" | nc -q 1 $HOST $PORT
+sleep 3
+
+echo 'set-metadata-text Color Accuracy Test - Sequence 3' | nc -q 1 $HOST $PORT
+echo "pattern blue"  | nc -q 1 $HOST $PORT
+sleep 3
+
+# Cleanup
+echo "clear-metadata-text"        | nc -q 1 $HOST $PORT
+echo "set-metadata-status autohide" | nc -q 1 $HOST $PORT
+echo "quit"                       | nc -q 1 $HOST $PORT
+```
+
+#### Multi-line Measurement Parameters
+```bash
+echo "set-metadata-status enable" | nc -q 1 $HOST $PORT
+echo 'set-metadata-text Ambient: 2 lux\nViewing Angle: 0\nDistance: 60cm' | nc -q 1 $HOST $PORT
+echo "pattern white" | nc -q 1 $HOST $PORT
+```
+
+Note: the literal two-character sequence `\n` (backslash + n) inside the
+message is what disp-tester converts to a newline. If your shell expands
+`\n` before disp-tester sees it (e.g. `printf '%b'` or `echo -e`), the
+overlay will show one collapsed line.
+
+### Text Formatting Guidelines
+- **Keep text concise**: Overlay should not obscure test patterns
+- **Use \n for line breaks**: As literal backslash + n
+- **Avoid embedded `"` and `'`**: Quoting at the wire layer is not parsed
+  - the message is everything from `set-metadata-text ` to end-of-line
+- **Consider contrast**: Default white on semi-transparent black
+- **Length limits**: Not enforced; keep under ~200 characters for readability
+
+### Python Client Example
+
+```python
+import socket
+import time
+
+def send_command(host, port, command, timeout=2.0):
+    """Open a single TCP connection, send one newline-terminated command,
+    read the response. Returns the daemon's reply string ('OK', 'ERROR: ...',
+    or a data line)."""
+    with socket.create_connection((host, port), timeout=timeout) as s:
+        s.sendall((command + "\n").encode())
+        return s.recv(1024).decode().strip()
+
+def run_color_test(host, port):
+    colors = ['red', 'green', 'blue', 'cyan', 'magenta', 'yellow']
+
+    # One-time: enable always-on overlay
+    send_command(host, port, "set-metadata-status enable")
+
+    for i, color in enumerate(colors):
+        msg = f"Color Test\\nStep: {i+1}/{len(colors)}\\nCurrent: {color.upper()}"
+        send_command(host, port, f"set-metadata-text {msg}")
+        send_command(host, port, f"pattern {color}")
+        time.sleep(2)
+
+        # Stay outside disp-tester's 100ms accept-rate window between
+        # back-to-back connects (see "Connection Model" section).
+        time.sleep(0.15)
+
+    send_command(host, port, "clear-metadata-text")
+    send_command(host, port, "set-metadata-status autohide")
+
+run_color_test('192.168.1.100', 8080)
+```
+
+## Pattern Details
+
+### Zone Boundary Grid
+- **Default**: 42×24 grid (1008 zones)
+- **Zone size**: 60×60 pixels on 2560×1440 displays
+- **Alignment**: Centered grid with perfect LED alignment
+- **Configurable**: Grid dimensions can be modified for different display types
+- **Zone numbering**: 0-1007, matches physical LED array indexing
+
+### Blooming Detection
+- **Single pixel**: 2×2 white pixel in display center
+- **Pulsing animation**: Opacity varies between 70%-100% for visibility
+- **Crosshairs**: Dim positioning guides for precise measurement
+- **Purpose**: Detect light bleeding around bright pixels
+
+### Cross Dimming
+- **Four spots**: 60×60 white circles in display corners  
+- **Pulsing behavior**: Each spot pulses at staggered intervals
+- **Animation timing**: 1500ms, 1700ms, 1900ms, 2100ms cycles
+- **Purpose**: Test local dimming zone interference and interaction
+
+## Network Integration Examples
+
+### Basic Pattern Testing
+```bash
+#!/bin/bash
+HOST="192.168.1.100"
+PORT="8080"
+
+# Test primary colors
+for color in red green blue; do
+    echo "Testing $color..."
+    echo "pattern $color" | nc -q 1 $HOST $PORT
+    sleep 2
+done
+
+echo "quit" | nc -q 1 $HOST $PORT
+```
+
+### Display Information
+```bash
+# Get display specs
+RESOLUTION=$(echo "get-resolution" | nc -q 1 192.168.1.100 8080)
+PATTERNS=$(echo "list-patterns" | nc -q 1 192.168.1.100 8080)
+
+echo "Display: $RESOLUTION"  
+echo "Available: $PATTERNS"
+```
+
+### Automated Testing Session
+```bash
+# Multi-command session
+{
+    echo "pattern white"
+    echo "pattern black"  
+    echo "pattern zone-boundary-grid"
+    echo "get-pattern"
+    echo "quit"
+} | nc 192.168.1.100 8080
+```
+
+## Technical Architecture
+
+### Application Structure
+- **Qt5 + QML**: Modern UI framework with hardware acceleration
+- **C++ Backend**: Pattern management and network interface
+- **POSIX Sockets**: Dependency-free TCP server implementation
+- **Touch Input**: Standard Linux input event handling
+- **Framebuffer**: Direct rendering via linuxfb platform
+
+### Pattern System
+- **Modular Design**: Individual QML files for each pattern
+- **Auto-scaling**: Patterns adapt to any display resolution
+- **Resource Efficient**: Optimized for embedded systems
+- **Clean Display**: UI elements hidden during pattern display
+
+### Network Protocol
+- **Text-based**: Simple command/response format
+- **Single client**: One connection at a time
+- **Line-terminated**: Commands end with newline
+- **Immediate feedback**: Instant OK/ERROR responses
+
+## Development
+
+### Source Structure
+```
+src/
+├── main.cpp                # Application entry point
+├── PatternController.cpp/h # Pattern management and network
+├── NetworkInterface.cpp/h  # TCP server implementation  
+├── main.qml               # Main UI and navigation
+├── patterns/              # Pattern QML files
+└── qml.qrc               # Resource compilation
+```
+
+### Build Configuration
+- **qmake project**: Standard Qt5 build system
+- **Cross-compilation**: ARM toolchain supported
+- **Resource embedding**: All QML files compiled into binary
+- **Platform**: Targets linuxfb for embedded deployment
+
+### Customization
+- **Add patterns**: Create new QML files in `patterns/` directory
+- **Modify grid**: Adjust zone dimensions in `ZoneBoundaryGrid.qml`  
+- **Network port**: Configurable via command line option
+- **UI styling**: Modify overlay appearance in `main.qml`
+
+## Platform Support
+
+### Tested Configurations
+- **Raspberry Pi 4**: HDMI output, capacitive touch input
+- **Custom embedded**: ARM-based systems with Qt5 support
+- **Display interfaces**: HDMI, DSI, and framebuffer-compatible outputs
+- **Input devices**: Touch screens via `/dev/input/event*`
+
+### Requirements
+- **RAM**: Minimum 512MB, recommended 1GB+
+- **Storage**: ~10MB application + Qt5 runtime libraries
+- **Display**: Any resolution, auto-scaling support
+- **Network**: Ethernet or WiFi for remote control (optional)
+
+---
+
+**Qt Pattern Generator** - Professional display testing made simple.

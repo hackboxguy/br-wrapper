@@ -1,0 +1,6 @@
+# udev rule to grant access to input devices for input group members
+# This allows qt-demo-launcher and input-monitor to read mouse/touch events
+# Install to: /etc/udev/rules.d/99-input-permissions.rules
+
+# Grant read/write access to input group members
+KERNEL=="event*", SUBSYSTEM=="input", GROUP="input", MODE="0660"

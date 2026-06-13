@@ -1,0 +1,9 @@
+# Udev rules for GPIO and input device permissions
+# Allows non-root users in gpio and input groups to access devices
+
+# GPIO devices
+SUBSYSTEM=="gpio", GROUP="gpio", MODE="0660"
+
+# Input devices (touchscreens, mice, keyboards)
+SUBSYSTEM=="input", GROUP="input", MODE="0660"
+KERNEL=="event*", SUBSYSTEM=="input", GROUP="input", MODE="0660"
