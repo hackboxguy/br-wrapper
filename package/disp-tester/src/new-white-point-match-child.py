@@ -1324,10 +1324,11 @@ def parse_args():
 
     parser.add_argument("--calibration-output", default=DEFAULT_CALIBRATION_OUTPUT)
     parser.add_argument("--wp-cal-output", dest="wp_cal_output",
-                        default="/home/pi/system-settings/wp-cal-match.json",
-                        help="Boot-replayable wp-cal-v1 profile output. Own "
-                             "file by design; must never be the legacy "
-                             "white-point-calibration.json.")
+                        default="/home/pi/system-settings/wp-cal.json",
+                        help="Boot-replayable wp-cal-v1 profile output. Canonical "
+                             "file shared with the D65-calibration app so boot "
+                             "replay is source-agnostic; must never be the legacy "
+                             "white-point-calibration.json (different format/path).")
     parser.add_argument("--panel-id", default="12-3-nq1v1")
     parser.add_argument("--panel-serial", default="unknown-or-real-serial")
     parser.add_argument("--peer-serial", default="unknown",

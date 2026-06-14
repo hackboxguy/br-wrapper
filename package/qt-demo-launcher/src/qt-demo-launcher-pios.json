@@ -364,7 +364,9 @@
           "--script-arg=--backend",
           "--script-arg=i2cdev",
           "--script-arg=--calibration-output",
-          "--script-arg=/home/pi/system-settings/white-point-calibration-v2.json"
+          "--script-arg=/home/pi/system-settings/white-point-calibration-v2.json",
+          "--script-arg=--wp-cal-output",
+          "--script-arg=/home/pi/system-settings/wp-cal.json"
         ],
         "working_directory": "/tmp",
         "position": {
@@ -446,7 +448,7 @@
           "--script-arg=--backend",
           "--script-arg=i2cdev",
           "--script-arg=--calibration-output",
-          "--script-arg=/home/pi/system-settings/wp-cal-d65.json"
+          "--script-arg=/home/pi/system-settings/wp-cal.json"
         ],
         "working_directory": "/tmp",
         "position": {

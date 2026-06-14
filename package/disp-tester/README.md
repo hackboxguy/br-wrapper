@@ -350,13 +350,15 @@ Differences from the legacy flow:
   `disp-tester-white-point-match-v2`), including the measured primaries,
   per-iteration data, and the pair target for traceability.
 - Matched/best-effort runs additionally write a boot-replayable
-  **wp-cal-v1** profile to `/home/pi/system-settings/wp-cal-match.json`
+  **wp-cal-v1** profile to the canonical `/home/pi/system-settings/wp-cal.json`
   (target = the reference display's measured white; `--peer-serial` records
-  which unit it was matched against). This file is what als-dimmer /
-  `wp_load.py` replay at boot. It is deliberately a separate file: the
-  legacy `white-point-calibration.json` stays owned by the legacy
-  wpx/wpy/wpz flow (live on Lattice displays) and is never written by the
-  new scripts (a built-in guard refuses it).
+  which unit it was matched against). This is the **same** file the D65
+  calibration app writes, so boot replay (als-dimmer / `wp_load.py`) is
+  **source-agnostic**: whichever method the operator last ran is what gets
+  applied (the profile's metadata records which it was). It stays separate from
+  the legacy `white-point-calibration.json`, which the legacy wpx/wpy/wpz flow
+  (live on Lattice displays) owns and the new scripts never write (a built-in
+  guard refuses it).
 
 Register transport is selected with `--backend`:
 
@@ -412,13 +414,13 @@ placement and no reference display.
 Matched and best-effort runs write **two** files:
 
 ```text
-/home/pi/system-settings/wp-cal-d65.json           wp-cal-v1 schema profile
-/home/pi/system-settings/wp-cal-d65-session.json   full session log
+/home/pi/system-settings/wp-cal.json           wp-cal-v1 schema profile (canonical; shared with the match app)
+/home/pi/system-settings/wp-cal-session.json   full session log
 ```
 
 The first file conforms to the fpga-wp-adjust
 `host/schema/wp-cal-v1.schema.json` and is directly loadable by that repo's
-boot loader (`python3 -m host.wp_load --cal wp-cal-d65.json`), so a bench
+boot loader (`python3 -m host.wp_load --cal wp-cal.json`), so a bench
 calibration becomes the boot-time profile with no conversion. The session log
 carries the measured primaries, every iteration, and raw samples for
 analysis. Target, panel identity, gamma, and tolerance are all CLI-settable

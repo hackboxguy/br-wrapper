@@ -43,7 +43,7 @@ import time
 
 DEFAULT_DISP_HOST = os.environ.get("DISP_TESTER_HOST", "127.0.0.1")
 DEFAULT_DISP_PORT = int(os.environ.get("DISP_TESTER_PORT", "8082"))
-DEFAULT_CALIBRATION_OUTPUT = "/home/pi/system-settings/wp-cal-d65.json"
+DEFAULT_CALIBRATION_OUTPUT = "/home/pi/system-settings/wp-cal.json"
 DEFAULT_COLORIMETER_MATCH = [
     "i1display",
     "i1 display",
