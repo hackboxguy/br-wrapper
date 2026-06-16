@@ -38,6 +38,7 @@ struct ButtonConfig {
     QString page = "home";
     QString targetPage;
     QString pageTitle;
+    bool detached = false;
 
     // Position and size
     int row = 0;
@@ -161,8 +162,16 @@ private slots:
 
         // Launch program
         if (!config.program.isEmpty()) {
-            QProcessEnvironment env = createTouchEnvironment();
-            launchApp(config.program, config.arguments, env, config.workingDirectory, buttonId);
+            if (config.detached) {
+                QString errorMessage;
+                if (!launchDetached(config.program, config.arguments,
+                                    config.workingDirectory, buttonId, &errorMessage)) {
+                    QMessageBox::warning(this, "Error", errorMessage);
+                }
+            } else {
+                QProcessEnvironment env = createTouchEnvironment();
+                launchApp(config.program, config.arguments, env, config.workingDirectory, buttonId);
+            }
         }
     }
 
@@ -667,10 +676,20 @@ private:
             return false;
         }
 
-        // Send OK response immediately before launching
-        m_networkInterface->sendResponse("OK");
+        if (config.detached) {
+            QString errorMessage;
+            if (!launchDetached(config.program, config.arguments,
+                                config.workingDirectory, appId, &errorMessage)) {
+                m_networkInterface->sendResponse(QString("ERROR: %1").arg(errorMessage));
+                return false;
+            }
+
+            m_networkInterface->sendResponse("OK");
+            return true;
+        }
 
         // Launch the app asynchronously
+        m_networkInterface->sendResponse("OK");
         launchAppAsync(config.program, config.arguments, config.workingDirectory, appId);
         return true;
     }
@@ -831,6 +850,8 @@ private:
             btn.page = normalizePageId(btnObj["page"].toString("home"));
             btn.targetPage = btnObj["target_page"].toString();
             btn.pageTitle = btnObj["page_title"].toString();
+            btn.detached = btnObj["detached"].toBool(false)
+                || btnObj["launch_mode"].toString().toLower() == "detached";
 
             // Parse arguments array
             QJsonArray args = btnObj["arguments"].toArray();
@@ -1075,6 +1096,30 @@ private:
                     }
                 });
 
+        return true;
+    }
+
+    bool launchDetached(const QString &program, const QStringList &args,
+                        const QString &workingDir, const QString &appId,
+                        QString *errorMessage = nullptr)
+    {
+        if (!QFile::exists(program)) {
+            if (errorMessage) {
+                *errorMessage = QString("Program not found: %1").arg(program);
+            }
+            return false;
+        }
+
+        qint64 pid = 0;
+        if (!QProcess::startDetached(program, args, workingDir, &pid)) {
+            if (errorMessage) {
+                *errorMessage = QString("Failed to start detached app: %1").arg(program);
+            }
+            return false;
+        }
+
+        qDebug() << "Detached app started:" << program << "with args:" << args
+                 << "App ID:" << appId << "PID:" << pid;
         return true;
     }
 

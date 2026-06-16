@@ -528,6 +528,34 @@
         "border_radius": 20
       },
       {
+        "id": "analyze-color-gamut",
+        "enabled": true,
+        "page": "calibration-tools",
+        "text": "Analyze Color Gamut",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/share/qt-apps/display-analysis-report.sh",
+        "arguments": ["color-gamut"],
+        "working_directory": "/tmp",
+        "launch_mode": "detached",
+        "position": {
+          "row": 2,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#5B7E8E",
+        "hover_color": "#466878",
+        "border_radius": 20
+      },
+      {
         "id": "calibration-tools-back",
         "enabled": true,
         "page": "calibration-tools",
