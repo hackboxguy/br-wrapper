@@ -102,6 +102,10 @@ int main(int argc, char *argv[])
                                                "Show an auto-hide button that toggles a child-script action.");
     parser.addOption(childActionButtonOption);
 
+    QCommandLineOption disableExitWhileChildActiveOption(QStringList() << "disable-exit-while-child-active",
+                                                         "Disable the EXIT button while the child action is active.");
+    parser.addOption(disableExitWhileChildActiveOption);
+
     QCommandLineOption childActionStartTextOption(QStringList() << "child-action-start-text",
                                                   "Text shown when the child action is inactive.",
                                                   "text", "Start Recording");
@@ -206,6 +210,7 @@ int main(int argc, char *argv[])
     patternController.setUiAutoHideEnabled(!parser.isSet(disableUiAutoHideOption));
     patternController.setNavigationHelpVisible(!parser.isSet(hideNavigationHelpOption));
     patternController.setUserInteractionEnabled(!parser.isSet(disableUserInteractionOption));
+    patternController.setExitDisabledWhileChildActionActive(parser.isSet(disableExitWhileChildActiveOption));
 
     QString initialPattern = parser.value(initialPatternOption).trimmed().toLower();
     if (!initialPattern.isEmpty()) {

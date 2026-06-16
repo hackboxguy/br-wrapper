@@ -13,6 +13,8 @@ Window {
 
     property bool uiVisible: true
     property bool emergencyExitVisible: false
+    property bool exitDisabledForChildAction: patternController.exitDisabledWhileChildActionActive &&
+                                               patternController.childActionActive
 
     // Pattern navigation functions
     function nextPattern() {
@@ -246,7 +248,8 @@ Window {
 
     MouseArea {
         anchors.fill: parent
-        enabled: !patternController.userInteractionEnabled && !emergencyExitVisible
+        enabled: !patternController.userInteractionEnabled && !emergencyExitVisible &&
+                 !window.exitDisabledForChildAction
         onClicked: showEmergencyExitTemporarily()
     }
 
@@ -259,7 +262,8 @@ Window {
         anchors.margins: 20
         width: 100
         height: 60
-        color: "#C0800000"
+        color: window.exitDisabledForChildAction ? "#80404040" : "#C0800000"
+        opacity: window.exitDisabledForChildAction ? 0.55 : 1.0
         radius: 8
         border.color: "white"
         border.width: 1
@@ -268,13 +272,14 @@ Window {
         Text {
             anchors.centerIn: parent
             text: "EXIT"
-            color: "white"
+            color: window.exitDisabledForChildAction ? "#D0D0D0" : "white"
             font.pixelSize: 24
             font.bold: true
         }
 
         MouseArea {
             anchors.fill: parent
+            enabled: !window.exitDisabledForChildAction
             onClicked: patternController.requestQuit()
         }
     }
@@ -380,6 +385,8 @@ Window {
 
         MouseArea {
             anchors.fill: parent
+            enabled: !(patternController.exitDisabledWhileChildActionActive &&
+                       patternController.childActionActive)
             onClicked: {
                 patternController.toggleChildAction()
                 if (patternController.userInteractionEnabled) {

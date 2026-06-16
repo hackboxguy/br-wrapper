@@ -536,6 +536,7 @@
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--child-action-button",
+          "--disable-exit-while-child-active",
           "--child-action-start-text", "Start Measurement",
           "--child-action-stop-text", "Measuring...",
           "--child-action-start-color", "green",
@@ -563,6 +564,33 @@
         "font_size": 30,
         "background_color": "#5B7E8E",
         "hover_color": "#466878",
+        "border_radius": 20
+      },
+      {
+        "id": "view-saved-gamut-reports",
+        "enabled": true,
+        "page": "calibration-tools",
+        "text": "View Saved Gamut Reports",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": ["/home/pi/test-reports/color-gamut"],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 2,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#6C5D8E",
+        "hover_color": "#574878",
         "border_radius": 20
       },
       {
@@ -612,8 +640,8 @@
         "page": "_internal",
         "text": "Color Gamut Report Gallery",
         "program": "/usr/bin/touch-gallery",
-        "arguments": ["/tmp/display-analysis/color-gamut"],
-        "working_directory": "/tmp/display-analysis/color-gamut"
+        "arguments": ["/home/pi/test-reports/color-gamut"],
+        "working_directory": "/tmp"
       },
       {
         "id": "display-analysis-local-dimming-apl-gallery",
@@ -622,8 +650,8 @@
         "page": "_internal",
         "text": "Local Dimming APL Report Gallery",
         "program": "/usr/bin/touch-gallery",
-        "arguments": ["/tmp/display-analysis/local-dimming-apl"],
-        "working_directory": "/tmp/display-analysis/local-dimming-apl"
+        "arguments": ["/home/pi/test-reports/local-dimming-apl"],
+        "working_directory": "/tmp"
       },
       {
         "id": "calibration-tools-back",

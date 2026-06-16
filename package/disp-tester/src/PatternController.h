@@ -32,6 +32,7 @@ class PatternController : public QObject
     Q_PROPERTY(bool navigationHelpVisible READ getNavigationHelpVisible NOTIFY navigationHelpVisibleChanged)
     Q_PROPERTY(bool childActionButtonVisible READ childActionButtonVisible NOTIFY childActionButtonChanged)
     Q_PROPERTY(bool childActionActive READ childActionActive NOTIFY childActionStateChanged)
+    Q_PROPERTY(bool exitDisabledWhileChildActionActive READ exitDisabledWhileChildActionActive NOTIFY exitBehaviorChanged)
     Q_PROPERTY(QString childActionStartText READ childActionStartText NOTIFY childActionButtonChanged)
     Q_PROPERTY(QString childActionStopText READ childActionStopText NOTIFY childActionButtonChanged)
     Q_PROPERTY(QColor childActionStartColor READ childActionStartColor NOTIFY childActionButtonChanged)
@@ -50,6 +51,7 @@ public:
     bool childActionActive() const { return m_childActionActive; }
     QString childActionStartText() const { return m_childActionStartText; }
     QString childActionStopText() const { return m_childActionStopText; }
+    bool exitDisabledWhileChildActionActive() const { return m_exitDisabledWhileChildActionActive; }
     QColor childActionStartColor() const { return m_childActionStartColor; }
     QColor childActionStopColor() const { return m_childActionStopColor; }
     bool getPatternNavigationEnabled() const { return m_patternNavigationEnabled; }
@@ -64,6 +66,7 @@ public:
     void setUiAutoHideEnabled(bool enabled);
     void setNavigationHelpVisible(bool visible);
     void setUserInteractionEnabled(bool enabled);
+    void setExitDisabledWhileChildActionActive(bool enabled);
     void configureStartupMetadata(const QString &status, const QString &text,
                                   const QString &align, int fontSize,
                                   const QColor &color);
@@ -101,6 +104,7 @@ signals:
     void navigationHelpVisibleChanged();
     void childActionButtonChanged();
     void childActionStateChanged();
+    void exitBehaviorChanged();
 
 private slots:
     void handleNetworkCommand(const QString &command);
@@ -133,6 +137,7 @@ private:
     bool m_navigationHelpVisible;
     bool m_childActionButtonVisible;
     bool m_childActionActive;
+    bool m_exitDisabledWhileChildActionActive;
     QString m_childActionStartText;
     QString m_childActionStopText;
     QColor m_childActionStartColor;

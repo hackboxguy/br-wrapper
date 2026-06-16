@@ -31,6 +31,7 @@ PatternController::PatternController(QObject *parent)
     , m_navigationHelpVisible(true)
     , m_childActionButtonVisible(false)
     , m_childActionActive(false)
+    , m_exitDisabledWhileChildActionActive(false)
     , m_childActionStartText("Start Recording")
     , m_childActionStopText("Stop Recording")
     , m_childActionStartColor(0, 128, 0)
@@ -160,6 +161,17 @@ void PatternController::setNavigationHelpVisible(bool visible)
     m_navigationHelpVisible = visible;
     emit navigationHelpVisibleChanged();
     qDebug() << "Navigation help" << (visible ? "visible" : "hidden");
+}
+
+void PatternController::setExitDisabledWhileChildActionActive(bool enabled)
+{
+    if (m_exitDisabledWhileChildActionActive == enabled) {
+        return;
+    }
+
+    m_exitDisabledWhileChildActionActive = enabled;
+    emit exitBehaviorChanged();
+    qDebug() << "Exit while child action is active" << (enabled ? "disabled" : "enabled");
 }
 
 void PatternController::configureStartupMetadata(const QString &status, const QString &text,

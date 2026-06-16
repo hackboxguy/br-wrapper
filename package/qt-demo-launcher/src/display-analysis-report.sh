@@ -5,6 +5,7 @@ set -u
 
 MICROPANEL_HOME="${MICROPANEL_HOME:-/home/pi/micropanel}"
 OUTPUT_ROOT="${DISPLAY_ANALYSIS_OUTPUT_ROOT:-/tmp/display-analysis}"
+ARCHIVE_ROOT="${DISPLAY_ANALYSIS_REPORT_ARCHIVE_ROOT:-/home/pi/test-reports}"
 LAUNCHER_ADDR="${LAUNCHER_ADDR:-127.0.0.1:8081}"
 GALLERY_ADDR="${GALLERY_ADDR:-127.0.0.1:8086}"
 PATTERN_GEN_ADDR="${PATTERN_GEN_ADDR:-127.0.0.1:8082}"
@@ -62,8 +63,11 @@ LOCK_DIR="$SUITE_DIR/.analysis.lock"
 RUN_ID="run-$(date +%Y%m%d-%H%M%S)"
 RESULTS_DIR="$SUITE_DIR/$RUN_ID"
 PNG_PATH="$SUITE_DIR/$RUN_ID.png"
+ARCHIVE_DIR="$ARCHIVE_ROOT/$SUITE_DIR_NAME"
+ARCHIVE_PNG_PATH="$ARCHIVE_DIR/$RUN_ID.png"
 LATEST_DIR_LINK="$SUITE_DIR/latest"
 LATEST_PNG_LINK="$SUITE_DIR/latest.png"
+DISPLAY_PNG_PATH="$PNG_PATH"
 LOG_FILE="$RESULTS_DIR/analyze-$SUITE_DIR_NAME.log"
 LEGACY_LOG=""
 
@@ -285,13 +289,29 @@ show_report() {
 
     sleep 1
     response="$("$LAUNCHER_CLIENT_BIN" --srv="$GALLERY_ADDR" \
-        --command=display --command-arg="$PNG_PATH" \
+        --command=display --command-arg="$DISPLAY_PNG_PATH" \
         --timeoutsec="$TIMEOUT" 2>&1)"
     if ! echo "$response" | grep -q "OK"; then
         log "ERROR: failed to display report PNG: $response"
         return 1
     fi
 
+    return 0
+}
+
+archive_report_png() {
+    if ! mkdir -p "$ARCHIVE_DIR" 2>/dev/null; then
+        log "WARNING: failed to create report archive directory: $ARCHIVE_DIR"
+        return 1
+    fi
+
+    if ! cp "$PNG_PATH" "$ARCHIVE_PNG_PATH" 2>/dev/null; then
+        log "WARNING: failed to archive report PNG to: $ARCHIVE_PNG_PATH"
+        return 1
+    fi
+
+    DISPLAY_PNG_PATH="$ARCHIVE_PNG_PATH"
+    log "Archived report PNG: $ARCHIVE_PNG_PATH"
     return 0
 }
 
@@ -313,6 +333,7 @@ log "Rendering app: $RENDERING_APP_ID"
 log "Gallery app: $GALLERY_APP_ID"
 log "Results: $RESULTS_DIR"
 log "PNG: $PNG_PATH"
+log "Archive PNG: $ARCHIVE_PNG_PATH"
 
 if [ ! -x "$RUNNER" ]; then
     log "ERROR: runner not found or not executable: $RUNNER"
@@ -357,6 +378,7 @@ fi
 
 ln -sfn "$PNG_PATH" "$LATEST_PNG_LINK" 2>/dev/null || true
 log "Report rendered successfully"
+archive_report_png || true
 
 if ! show_report; then
     log "ERROR: failed to show report in touch-gallery"
