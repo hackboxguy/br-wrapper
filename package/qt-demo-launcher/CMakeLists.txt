@@ -75,6 +75,7 @@ install(PROGRAMS
     src/kodi-slideshow.sh
     src/kodi-video.sh
     src/display-analysis-report.sh
+    src/display-analysis-start-child.sh
     src/kodi-usb-common.sh
     update-config-paths.sh
     update-service-paths.sh

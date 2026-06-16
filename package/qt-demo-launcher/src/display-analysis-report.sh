@@ -7,7 +7,6 @@ MICROPANEL_HOME="${MICROPANEL_HOME:-/home/pi/micropanel}"
 OUTPUT_ROOT="${DISPLAY_ANALYSIS_OUTPUT_ROOT:-/tmp/display-analysis}"
 LAUNCHER_ADDR="${LAUNCHER_ADDR:-127.0.0.1:8081}"
 GALLERY_ADDR="${GALLERY_ADDR:-127.0.0.1:8086}"
-GALLERY_APP_ID="${GALLERY_APP_ID:-gallery}"
 TIMEOUT="${DISPLAY_ANALYSIS_TIMEOUT:-10}"
 DEFAULT_1080P_MODEL="${DEFAULT_1080P_MODEL:-14.6-fhd-spartan7}"
 DEFAULT_DISPLAY_MODEL="${DEFAULT_DISPLAY_MODEL:-$DEFAULT_1080P_MODEL}"
@@ -25,6 +24,7 @@ case "$suite_arg" in
         RUN_SUITE="color-gamut"
         SUITE_DIR_NAME="color-gamut"
         REPORT_PANELS="gamut,zoom_gamut"
+        DEFAULT_GALLERY_APP_ID="display-analysis-color-gamut-gallery"
         LEGACY_LOG_DIR="/tmp/gamut-test"
         LEGACY_LOG_NAME="analyze-color-gamut.log"
         ;;
@@ -32,6 +32,7 @@ case "$suite_arg" in
         RUN_SUITE="local_dimming_apl"
         SUITE_DIR_NAME="local-dimming-apl"
         REPORT_PANELS="local_dimming_apl"
+        DEFAULT_GALLERY_APP_ID="display-analysis-local-dimming-apl-gallery"
         LEGACY_LOG_DIR=""
         LEGACY_LOG_NAME=""
         ;;
@@ -44,6 +45,8 @@ case "$suite_arg" in
         exit 2
         ;;
 esac
+
+GALLERY_APP_ID="${GALLERY_APP_ID:-$DEFAULT_GALLERY_APP_ID}"
 
 SUITE_DIR="$OUTPUT_ROOT/$SUITE_DIR_NAME"
 LOCK_DIR="$SUITE_DIR/.analysis.lock"
@@ -179,18 +182,16 @@ wait_for_gallery() {
 }
 
 show_report() {
-    if ! gallery_running; then
-        "$LAUNCHER_CLIENT_BIN" --srv="$LAUNCHER_ADDR" --command=stop-app \
-            --timeoutsec="$TIMEOUT" >/dev/null 2>&1 || true
-        sleep 0.5
+    "$LAUNCHER_CLIENT_BIN" --srv="$LAUNCHER_ADDR" --command=stop-app \
+        --timeoutsec="$TIMEOUT" >/dev/null 2>&1 || true
+    sleep 0.5
 
-        response="$("$LAUNCHER_CLIENT_BIN" --srv="$LAUNCHER_ADDR" \
-            --command=start-app --command-arg="$GALLERY_APP_ID" \
-            --timeoutsec="$TIMEOUT" 2>&1)"
-        if ! echo "$response" | grep -q "OK"; then
-            log "ERROR: failed to start touch-gallery: $response"
-            return 1
-        fi
+    response="$("$LAUNCHER_CLIENT_BIN" --srv="$LAUNCHER_ADDR" \
+        --command=start-app --command-arg="$GALLERY_APP_ID" \
+        --timeoutsec="$TIMEOUT" 2>&1)"
+    if ! echo "$response" | grep -q "OK"; then
+        log "ERROR: failed to start report gallery app '$GALLERY_APP_ID': $response"
+        return 1
     fi
 
     if ! wait_for_gallery; then
@@ -198,14 +199,7 @@ show_report() {
         return 1
     fi
 
-    response="$("$LAUNCHER_CLIENT_BIN" --srv="$GALLERY_ADDR" \
-        --command=set-directory --command-arg="$SUITE_DIR" \
-        --timeoutsec="$TIMEOUT" 2>&1)"
-    if ! echo "$response" | grep -q "OK"; then
-        log "WARNING: failed to set touch-gallery directory to $SUITE_DIR: $response"
-    fi
-
-    sleep 0.5
+    sleep 1
     response="$("$LAUNCHER_CLIENT_BIN" --srv="$GALLERY_ADDR" \
         --command=display --command-arg="$PNG_PATH" \
         --timeoutsec="$TIMEOUT" 2>&1)"
@@ -229,6 +223,7 @@ log "Suite: $RUN_SUITE"
 log "Display model: $DISPLAY_MODEL"
 log "Runner: $RUNNER"
 log "Report card: $REPORT_CARD"
+log "Gallery app: $GALLERY_APP_ID"
 log "Results: $RESULTS_DIR"
 log "PNG: $PNG_PATH"
 

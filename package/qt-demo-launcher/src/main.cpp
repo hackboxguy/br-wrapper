@@ -29,6 +29,7 @@
 struct ButtonConfig {
     QString id;
     bool enabled = true;
+    bool visible = true;
     QString text;
     QString iconPath;
     QString program;
@@ -531,7 +532,7 @@ private:
         QString normalizedPage = normalizePageId(pageId);
 
         for (const ButtonConfig &config : m_config.buttons) {
-            if (config.page == normalizedPage && (!enabledOnly || config.enabled)) {
+            if (config.page == normalizedPage && config.visible && (!enabledOnly || config.enabled)) {
                 buttons.append(config);
             }
         }
@@ -611,7 +612,7 @@ private:
     {
         QStringList appIds;
         for (const ButtonConfig &config : m_config.buttons) {
-            if (config.enabled) {
+            if (config.enabled && config.visible) {
                 appIds << config.id;
             }
         }
@@ -842,6 +843,7 @@ private:
 
             btn.id = btnObj["id"].toString();
             btn.enabled = btnObj["enabled"].toBool(true);
+            btn.visible = btnObj["visible"].toBool(true);
             btn.text = btnObj["text"].toString();
             btn.iconPath = btnObj["icon"].toString();
             btn.program = btnObj["program"].toString();

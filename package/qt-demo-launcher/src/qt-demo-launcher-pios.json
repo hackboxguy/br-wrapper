@@ -533,13 +533,23 @@
         "page": "calibration-tools",
         "text": "Analyze Color Gamut",
         "icon": "/usr/share/icons/tools-large.png",
-        "program": "/usr/share/qt-apps/display-analysis-report.sh",
-        "arguments": ["color-gamut"],
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--child-action-start-text", "Start Measurement",
+          "--child-action-stop-text", "Cancel Measurement",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/usr/share/qt-apps/display-analysis-start-child.sh",
+          "--script-arg=color-gamut"
+        ],
         "working_directory": "/tmp",
-        "launch_mode": "detached",
         "position": {
           "row": 2,
-          "column": 1
+          "column": 0
         },
         "size": {
           "width": 640,
@@ -556,6 +566,26 @@
         "border_radius": 20
       },
       {
+        "id": "display-analysis-color-gamut-gallery",
+        "enabled": true,
+        "visible": false,
+        "page": "_internal",
+        "text": "Color Gamut Report Gallery",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": ["/tmp/display-analysis/color-gamut"],
+        "working_directory": "/tmp/display-analysis/color-gamut"
+      },
+      {
+        "id": "display-analysis-local-dimming-apl-gallery",
+        "enabled": true,
+        "visible": false,
+        "page": "_internal",
+        "text": "Local Dimming APL Report Gallery",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": ["/tmp/display-analysis/local-dimming-apl"],
+        "working_directory": "/tmp/display-analysis/local-dimming-apl"
+      },
+      {
         "id": "calibration-tools-back",
         "enabled": true,
         "page": "calibration-tools",
@@ -564,7 +594,7 @@
         "action": "back",
         "position": {
           "row": 2,
-          "column": 0
+          "column": 2
         },
         "size": {
           "width": 640,

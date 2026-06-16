@@ -48,6 +48,7 @@ sed -i "s|/usr/share/qt-apps/kodi-slideshow.sh|$BASE_PATH/share/qt-apps/kodi-sli
 sed -i "s|/usr/share/qt-apps/kodi-video.sh|$BASE_PATH/share/qt-apps/kodi-video.sh|g" "$CONFIG_FILE"
 sed -i "s|/usr/share/qt-apps/cluster-launcher.sh|$BASE_PATH/share/qt-apps/cluster-launcher.sh|g" "$CONFIG_FILE"
 sed -i "s|/usr/share/qt-apps/display-analysis-report.sh|$BASE_PATH/share/qt-apps/display-analysis-report.sh|g" "$CONFIG_FILE"
+sed -i "s|/usr/share/qt-apps/display-analysis-start-child.sh|$BASE_PATH/share/qt-apps/display-analysis-start-child.sh|g" "$CONFIG_FILE"
 
 # Update directory paths in arguments (data is in ${BASE_PATH}/share/qt-apps/)
 sed -i "s|\"arguments\": \\[\"/Pictures\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Pictures\"|g" "$CONFIG_FILE"
