@@ -3,8 +3,8 @@
 # Kodi uses GBM/DRM for display on Pi OS Lite (headless, no X11/Wayland)
 #
 # USB priority: if a USB stick with a Videos/ folder containing a video
-# file is detected, plays first video from USB. Otherwise falls back to
-# local flower.mkv.
+# file is detected, plays first video from USB. Otherwise prefers the
+# rootfs reference video, then falls back to local flower.mkv.
 #
 # This script is launched by qt-demo-launcher as m_runningProcess.
 # To avoid deadlock (launcher tracks this script as the running app),
@@ -13,7 +13,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 KODI="http://127.0.0.1:8080/jsonrpc"
-LOCAL_VIDEO="/home/pi/micropanel/usr/share/micropanel/media/videos/flower.mkv"
+REF_VIDEO="/home/pi/micropanel/share/sp6bins/config/ref-video.mp4"
+FALLBACK_VIDEO="/home/pi/micropanel/usr/share/micropanel/media/videos/flower.mkv"
 
 # Ensure runtime directory exists
 mkdir -p /tmp/runtime-kodi
@@ -27,8 +28,13 @@ export KODI_AE_SINK=ALSA
     # Source USB detection helpers
     . "$SCRIPT_DIR/kodi-usb-common.sh"
 
-    # Resolve video path — USB priority, local fallback
-    VIDEO="$LOCAL_VIDEO"
+    # Resolve video path — USB priority, rootfs reference video, local fallback
+    if [ -f "$REF_VIDEO" ]; then
+        VIDEO="$REF_VIDEO"
+    else
+        VIDEO="$FALLBACK_VIDEO"
+    fi
+
     usb_videos=$(detect_usb_media_path "Videos") && {
         usb_video=$(find_first_video "$usb_videos")
         [ -n "$usb_video" ] && VIDEO="$usb_video"
