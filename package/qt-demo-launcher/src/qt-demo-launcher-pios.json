@@ -445,7 +445,7 @@
       },
       {
         "id": "white-point-profiling-new",
-        "enabled": true,
+        "enabled": false,
         "page": "calibration-tools",
         "text": "White Point Profiling New",
         "icon": "/usr/share/icons/tools-large.png",
@@ -480,6 +480,45 @@
         "font_size": 30,
         "background_color": "#6C5D8E",
         "hover_color": "#574878",
+        "border_radius": 20
+      },
+      {
+        "id": "analyze-local-dimming-apl",
+        "enabled": true,
+        "page": "calibration-tools",
+        "text": "Analyze Local-Dimming APL",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--disable-exit-while-child-active",
+          "--child-action-start-text", "Start Measurement",
+          "--child-action-stop-text", "Measuring...",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/usr/share/qt-apps/display-analysis-start-child.sh",
+          "--script-arg=local-dimming-apl"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 1,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#5B7E8E",
+        "hover_color": "#466878",
         "border_radius": 20
       },
       {
