@@ -212,7 +212,9 @@ private slots:
 	    QVBoxLayout *mainLayout = qobject_cast<QVBoxLayout*>(centralWidget->layout());
 	    if (!mainLayout) return;
 
+	    calculateScaleFactor();
 	    calculateDynamicSizes();
+	    applyMainLayoutMetrics(mainLayout);
 
 	    // Remove existing title and button layouts.
 	    while (mainLayout->count() > 0) {
@@ -231,8 +233,11 @@ private slots:
 		mainLayout->addLayout(buttonLayout);
 	    }
 
-	    // Update window size if changed
-	    setMinimumSize(m_config.windowWidth, m_config.windowHeight);
+	    mainLayout->invalidate();
+	    mainLayout->activate();
+	    centralWidget->updateGeometry();
+	    centralWidget->update();
+	    update();
 
 	    qDebug() << "UI refresh complete";
     }
@@ -479,6 +484,20 @@ private:
         } else {
             qWarning() << "Failed to start network interface on port" << m_networkPort;
         }
+    }
+
+    void applyMainLayoutMetrics(QVBoxLayout *mainLayout)
+    {
+        if (!mainLayout) return;
+
+        int scaledTopMargin = (int)(m_config.layout.topMargin * m_scaleFactor);
+        int scaledBottomMargin = (int)(m_config.layout.bottomMargin * m_scaleFactor);
+        int scaledLeftMargin = (int)(m_config.layout.leftMargin * m_scaleFactor);
+        int scaledRightMargin = (int)(m_config.layout.rightMargin * m_scaleFactor);
+
+        mainLayout->setSpacing((int)(20 * m_scaleFactor));
+        mainLayout->setContentsMargins(scaledLeftMargin, scaledTopMargin,
+                                      scaledRightMargin, scaledBottomMargin);
     }
 
     QString normalizePageId(const QString &pageId) const
@@ -1067,16 +1086,8 @@ private:
         QWidget *centralWidget = new QWidget;
         setCentralWidget(centralWidget);
 
-        // Apply scaling to margins
-        int scaledTopMargin = (int)(m_config.layout.topMargin * m_scaleFactor);
-        int scaledBottomMargin = (int)(m_config.layout.bottomMargin * m_scaleFactor);
-        int scaledLeftMargin = (int)(m_config.layout.leftMargin * m_scaleFactor);
-        int scaledRightMargin = (int)(m_config.layout.rightMargin * m_scaleFactor);
-
         QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
-        mainLayout->setSpacing((int)(20 * m_scaleFactor));
-        mainLayout->setContentsMargins(scaledLeftMargin, scaledTopMargin,
-                                      scaledRightMargin, scaledBottomMargin);
+        applyMainLayoutMetrics(mainLayout);
 
         // Create title section
         QWidget *titleWidget = createTitleWidget();
