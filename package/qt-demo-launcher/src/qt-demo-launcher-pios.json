@@ -37,7 +37,7 @@
         "arguments": ["/Pictures"],
         "working_directory": "/Pictures",
         "position": {
-          "row": 0,
+          "row": 2,
           "column": 0
         },
         "size": {
@@ -55,8 +55,34 @@
         "border_radius": 20
       },
       {
-        "id": "slideshow",
+        "id": "demo-video",
         "enabled": true,
+        "text": "Demo Video",
+        "icon": "/usr/share/icons/video-large.png",
+        "program": "/usr/share/qt-apps/kodi-video.sh",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 0,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#E67E22",
+        "hover_color": "#D35400",
+        "border_radius": 20
+      },
+      {
+        "id": "slideshow",
+        "enabled": false,
         "text": "Slideshow",
         "icon": "/usr/share/icons/slideshow-large.png",
         "program": "/usr/share/qt-apps/kodi-slideshow.sh",
@@ -141,7 +167,7 @@
         "arguments": ["/Patterns"],
         "working_directory": "/Patterns",
         "position": {
-          "row": 0,
+          "row": 1,
           "column": 2
         },
         "size": {
@@ -163,11 +189,11 @@
         "enabled": true,
         "text": "Media Player",
         "icon": "/usr/share/icons/video-large.png",
-        "program": "/usr/share/qt-apps/kodi-video.sh",
+        "program": "/usr/share/qt-apps/kodi-launcher.sh",
         "arguments": [],
         "working_directory": "/tmp",
         "position": {
-          "row": 1,
+          "row": 0,
           "column": 2
         },
         "size": {
@@ -194,7 +220,7 @@
         "working_directory": "/tmp",
         "position": {
           "row": 2,
-          "column": 0
+          "column": 1
         },
         "size": {
           "width": 640,
@@ -219,7 +245,7 @@
         "arguments": [],
         "working_directory": "/tmp",
         "position": {
-          "row": 2,
+          "row": 0,
           "column": 1
         },
         "size": {
@@ -237,19 +263,13 @@
         "border_radius": 20
       },
       {
-        "id": "brightness-calibration",
+        "id": "calibration-tools",
         "enabled": true,
-        "text": "Brightness Calibration",
+        "text": "Calibration Tools",
         "icon": "/usr/share/icons/tools-large.png",
-        "program": "/usr/bin/disp-tester",
-        "arguments": [
-          "--script", "/home/pi/micropanel/bin/als-dimmer-sweep-child.py",
-          "--script-arg=--output", "--script-arg=/tmp/warm.csv",
-          "--script-arg=--label", "--script-arg=warm",
-          "--script-arg=--warmup-seconds", "--script-arg=5",
-          "--script-arg=--install-calibration"
-        ],
-        "working_directory": "/tmp",
+        "action": "navigate",
+        "target_page": "calibration-tools",
+        "page_title": "Calibration Tools",
         "position": {
           "row": 2,
           "column": 2
@@ -269,8 +289,42 @@
         "border_radius": 20
       },
       {
+        "id": "brightness-calibration",
+        "enabled": true,
+        "page": "calibration-tools",
+        "text": "Brightness Calibration",
+        "icon": "/usr/share/icons/tools-large.png",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--script", "/home/pi/micropanel/bin/als-dimmer-sweep-child.py",
+          "--script-arg=--output", "--script-arg=/tmp/warm.csv",
+          "--script-arg=--label", "--script-arg=warm",
+          "--script-arg=--warmup-seconds", "--script-arg=5",
+          "--script-arg=--install-calibration"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 0,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#006C8E",
+        "hover_color": "#005A78",
+        "border_radius": 20
+      },
+      {
         "id": "live-measurement",
         "enabled": true,
+        "page": "calibration-tools",
         "text": "Live Measurement",
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/disp-tester",
@@ -286,8 +340,8 @@
         ],
         "working_directory": "/tmp",
         "position": {
-          "row": 3,
-          "column": 0
+          "row": 0,
+          "column": 1
         },
         "size": {
           "width": 640,
@@ -306,6 +360,7 @@
       {
         "id": "color-matching",
         "enabled": true,
+        "page": "calibration-tools",
         "text": "White Point Matching",
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/disp-tester",
@@ -324,8 +379,8 @@
         ],
         "working_directory": "/tmp",
         "position": {
-          "row": 3,
-          "column": 1
+          "row": 0,
+          "column": 2
         },
         "size": {
           "width": 640,
@@ -344,6 +399,7 @@
       {
         "id": "color-matching-new",
         "enabled": true,
+        "page": "calibration-tools",
         "text": "White Point Matching New",
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/disp-tester",
@@ -370,8 +426,8 @@
         ],
         "working_directory": "/tmp",
         "position": {
-          "row": 3,
-          "column": 2
+          "row": 1,
+          "column": 0
         },
         "size": {
           "width": 640,
@@ -390,6 +446,7 @@
       {
         "id": "white-point-profiling-new",
         "enabled": true,
+        "page": "calibration-tools",
         "text": "White Point Profiling New",
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/disp-tester",
@@ -408,8 +465,8 @@
         ],
         "working_directory": "/tmp",
         "position": {
-          "row": 4,
-          "column": 0
+          "row": 1,
+          "column": 1
         },
         "size": {
           "width": 640,
@@ -428,6 +485,7 @@
       {
         "id": "d65-calibration",
         "enabled": true,
+        "page": "calibration-tools",
         "text": "D65 Calibration",
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/disp-tester",
@@ -452,8 +510,8 @@
         ],
         "working_directory": "/tmp",
         "position": {
-          "row": 4,
-          "column": 1
+          "row": 1,
+          "column": 2
         },
         "size": {
           "width": 640,
@@ -467,6 +525,31 @@
         "font_size": 30,
         "background_color": "#8E6C00",
         "hover_color": "#785A00",
+        "border_radius": 20
+      },
+      {
+        "id": "calibration-tools-back",
+        "enabled": true,
+        "page": "calibration-tools",
+        "text": "Back",
+        "icon": "/usr/share/icons/tools-large.png",
+        "action": "back",
+        "position": {
+          "row": 2,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F",
         "border_radius": 20
       }
     ]

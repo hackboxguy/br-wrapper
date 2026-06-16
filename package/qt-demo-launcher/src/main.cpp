@@ -23,6 +23,7 @@
 #include <QIcon>
 #include <QFileSystemWatcher>
 #include <QScreen>
+#include <QMap>
 #include "NetworkInterface.h"
 
 struct ButtonConfig {
@@ -34,6 +35,9 @@ struct ButtonConfig {
     QStringList arguments;
     QString workingDirectory = "/tmp";
     QString action; // "quit" for special actions
+    QString page = "home";
+    QString targetPage;
+    QString pageTitle;
 
     // Position and size
     int row = 0;
@@ -95,6 +99,7 @@ public:
       : QMainWindow(parent), m_configWatcher(nullptr), m_currentConfigFile(""),
         m_configPath(configPath), m_networkPort(networkPort),
         m_networkInterface(nullptr), m_runningProcess(nullptr), m_runningAppId(""),
+        m_currentPage("home"),
         m_scaleFactor(1.0), m_forceFixedLayout(forceFixedLayout),
         m_dynamicButtonWidth(0), m_dynamicButtonHeight(0)
     {
@@ -132,8 +137,25 @@ private slots:
         }
 
         // Handle special actions
-        if (config.action == "quit") {
+        QString action = config.action.toLower();
+        if (action == "quit") {
             QApplication::quit();
+            return;
+        }
+        if (action == "navigate") {
+            if (config.targetPage.isEmpty()) {
+                qWarning() << "Navigation button has no target_page:" << config.id;
+                return;
+            }
+            navigateToPage(config.targetPage);
+            return;
+        }
+        if (action == "back") {
+            navigateBack();
+            return;
+        }
+        if (action == "home") {
+            navigateHome();
             return;
         }
 
@@ -167,6 +189,7 @@ private slots:
 	    loadConfig();
 
 	    // Refresh the UI with new config
+	    calculateScaleFactor();
 	    refreshUI();
 
 	    // Re-add file to watcher (some systems remove it after change)
@@ -189,14 +212,20 @@ private slots:
 	    QVBoxLayout *mainLayout = qobject_cast<QVBoxLayout*>(centralWidget->layout());
 	    if (!mainLayout) return;
 
-	    // Remove existing button layout (keep title widget if present)
-	    // Layout structure: [TitleWidget] [ButtonLayout]
-	    while (mainLayout->count() > 1) {
-		QLayoutItem *item = mainLayout->takeAt(1);
+	    calculateDynamicSizes();
+
+	    // Remove existing title and button layouts.
+	    while (mainLayout->count() > 0) {
+		QLayoutItem *item = mainLayout->takeAt(0);
 		deleteLayoutRecursively(item);
 	    }
 
-	    // Create new button layout with current config
+	    QWidget *titleWidget = createTitleWidget();
+	    if (titleWidget) {
+		mainLayout->addWidget(titleWidget);
+	    }
+
+	    // Create new button layout with current page
 	    QLayout *buttonLayout = createButtonLayout();
 	    if (buttonLayout) {
 		mainLayout->addLayout(buttonLayout);
@@ -241,6 +270,27 @@ private slots:
         if (cmd == "list-apps") {
             QString appList = listApps();
             m_networkInterface->sendResponse(appList);
+        } else if (cmd == "list-page-apps") {
+            QString pageId = parts.size() >= 2 ? parts[1] : m_currentPage;
+            if (!pageExists(pageId)) {
+                m_networkInterface->sendResponse("ERROR: page-not-found");
+            } else {
+                m_networkInterface->sendResponse(listPageApps(pageId));
+            }
+        } else if (cmd == "get-page") {
+            m_networkInterface->sendResponse(m_currentPage);
+        } else if (cmd == "navigate" && parts.size() >= 2) {
+            if (navigateToPage(parts[1])) {
+                m_networkInterface->sendResponse("OK");
+            } else {
+                m_networkInterface->sendResponse("ERROR: page-not-found");
+            }
+        } else if (cmd == "back") {
+            navigateBack();
+            m_networkInterface->sendResponse("OK");
+        } else if (cmd == "home") {
+            navigateHome();
+            m_networkInterface->sendResponse("OK");
         } else if (cmd == "start-app" && parts.size() >= 2) {
             QString appId = parts[1];
             bool result = startApp(appId);
@@ -302,6 +352,9 @@ private:
     NetworkInterface *m_networkInterface;
     QProcess *m_runningProcess;
     QString m_runningAppId;
+    QString m_currentPage;
+    QStringList m_pageStack;
+    QMap<QString, QString> m_pageTitles;
     double m_scaleFactor;  // Scale factor for responsive layout
     bool m_forceFixedLayout;  // CLI override to disable dynamic layout
     int m_dynamicButtonWidth;  // Calculated button width for dynamic layout
@@ -402,10 +455,7 @@ private:
             m_dynamicButtonWidth = availableWidth;
 
             // Count enabled buttons
-            int enabledCount = 0;
-            for (const ButtonConfig &btn : m_config.buttons) {
-                if (btn.enabled) enabledCount++;
-            }
+            int enabledCount = buttonsForPage(m_currentPage).count();
 
             if (enabledCount > 0) {
                 int totalVSpacing = (enabledCount - 1) * scaledSpacing;
@@ -431,6 +481,104 @@ private:
         }
     }
 
+    QString normalizePageId(const QString &pageId) const
+    {
+        return pageId.isEmpty() ? QString("home") : pageId;
+    }
+
+    bool findButton(const QString &buttonId, ButtonConfig &button, bool enabledOnly = false) const
+    {
+        for (const ButtonConfig &config : m_config.buttons) {
+            if (config.id == buttonId && (!enabledOnly || config.enabled)) {
+                button = config;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    QList<ButtonConfig> buttonsForPage(const QString &pageId, bool enabledOnly = true) const
+    {
+        QList<ButtonConfig> buttons;
+        QString normalizedPage = normalizePageId(pageId);
+
+        for (const ButtonConfig &config : m_config.buttons) {
+            if (config.page == normalizedPage && (!enabledOnly || config.enabled)) {
+                buttons.append(config);
+            }
+        }
+
+        return buttons;
+    }
+
+    bool pageExists(const QString &pageId) const
+    {
+        QString normalizedPage = normalizePageId(pageId);
+        if (normalizedPage == "home") {
+            return true;
+        }
+
+        if (m_pageTitles.contains(normalizedPage)) {
+            return true;
+        }
+
+        for (const ButtonConfig &config : m_config.buttons) {
+            if (config.page == normalizedPage || config.targetPage == normalizedPage) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    QString currentTitleText() const
+    {
+        if (m_currentPage == "home") {
+            return m_config.title.text;
+        }
+
+        return m_pageTitles.value(m_currentPage, m_currentPage);
+    }
+
+    bool navigateToPage(const QString &pageId, bool pushHistory = true)
+    {
+        QString normalizedPage = normalizePageId(pageId);
+        if (!pageExists(normalizedPage)) {
+            qWarning() << "Page not found:" << normalizedPage;
+            return false;
+        }
+
+        if (normalizedPage == m_currentPage) {
+            return true;
+        }
+
+        if (pushHistory) {
+            m_pageStack.append(m_currentPage);
+        }
+
+        m_currentPage = normalizedPage;
+        refreshUI();
+        return true;
+    }
+
+    void navigateBack()
+    {
+        if (!m_pageStack.isEmpty()) {
+            m_currentPage = m_pageStack.takeLast();
+        } else {
+            m_currentPage = "home";
+        }
+
+        refreshUI();
+    }
+
+    void navigateHome()
+    {
+        m_pageStack.clear();
+        m_currentPage = "home";
+        refreshUI();
+    }
+
     QString listApps()
     {
         QStringList appIds;
@@ -438,6 +586,15 @@ private:
             if (config.enabled) {
                 appIds << config.id;
             }
+        }
+        return appIds.join(",");
+    }
+
+    QString listPageApps(const QString &pageId)
+    {
+        QStringList appIds;
+        for (const ButtonConfig &config : buttonsForPage(pageId)) {
+            appIds << config.id;
         }
         return appIds.join(",");
     }
@@ -450,26 +607,33 @@ private:
             return false;
         }
 
-        // Find the app configuration
+        // Find the app configuration across all pages for backward-compatible automation.
         ButtonConfig config;
-        bool found = false;
-        for (const ButtonConfig &btn : m_config.buttons) {
-            if (btn.id == appId && btn.enabled) {
-                config = btn;
-                found = true;
-                break;
-            }
-        }
-
-        if (!found) {
+        if (!findButton(appId, config, true)) {
             m_networkInterface->sendResponse("ERROR: invalid-app-name");
             return false;
         }
 
         // Handle special actions
-        if (config.action == "quit") {
+        QString action = config.action.toLower();
+        if (action == "quit") {
             m_networkInterface->sendResponse("OK");
             QApplication::quit();
+            return true;
+        }
+        if (action == "navigate") {
+            if (config.targetPage.isEmpty() || !navigateToPage(config.targetPage)) {
+                m_networkInterface->sendResponse("ERROR: page-not-found");
+                return false;
+            }
+            return true;
+        }
+        if (action == "back") {
+            navigateBack();
+            return true;
+        }
+        if (action == "home") {
+            navigateHome();
             return true;
         }
 
@@ -593,6 +757,9 @@ private:
 
     void parseJsonConfig(const QJsonObject &root)
     {
+        m_config = LauncherConfig();
+        m_pageTitles.clear();
+
         QJsonObject launcher = root["launcher"].toObject();
 
         // Parse window settings
@@ -642,6 +809,9 @@ private:
             btn.program = btnObj["program"].toString();
             btn.workingDirectory = btnObj["working_directory"].toString("/tmp");
             btn.action = btnObj["action"].toString();
+            btn.page = normalizePageId(btnObj["page"].toString("home"));
+            btn.targetPage = btnObj["target_page"].toString();
+            btn.pageTitle = btnObj["page_title"].toString();
 
             // Parse arguments array
             QJsonArray args = btnObj["arguments"].toArray();
@@ -673,8 +843,30 @@ private:
             btn.hoverColor = btnObj["hover_color"].toString("#505050");
             btn.borderRadius = btnObj["border_radius"].toInt(15);
 
+            if (btn.action.toLower() == "navigate") {
+                if (btn.targetPage.isEmpty()) {
+                    btn.targetPage = btn.id;
+                }
+                btn.targetPage = normalizePageId(btn.targetPage);
+                QString pageTitle = btn.pageTitle.isEmpty() ? btn.text : btn.pageTitle;
+                m_pageTitles.insert(btn.targetPage, pageTitle);
+            }
+
             // Add all buttons (including disabled ones) to config for network API
             m_config.buttons.append(btn);
+        }
+
+        QStringList validStack;
+        for (const QString &pageId : m_pageStack) {
+            if (pageExists(pageId)) {
+                validStack.append(pageId);
+            }
+        }
+        m_pageStack = validStack;
+
+        if (!pageExists(m_currentPage)) {
+            m_currentPage = "home";
+            m_pageStack.clear();
         }
     }
 
@@ -682,6 +874,9 @@ private:
     {
         // Fallback to hardcoded configuration
         m_config = LauncherConfig();
+        m_pageTitles.clear();
+        m_pageStack.clear();
+        m_currentPage = "home";
 
         ButtonConfig fingerPaint;
         fingerPaint.id = "fingerpaint";
@@ -901,7 +1096,9 @@ private:
 
     QWidget* createTitleWidget()
     {
-        if (m_config.title.layout == "text_only" && m_config.title.text.isEmpty()) {
+        QString titleText = currentTitleText();
+
+        if (m_config.title.layout == "text_only" && titleText.isEmpty()) {
             return nullptr; // No title
         }
 
@@ -925,8 +1122,8 @@ private:
 
         // Create text label if specified - apply scaling to font size and padding
         QLabel *textLabel = nullptr;
-        if (!m_config.title.text.isEmpty() && m_config.title.layout != "logo_only") {
-            textLabel = new QLabel(m_config.title.text);
+        if (!titleText.isEmpty() && m_config.title.layout != "logo_only") {
+            textLabel = new QLabel(titleText);
             textLabel->setAlignment(Qt::AlignCenter);
 
             // Title font should remain readable - use higher minimum (28px) and less aggressive scaling
@@ -963,13 +1160,7 @@ private:
 
     QLayout* createButtonLayout()
     {
-        // Filter for enabled buttons only for UI display
-        QList<ButtonConfig> enabledButtons;
-        for (const ButtonConfig &config : m_config.buttons) {
-            if (config.enabled) {
-                enabledButtons.append(config);
-            }
-        }
+        QList<ButtonConfig> enabledButtons = buttonsForPage(m_currentPage);
 
         if (enabledButtons.isEmpty()) {
             return nullptr;
@@ -1241,7 +1432,12 @@ int main(int argc, char *argv[])
         qDebug() << "  4. Built-in defaults";
         qDebug() << "";
         qDebug() << "Network API Commands:";
-        qDebug() << "  list-apps                    # List all enabled applications";
+        qDebug() << "  list-apps                    # List all enabled buttons across all pages";
+        qDebug() << "  list-page-apps [page-id]     # List visible buttons on current or specified page";
+        qDebug() << "  get-page                     # Get current launcher page";
+        qDebug() << "  navigate <page-id>           # Navigate to page";
+        qDebug() << "  back                         # Navigate to previous page";
+        qDebug() << "  home                         # Navigate to home page";
         qDebug() << "  start-app <app-id>          # Start specific application";
         qDebug() << "  stop-app                    # Stop currently running application";
         qDebug() << "  get-running-app             # Get currently running app or 'none'";
