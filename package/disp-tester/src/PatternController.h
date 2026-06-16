@@ -63,6 +63,10 @@ public:
     void setPatternNavigationEnabled(bool enabled);
     void setUiAutoHideEnabled(bool enabled);
     void setNavigationHelpVisible(bool visible);
+    void setUserInteractionEnabled(bool enabled);
+    void configureStartupMetadata(const QString &status, const QString &text,
+                                  const QString &align, int fontSize,
+                                  const QColor &color);
     void requestQuit(const QString &reason);
 
 public slots:
@@ -149,7 +153,6 @@ private:
     void setMetadataColor(const QColor &color);
     void setMetadataColor(int r, int g, int b);
     void setMetadataColorByName(const QString &colorName);
-    void setUserInteractionEnabled(bool enabled);
     bool isChildScriptRunning() const;
     void stopChildScript();
     void finishApplicationQuit();

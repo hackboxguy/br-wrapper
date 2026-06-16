@@ -7,7 +7,11 @@ MICROPANEL_HOME="${MICROPANEL_HOME:-/home/pi/micropanel}"
 OUTPUT_ROOT="${DISPLAY_ANALYSIS_OUTPUT_ROOT:-/tmp/display-analysis}"
 LAUNCHER_ADDR="${LAUNCHER_ADDR:-127.0.0.1:8081}"
 GALLERY_ADDR="${GALLERY_ADDR:-127.0.0.1:8086}"
+PATTERN_GEN_ADDR="${PATTERN_GEN_ADDR:-127.0.0.1:8082}"
 TIMEOUT="${DISPLAY_ANALYSIS_TIMEOUT:-10}"
+CONTROL_TIMEOUT="${DISPLAY_ANALYSIS_CONTROL_TIMEOUT:-2}"
+CONTROL_CMD_GAP="${DISPLAY_ANALYSIS_CMD_GAP:-0.15}"
+CONTROL_CMD_RETRIES="${DISPLAY_ANALYSIS_RENDER_CMD_RETRIES:-2}"
 DEFAULT_1080P_MODEL="${DEFAULT_1080P_MODEL:-14.6-fhd-spartan7}"
 DEFAULT_DISPLAY_MODEL="${DEFAULT_DISPLAY_MODEL:-$DEFAULT_1080P_MODEL}"
 
@@ -24,6 +28,8 @@ case "$suite_arg" in
         RUN_SUITE="color-gamut"
         SUITE_DIR_NAME="color-gamut"
         REPORT_PANELS="gamut,zoom_gamut"
+        REPORT_TITLE="Color Gamut Analysis"
+        DEFAULT_RENDERING_APP_ID="display-analysis-color-gamut-rendering"
         DEFAULT_GALLERY_APP_ID="display-analysis-color-gamut-gallery"
         LEGACY_LOG_DIR="/tmp/gamut-test"
         LEGACY_LOG_NAME="analyze-color-gamut.log"
@@ -32,6 +38,8 @@ case "$suite_arg" in
         RUN_SUITE="local_dimming_apl"
         SUITE_DIR_NAME="local-dimming-apl"
         REPORT_PANELS="local_dimming_apl"
+        REPORT_TITLE="Local Dimming APL Analysis"
+        DEFAULT_RENDERING_APP_ID="display-analysis-local-dimming-apl-rendering"
         DEFAULT_GALLERY_APP_ID="display-analysis-local-dimming-apl-gallery"
         LEGACY_LOG_DIR=""
         LEGACY_LOG_NAME=""
@@ -46,6 +54,7 @@ case "$suite_arg" in
         ;;
 esac
 
+RENDERING_APP_ID="${DISPLAY_ANALYSIS_RENDERING_APP_ID:-$DEFAULT_RENDERING_APP_ID}"
 GALLERY_APP_ID="${GALLERY_APP_ID:-$DEFAULT_GALLERY_APP_ID}"
 
 SUITE_DIR="$OUTPUT_ROOT/$SUITE_DIR_NAME"
@@ -81,6 +90,10 @@ fi
 
 cleanup() {
     status=$?
+    if [ "$status" -ne 0 ] && [ -n "${LAUNCHER_CLIENT_BIN:-}" ]; then
+        "$LAUNCHER_CLIENT_BIN" --srv="$LAUNCHER_ADDR" --command=stop-app \
+            --timeoutsec="$TIMEOUT" >/dev/null 2>&1 || true
+    fi
     if [ -n "$LEGACY_LOG" ] && [ -f "$LOG_FILE" ]; then
         cp "$LOG_FILE" "$LEGACY_LOG" 2>/dev/null || true
     fi
@@ -181,9 +194,80 @@ wait_for_gallery() {
     return 1
 }
 
-show_report() {
+disp_cmd() {
+    command="$1"
+    arg="${2:-}"
+    attempt=1
+    response=""
+    rc=1
+
+    while [ "$attempt" -le "$CONTROL_CMD_RETRIES" ]; do
+        if [ "$attempt" -gt 1 ]; then
+            sleep "$CONTROL_CMD_GAP"
+        fi
+
+        if [ -n "$arg" ]; then
+            response="$("$LAUNCHER_CLIENT_BIN" --srv="$PATTERN_GEN_ADDR" \
+                --command="$command" --command-arg="$arg" \
+                --timeoutsec="$CONTROL_TIMEOUT" 2>&1)"
+        else
+            response="$("$LAUNCHER_CLIENT_BIN" --srv="$PATTERN_GEN_ADDR" \
+                --command="$command" --timeoutsec="$CONTROL_TIMEOUT" 2>&1)"
+        fi
+        rc=$?
+        if [ "$rc" -eq 0 ] && echo "$response" | grep -q "OK"; then
+            sleep "$CONTROL_CMD_GAP"
+            return 0
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    log "WARNING: disp-tester command failed: $command $arg attempts=$CONTROL_CMD_RETRIES rc=$rc response=$response"
+    return 1
+}
+
+show_existing_rendering_screen() {
+    if ! disp_cmd pattern black; then
+        return 1
+    fi
+
+    disp_cmd set-user-interaction disable || true
+    disp_cmd set-metadata-status enable || true
+    disp_cmd set-metadata-align center || true
+    disp_cmd set-metadata-fontsize 32 || true
+    disp_cmd set-metadata-color white || true
+    disp_cmd set-metadata-text "$REPORT_TITLE\\nRendering report..." || true
+    log "Reused active disp-tester as rendering screen"
+    return 0
+}
+
+stop_current_app() {
     "$LAUNCHER_CLIENT_BIN" --srv="$LAUNCHER_ADDR" --command=stop-app \
         --timeoutsec="$TIMEOUT" >/dev/null 2>&1 || true
+}
+
+show_rendering_screen() {
+    if show_existing_rendering_screen; then
+        return 0
+    fi
+
+    stop_current_app
+
+    response="$("$LAUNCHER_CLIENT_BIN" --srv="$LAUNCHER_ADDR" \
+        --command=start-app --command-arg="$RENDERING_APP_ID" \
+        --timeoutsec="$TIMEOUT" 2>&1)"
+    if ! echo "$response" | grep -q "OK"; then
+        log "WARNING: failed to start rendering screen app '$RENDERING_APP_ID': $response"
+        return 1
+    fi
+
+    log "Started rendering screen app: $RENDERING_APP_ID"
+    return 0
+}
+
+show_report() {
+    stop_current_app
     sleep 0.5
 
     response="$("$LAUNCHER_CLIENT_BIN" --srv="$LAUNCHER_ADDR" \
@@ -215,14 +299,17 @@ LAUNCHER_CLIENT_BIN="$(detect_launcher_client)"
 export LAUNCHER_CLIENT="$LAUNCHER_CLIENT_BIN"
 export MICROPANEL_HOME
 export DISPLAY_MODEL="$(resolve_display_model)"
+export DISPLAY_ANALYSIS_KEEP_PATTERN_APP="${DISPLAY_ANALYSIS_KEEP_PATTERN_APP:-1}"
 
 ln -sfn "$RESULTS_DIR" "$LATEST_DIR_LINK" 2>/dev/null || true
 
 log "Starting display analysis"
 log "Suite: $RUN_SUITE"
+log "Title: $REPORT_TITLE"
 log "Display model: $DISPLAY_MODEL"
 log "Runner: $RUNNER"
 log "Report card: $REPORT_CARD"
+log "Rendering app: $RENDERING_APP_ID"
 log "Gallery app: $GALLERY_APP_ID"
 log "Results: $RESULTS_DIR"
 log "PNG: $PNG_PATH"
@@ -247,6 +334,8 @@ if [ ! -f "$RESULTS_DIR/summary.json" ]; then
     log "ERROR: missing summary.json; not rendering report"
     exit 1
 fi
+
+show_rendering_screen || true
 
 if command -v python3 >/dev/null 2>&1; then
     run_logged python3 "$REPORT_CARD" --input "$RESULTS_DIR" --output "$PNG_PATH" --panels "$REPORT_PANELS"

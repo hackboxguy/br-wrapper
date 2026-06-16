@@ -537,7 +537,7 @@
         "arguments": [
           "--child-action-button",
           "--child-action-start-text", "Start Measurement",
-          "--child-action-stop-text", "Cancel Measurement",
+          "--child-action-stop-text", "Measuring...",
           "--child-action-start-color", "green",
           "--child-action-stop-color", "red",
           "--disable-pattern-navigation",
@@ -564,6 +564,46 @@
         "background_color": "#5B7E8E",
         "hover_color": "#466878",
         "border_radius": 20
+      },
+      {
+        "id": "display-analysis-color-gamut-rendering",
+        "enabled": true,
+        "visible": false,
+        "page": "_internal",
+        "text": "Color Gamut Rendering",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--initial-pattern", "black",
+          "--initial-metadata-status", "enable",
+          "--initial-metadata-text", "Color Gamut Analysis\\nRendering report...",
+          "--initial-metadata-align", "center",
+          "--initial-metadata-fontsize", "32",
+          "--initial-metadata-color", "white",
+          "--disable-user-interaction",
+          "--disable-pattern-navigation",
+          "--hide-navigation-help"
+        ],
+        "working_directory": "/tmp"
+      },
+      {
+        "id": "display-analysis-local-dimming-apl-rendering",
+        "enabled": true,
+        "visible": false,
+        "page": "_internal",
+        "text": "Local Dimming APL Rendering",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--initial-pattern", "black",
+          "--initial-metadata-status", "enable",
+          "--initial-metadata-text", "Local Dimming APL Analysis\\nRendering report...",
+          "--initial-metadata-align", "center",
+          "--initial-metadata-fontsize", "32",
+          "--initial-metadata-color", "white",
+          "--disable-user-interaction",
+          "--disable-pattern-navigation",
+          "--hide-navigation-help"
+        ],
+        "working_directory": "/tmp"
       },
       {
         "id": "display-analysis-color-gamut-gallery",

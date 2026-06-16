@@ -162,6 +162,27 @@ void PatternController::setNavigationHelpVisible(bool visible)
     qDebug() << "Navigation help" << (visible ? "visible" : "hidden");
 }
 
+void PatternController::configureStartupMetadata(const QString &status, const QString &text,
+                                                 const QString &align, int fontSize,
+                                                 const QColor &color)
+{
+    if (!status.isEmpty()) {
+        setMetadataStatus(status);
+    }
+    if (!align.isEmpty()) {
+        setMetadataAlign(align);
+    }
+    if (fontSize > 0) {
+        setMetadataFontSize(fontSize);
+    }
+    if (color.isValid()) {
+        setMetadataColor(color);
+    }
+    if (!text.isNull()) {
+        setMetadataText(text);
+    }
+}
+
 bool PatternController::isChildScriptRunning() const
 {
     return m_childProcess && m_childProcess->state() != QProcess::NotRunning;

@@ -134,6 +134,40 @@ int main(int argc, char *argv[])
                                                 "Hide the tap/swipe navigation help box.");
     parser.addOption(hideNavigationHelpOption);
 
+    QCommandLineOption disableUserInteractionOption(QStringList() << "disable-user-interaction",
+                                                    "Disable touch controls and UI overlays.");
+    parser.addOption(disableUserInteractionOption);
+
+    QCommandLineOption initialPatternOption(QStringList() << "initial-pattern",
+                                            "Initial pattern shown before the UI is loaded.",
+                                            "pattern");
+    parser.addOption(initialPatternOption);
+
+    QCommandLineOption initialMetadataStatusOption(QStringList() << "initial-metadata-status",
+                                                   "Initial metadata visibility: autohide, enable, or disable.",
+                                                   "status");
+    parser.addOption(initialMetadataStatusOption);
+
+    QCommandLineOption initialMetadataTextOption(QStringList() << "initial-metadata-text",
+                                                 "Initial metadata overlay text. Use literal \\n for new lines.",
+                                                 "text");
+    parser.addOption(initialMetadataTextOption);
+
+    QCommandLineOption initialMetadataAlignOption(QStringList() << "initial-metadata-align",
+                                                  "Initial metadata alignment: left, center, or right.",
+                                                  "align");
+    parser.addOption(initialMetadataAlignOption);
+
+    QCommandLineOption initialMetadataFontSizeOption(QStringList() << "initial-metadata-fontsize",
+                                                     "Initial metadata font size.",
+                                                     "size");
+    parser.addOption(initialMetadataFontSizeOption);
+
+    QCommandLineOption initialMetadataColorOption(QStringList() << "initial-metadata-color",
+                                                  "Initial metadata text color.",
+                                                  "color");
+    parser.addOption(initialMetadataColorOption);
+
     QCommandLineOption i2cOption(QStringList() << "i" << "i2c",
                                  "FPGA I2C bus device (default: /dev/i2c-1)",
                                  "i2c", "/dev/i2c-1");
@@ -171,6 +205,45 @@ int main(int argc, char *argv[])
     patternController.setPatternNavigationEnabled(!parser.isSet(disablePatternNavigationOption));
     patternController.setUiAutoHideEnabled(!parser.isSet(disableUiAutoHideOption));
     patternController.setNavigationHelpVisible(!parser.isSet(hideNavigationHelpOption));
+    patternController.setUserInteractionEnabled(!parser.isSet(disableUserInteractionOption));
+
+    QString initialPattern = parser.value(initialPatternOption).trimmed().toLower();
+    if (!initialPattern.isEmpty()) {
+        patternController.setPattern(initialPattern);
+    }
+
+    QString initialMetadataText;
+    if (parser.isSet(initialMetadataTextOption)) {
+        initialMetadataText = parser.value(initialMetadataTextOption);
+        initialMetadataText.replace("\\n", "\n");
+    }
+
+    int initialMetadataFontSize = -1;
+    if (parser.isSet(initialMetadataFontSizeOption)) {
+        bool fontOk = false;
+        int parsedFontSize = parser.value(initialMetadataFontSizeOption).toInt(&fontOk);
+        if (fontOk) {
+            initialMetadataFontSize = parsedFontSize;
+        } else {
+            qWarning() << "Invalid initial metadata font size; using default";
+        }
+    }
+
+    QColor initialMetadataColor;
+    if (parser.isSet(initialMetadataColorOption)) {
+        initialMetadataColor = QColor(parser.value(initialMetadataColorOption));
+        if (!initialMetadataColor.isValid()) {
+            qWarning() << "Invalid initial metadata color; using default";
+            initialMetadataColor = QColor();
+        }
+    }
+
+    patternController.configureStartupMetadata(
+        parser.isSet(initialMetadataStatusOption) ? parser.value(initialMetadataStatusOption) : QString(),
+        parser.isSet(initialMetadataTextOption) ? initialMetadataText : QString(),
+        parser.isSet(initialMetadataAlignOption) ? parser.value(initialMetadataAlignOption) : QString(),
+        initialMetadataFontSize,
+        initialMetadataColor);
 
     QSocketNotifier *signalNotifier = nullptr;
     if (setupUnixSignalHandlers()) {

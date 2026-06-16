@@ -14,8 +14,22 @@ REPORT_SCRIPT="${DISPLAY_ANALYSIS_REPORT_SCRIPT:-$SCRIPT_DIR/display-analysis-re
 DISP_ADDR="${DISP_TESTER_HOST:-127.0.0.1}:${DISP_TESTER_PORT:-8082}"
 TIMEOUT="${DISPLAY_ANALYSIS_GATE_TIMEOUT:-5}"
 GATE_LOG="${DISPLAY_ANALYSIS_GATE_LOG:-/tmp/display-analysis-start-child.log}"
-PLACEMENT_TEXT="${DISPLAY_ANALYSIS_PLACEMENT_TEXT:-Place the sensor on the Whitebox\\nand Click on Start Measurement}"
-STARTING_TEXT="${DISPLAY_ANALYSIS_STARTING_TEXT:-Color Gamut Analysis\\nStarting measurement...}"
+case "$SUITE" in
+    color-gamut|gamut)
+        DEFAULT_TITLE="Color Gamut Analysis"
+        ;;
+    local-dimming-apl|local_dimming_apl|apl)
+        DEFAULT_TITLE="Local Dimming APL Analysis"
+        ;;
+    *)
+        DEFAULT_TITLE="Display Analysis"
+        ;;
+esac
+ANALYSIS_TITLE="${DISPLAY_ANALYSIS_TITLE:-$DEFAULT_TITLE}"
+PLACEMENT_TEXT="${DISPLAY_ANALYSIS_PLACEMENT_TEXT:-Place the USB sensor on the white box\\nand click Start Measurement}"
+STARTING_TEXT="${DISPLAY_ANALYSIS_STARTING_TEXT:-$ANALYSIS_TITLE\\nMeasurement running...}"
+DISP_CMD_GAP="${DISPLAY_ANALYSIS_CMD_GAP:-0.20}"
+DISP_CMD_RETRIES="${DISPLAY_ANALYSIS_CMD_RETRIES:-5}"
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$GATE_LOG"
@@ -41,17 +55,34 @@ log "gate starting: suite=$SUITE disp=$DISP_ADDR launcher-client=$LAUNCHER_CLIEN
 disp_cmd() {
     command="$1"
     arg="${2:-}"
-    if [ -n "$arg" ]; then
-        response="$("$LAUNCHER_CLIENT_BIN" --srv="$DISP_ADDR" --command="$command" \
-            --command-arg="$arg" --timeoutsec="$TIMEOUT" 2>&1)"
-    else
-        response="$("$LAUNCHER_CLIENT_BIN" --srv="$DISP_ADDR" --command="$command" \
-            --timeoutsec="$TIMEOUT" 2>&1)"
-    fi
-    rc=$?
-    if [ "$rc" -ne 0 ] || ! echo "$response" | grep -q "OK"; then
-        log "warning: disp-tester command failed: $command $arg rc=$rc response=$response"
-    fi
+    attempt=1
+    response=""
+    rc=1
+
+    while [ "$attempt" -le "$DISP_CMD_RETRIES" ]; do
+        if [ "$attempt" -gt 1 ]; then
+            sleep "$DISP_CMD_GAP"
+        fi
+
+        if [ -n "$arg" ]; then
+            response="$("$LAUNCHER_CLIENT_BIN" --srv="$DISP_ADDR" --command="$command" \
+                --command-arg="$arg" --timeoutsec="$TIMEOUT" 2>&1)"
+        else
+            response="$("$LAUNCHER_CLIENT_BIN" --srv="$DISP_ADDR" --command="$command" \
+                --timeoutsec="$TIMEOUT" 2>&1)"
+        fi
+        rc=$?
+        if [ "$rc" -eq 0 ] && echo "$response" | grep -q "OK"; then
+            sleep "$DISP_CMD_GAP"
+            return 0
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    log "warning: disp-tester command failed: $command $arg attempts=$DISP_CMD_RETRIES rc=$rc response=$response"
+    sleep "$DISP_CMD_GAP"
+    return 1
 }
 
 setup_prompt() {
@@ -73,12 +104,19 @@ start_worker() {
     if [ ! -x "$REPORT_SCRIPT" ]; then
         log "error: worker script not executable: $REPORT_SCRIPT"
         disp_cmd set-metadata-color red
-        disp_cmd set-metadata-text "Color Gamut Analysis\\nWorker script not found"
+        disp_cmd set-metadata-text "$ANALYSIS_TITLE\\nWorker script not found"
         exit 1
     fi
 
     nohup "$REPORT_SCRIPT" "$SUITE" >> "$GATE_LOG" 2>&1 &
-    log "worker launched: pid=$!"
+    worker_pid=$!
+    log "worker launched: pid=$worker_pid"
+
+    wait "$worker_pid"
+    worker_rc=$?
+    log "worker exited: rc=$worker_rc"
+    disp_cmd set-child-action-active disable
+    exit "$worker_rc"
 }
 
 setup_prompt
