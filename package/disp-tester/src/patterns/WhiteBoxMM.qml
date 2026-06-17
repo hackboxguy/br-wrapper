@@ -71,9 +71,9 @@ PatternBase {
     }
 
     // Dim readout (top-left) so the applied size can be confirmed without a
-    // ruler. Kept dim and in the corner to avoid affecting a centered
-    // measurement; set showReadout=false to remove it entirely.
-    property bool showReadout: true
+    // ruler. Shown only when the command included the "verbose" argument, so a
+    // plain measurement run has nothing lit outside the box.
+    property bool showReadout: params.whiteboxmmVerbose === true
     Text {
         x: 16
         y: 16

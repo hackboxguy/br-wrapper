@@ -96,10 +96,13 @@ physically square even on non-square-pixel panels.
 
 **Syntax:**
 ```bash
---command-arg="whiteboxmm SIZE_MM width-mm WIDTH_MM height-mm HEIGHT_MM"
+--command-arg="whiteboxmm SIZE_MM width-mm WIDTH_MM height-mm HEIGHT_MM [verbose]"
 # optional leading "size" keyword is also accepted:
---command-arg="whiteboxmm size SIZE_MM width-mm WIDTH_MM height-mm HEIGHT_MM"
+--command-arg="whiteboxmm size SIZE_MM width-mm WIDTH_MM height-mm HEIGHT_MM [verbose]"
 ```
+
+`SIZE_MM` (the box side length) is **required** — a command with only
+`width-mm`/`height-mm` and no size is rejected.
 
 **Example — 50 mm box on a 12.3" 1920×720 panel (active area ≈ 292 × 109.5 mm):**
 ```bash
@@ -107,9 +110,16 @@ physically square even on non-square-pixel panels.
   --command-arg="whiteboxmm 50 width-mm 292 height-mm 109.5"
 ```
 
-A dim readout in the top-left corner shows the requested mm, the resulting
-pixel dimensions, and the per-axis px/mm — so you can confirm the size without
-a ruler.
+**Verbose readout.** By default only the white box is drawn (nothing else is
+lit, ideal for measurement). Add the optional `verbose` argument (it may appear
+anywhere in the command) to show a dim top-left readout of the requested mm,
+the resulting pixel dimensions, and the per-axis px/mm — handy for confirming
+the size without a ruler:
+```bash
+./launcher-client --srv=127.0.0.1:8082 --command=pattern \
+  --command-arg="whiteboxmm 50 width-mm 292 height-mm 109.5 verbose"
+```
+Re-sending the command without `verbose` turns the readout back off.
 
 **Validation limits:** SIZE_MM 1–500, width-mm / height-mm 10–2000, and
 SIZE_MM must not exceed either physical dimension. Out-of-range input returns
@@ -121,6 +131,7 @@ values while still replying `OK`).
 --command=get-param --command-arg="whiteboxmm size"
 --command=get-param --command-arg="whiteboxmm width-mm"
 --command=get-param --command-arg="whiteboxmm height-mm"
+--command=get-param --command-arg="whiteboxmm verbose"
 ```
 
 The existing `whitebox` command (percent / pixels / mm modes) is unchanged.

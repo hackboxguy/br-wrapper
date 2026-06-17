@@ -40,6 +40,7 @@ struct PatternParameters {
     float whiteboxmmSize = 50.0f;       // Requested box side in mm (1-500)
     float whiteboxmmPhysWidthMM = 0.0f;  // Active-area physical width in mm (from datasheet)
     float whiteboxmmPhysHeightMM = 0.0f; // Active-area physical height in mm (from datasheet)
+    bool whiteboxmmVerbose = false;     // Show the top-left size readout (set via "verbose" arg)
 
     QVariantMap toVariantMap() const {
         QVariantMap map;
@@ -64,6 +65,7 @@ struct PatternParameters {
         map["whiteboxmmSize"] = whiteboxmmSize;
         map["whiteboxmmPhysWidthMM"] = whiteboxmmPhysWidthMM;
         map["whiteboxmmPhysHeightMM"] = whiteboxmmPhysHeightMM;
+        map["whiteboxmmVerbose"] = whiteboxmmVerbose;
         return map;
     }
 };

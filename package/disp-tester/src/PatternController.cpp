@@ -959,11 +959,13 @@ bool PatternController::setPatternParameter(const QString &pattern, const QStrin
         }
     } else if (pattern == "whiteboxmm") {
         // Absolute physical-size box from explicit active-area dimensions.
-        // Syntax: whiteboxmm <sizeMM> width-mm <W> height-mm <H>
+        // Syntax: whiteboxmm <sizeMM> width-mm <W> height-mm <H> [verbose]
         //   (an optional leading "size" keyword is also accepted)
-        // Example: whiteboxmm 50 width-mm 292 height-mm 109.5
+        // Example: whiteboxmm 50 width-mm 292 height-mm 109.5 verbose
         QStringList tokens;
         tokens << param << values;          // full token list after the pattern name
+        // The optional "verbose" flag may appear anywhere; pull it out first.
+        bool verbose = tokens.removeAll("verbose") > 0;
         if (!tokens.isEmpty() && tokens[0] == "size")
             tokens.removeFirst();           // tolerate the optional "size" keyword
 
@@ -989,6 +991,7 @@ bool PatternController::setPatternParameter(const QString &pattern, const QStrin
             m_parameters.whiteboxmmSize = sizeMM;
             m_parameters.whiteboxmmPhysWidthMM = physW;
             m_parameters.whiteboxmmPhysHeightMM = physH;
+            m_parameters.whiteboxmmVerbose = verbose;
             changed = true;
         }
     }
@@ -1029,6 +1032,7 @@ QString PatternController::getPatternParameter(const QString &pattern, const QSt
         if (param == "size") return QString::number(m_parameters.whiteboxmmSize);
         if (param == "width-mm") return QString::number(m_parameters.whiteboxmmPhysWidthMM);
         if (param == "height-mm") return QString::number(m_parameters.whiteboxmmPhysHeightMM);
+        if (param == "verbose") return m_parameters.whiteboxmmVerbose ? "true" : "false";
     }
     return "";
 }
