@@ -320,12 +320,18 @@ export LAUNCHER_CLIENT="$LAUNCHER_CLIENT_BIN"
 export MICROPANEL_HOME
 export DISPLAY_MODEL="$(resolve_display_model)"
 export DISPLAY_ANALYSIS_KEEP_PATTERN_APP="${DISPLAY_ANALYSIS_KEEP_PATTERN_APP:-1}"
+if [ "$RUN_SUITE" = "local_dimming_apl" ]; then
+    export LOCAL_DIMMING_SWEEP_MODE="${LOCAL_DIMMING_SWEEP_MODE:-absolute_apl}"
+fi
 
 ln -sfn "$RESULTS_DIR" "$LATEST_DIR_LINK" 2>/dev/null || true
 
 log "Starting display analysis"
 log "Suite: $RUN_SUITE"
 log "Title: $REPORT_TITLE"
+if [ "$RUN_SUITE" = "local_dimming_apl" ]; then
+    log "Local dimming sweep mode: ${LOCAL_DIMMING_SWEEP_MODE:-percent_apl}"
+fi
 log "Display model: $DISPLAY_MODEL"
 log "Runner: $RUNNER"
 log "Report card: $REPORT_CARD"
