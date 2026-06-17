@@ -52,6 +52,16 @@ detect_launcher_client() {
 LAUNCHER_CLIENT_BIN="$(detect_launcher_client)"
 log "gate starting: suite=$SUITE disp=$DISP_ADDR launcher-client=$LAUNCHER_CLIENT_BIN report=$REPORT_SCRIPT"
 
+is_apl_suite() {
+    case "$SUITE" in
+        local-dimming-apl|local_dimming_apl|apl)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
 disp_cmd() {
     command="$1"
     arg="${2:-}"
@@ -88,6 +98,7 @@ disp_cmd() {
 setup_prompt() {
     log "showing placement prompt"
     disp_cmd pattern "whitebox percent 10"
+    disp_cmd set-user-interaction enable
     disp_cmd set-metadata-status enable
     disp_cmd set-metadata-fontsize 28
     disp_cmd set-metadata-align center
@@ -98,14 +109,22 @@ setup_prompt() {
 
 start_worker() {
     log "start requested"
-    disp_cmd set-metadata-text "$STARTING_TEXT"
-    disp_cmd set-child-action-active enable
 
     if [ ! -x "$REPORT_SCRIPT" ]; then
         log "error: worker script not executable: $REPORT_SCRIPT"
         disp_cmd set-metadata-color red
         disp_cmd set-metadata-text "$ANALYSIS_TITLE\\nWorker script not found"
         exit 1
+    fi
+
+    if is_apl_suite; then
+        disp_cmd clear-metadata-text
+        disp_cmd set-metadata-status disable
+        disp_cmd set-user-interaction disable
+        disp_cmd set-child-action-active enable
+    else
+        disp_cmd set-child-action-active enable
+        disp_cmd set-metadata-text "$STARTING_TEXT"
     fi
 
     nohup "$REPORT_SCRIPT" "$SUITE" >> "$GATE_LOG" 2>&1 &
@@ -116,6 +135,10 @@ start_worker() {
     worker_rc=$?
     log "worker exited: rc=$worker_rc"
     disp_cmd set-child-action-active disable
+    if is_apl_suite; then
+        disp_cmd set-user-interaction enable
+        disp_cmd set-metadata-status autohide
+    fi
     exit "$worker_rc"
 }
 
