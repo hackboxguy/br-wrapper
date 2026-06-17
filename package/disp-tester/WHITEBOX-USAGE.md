@@ -84,6 +84,49 @@ Physical size in millimeters with display diagonal specification.
 
 ---
 
+---
+
+## `whiteboxmm` — Absolute Physical Size (separate pattern)
+
+A dedicated pattern for accurate physical measurements. Unlike `whitebox mm`
+(which derives physical size from a diagonal and assumes square pixels), this
+takes the **active-area width and height in mm directly** from the panel
+datasheet and computes pixels-per-mm independently per axis — so the box is
+physically square even on non-square-pixel panels.
+
+**Syntax:**
+```bash
+--command-arg="whiteboxmm SIZE_MM width-mm WIDTH_MM height-mm HEIGHT_MM"
+# optional leading "size" keyword is also accepted:
+--command-arg="whiteboxmm size SIZE_MM width-mm WIDTH_MM height-mm HEIGHT_MM"
+```
+
+**Example — 50 mm box on a 12.3" 1920×720 panel (active area ≈ 292 × 109.5 mm):**
+```bash
+./launcher-client --srv=127.0.0.1:8082 --command=pattern \
+  --command-arg="whiteboxmm 50 width-mm 292 height-mm 109.5"
+```
+
+A dim readout in the top-left corner shows the requested mm, the resulting
+pixel dimensions, and the per-axis px/mm — so you can confirm the size without
+a ruler.
+
+**Validation limits:** SIZE_MM 1–500, width-mm / height-mm 10–2000, and
+SIZE_MM must not exceed either physical dimension. Out-of-range input returns
+`ERROR: Invalid parameter` (the legacy `whitebox` command silently ignores bad
+values while still replying `OK`).
+
+**Read back the applied values:**
+```bash
+--command=get-param --command-arg="whiteboxmm size"
+--command=get-param --command-arg="whiteboxmm width-mm"
+--command=get-param --command-arg="whiteboxmm height-mm"
+```
+
+The existing `whitebox` command (percent / pixels / mm modes) is unchanged.
+
+---
+
 ## Display Size Reference
 
 Physical box sizes for common configurations:

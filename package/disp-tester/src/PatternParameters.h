@@ -35,6 +35,12 @@ struct PatternParameters {
     float whiteboxMM = 50.0f;       // Physical size in mm (for mm mode)
     float whiteboxDiagonalInch = 0.0f; // Display diagonal in inches (for mm mode)
 
+    // White Box MM parameters (new "whiteboxmm" pattern: absolute physical size from
+    // explicit active-area dimensions; independent of the legacy "whitebox" pattern)
+    float whiteboxmmSize = 50.0f;       // Requested box side in mm (1-500)
+    float whiteboxmmPhysWidthMM = 0.0f;  // Active-area physical width in mm (from datasheet)
+    float whiteboxmmPhysHeightMM = 0.0f; // Active-area physical height in mm (from datasheet)
+
     QVariantMap toVariantMap() const {
         QVariantMap map;
         map["ballSize"] = ballSize;
@@ -55,6 +61,9 @@ struct PatternParameters {
         map["whiteboxPixels"] = whiteboxPixels;
         map["whiteboxMM"] = whiteboxMM;
         map["whiteboxDiagonalInch"] = whiteboxDiagonalInch;
+        map["whiteboxmmSize"] = whiteboxmmSize;
+        map["whiteboxmmPhysWidthMM"] = whiteboxmmPhysWidthMM;
+        map["whiteboxmmPhysHeightMM"] = whiteboxmmPhysHeightMM;
         return map;
     }
 };

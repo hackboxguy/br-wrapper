@@ -9,5 +9,6 @@
         <file>patterns/BloomingDetection.qml</file>
         <file>patterns/CrossDimming.qml</file>
         <file>patterns/WhiteBox.qml</file>
+        <file>patterns/WhiteBoxMM.qml</file>
     </qresource>
 </RCC>

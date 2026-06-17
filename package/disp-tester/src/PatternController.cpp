@@ -45,7 +45,8 @@ PatternController::PatternController(QObject *parent)
     // Initialize available patterns (added solid colors, removed white-text-black)
     m_patterns << "grayscale-ramp" << "ansi-checker" << "colorbar" << "white" << "black"
                << "red" << "green" << "blue" << "cyan" << "magenta" << "yellow"
-               << "zone-boundary-grid" << "blooming-detection" << "cross-dimming" << "whitebox";
+               << "zone-boundary-grid" << "blooming-detection" << "cross-dimming" << "whitebox"
+               << "whiteboxmm";
     m_currentPattern = m_patterns[0];
 }
 
@@ -956,6 +957,40 @@ bool PatternController::setPatternParameter(const QString &pattern, const QStrin
                 }
             }
         }
+    } else if (pattern == "whiteboxmm") {
+        // Absolute physical-size box from explicit active-area dimensions.
+        // Syntax: whiteboxmm <sizeMM> width-mm <W> height-mm <H>
+        //   (an optional leading "size" keyword is also accepted)
+        // Example: whiteboxmm 50 width-mm 292 height-mm 109.5
+        QStringList tokens;
+        tokens << param << values;          // full token list after the pattern name
+        if (!tokens.isEmpty() && tokens[0] == "size")
+            tokens.removeFirst();           // tolerate the optional "size" keyword
+
+        bool sizeOk = false;
+        float sizeMM = tokens.isEmpty() ? 0.0f : tokens[0].toFloat(&sizeOk);
+        float physW = 0.0f, physH = 0.0f;
+        bool haveW = false, haveH = false;
+        for (int i = 1; i + 1 < tokens.size(); ++i) {
+            if (tokens[i] == "width-mm") {
+                bool ok; float w = tokens[i + 1].toFloat(&ok);
+                if (ok) { physW = w; haveW = true; }
+            } else if (tokens[i] == "height-mm") {
+                bool ok; float h = tokens[i + 1].toFloat(&ok);
+                if (ok) { physH = h; haveH = true; }
+            }
+        }
+
+        if (sizeOk && haveW && haveH &&
+            sizeMM >= 1.0f && sizeMM <= 500.0f &&
+            physW >= 10.0f && physW <= 2000.0f &&
+            physH >= 10.0f && physH <= 2000.0f &&
+            sizeMM <= physW && sizeMM <= physH) {
+            m_parameters.whiteboxmmSize = sizeMM;
+            m_parameters.whiteboxmmPhysWidthMM = physW;
+            m_parameters.whiteboxmmPhysHeightMM = physH;
+            changed = true;
+        }
     }
 
     if (changed) {
@@ -990,6 +1025,10 @@ QString PatternController::getPatternParameter(const QString &pattern, const QSt
         if (param == "pixels") return QString::number(m_parameters.whiteboxPixels);
         if (param == "mm") return QString::number(m_parameters.whiteboxMM);
         if (param == "diagonal-inch") return QString::number(m_parameters.whiteboxDiagonalInch);
+    } else if (pattern == "whiteboxmm") {
+        if (param == "size") return QString::number(m_parameters.whiteboxmmSize);
+        if (param == "width-mm") return QString::number(m_parameters.whiteboxmmPhysWidthMM);
+        if (param == "height-mm") return QString::number(m_parameters.whiteboxmmPhysHeightMM);
     }
     return "";
 }
