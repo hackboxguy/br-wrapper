@@ -606,13 +606,13 @@
         "border_radius": 20
       },
       {
-        "id": "view-saved-gamut-reports",
+        "id": "view-reports",
         "enabled": true,
         "page": "calibration-tools",
-        "text": "View Saved Gamut Reports",
+        "text": "View Reports",
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/touch-gallery",
-        "arguments": ["/home/pi/test-reports/color-gamut"],
+        "arguments": ["/home/pi/test-reports"],
         "working_directory": "/tmp",
         "position": {
           "row": 2,
@@ -673,23 +673,13 @@
         "working_directory": "/tmp"
       },
       {
-        "id": "display-analysis-color-gamut-gallery",
+        "id": "display-analysis-report-gallery",
         "enabled": true,
         "visible": false,
         "page": "_internal",
-        "text": "Color Gamut Report Gallery",
+        "text": "Display Analysis Report Gallery",
         "program": "/usr/bin/touch-gallery",
-        "arguments": ["/home/pi/test-reports/color-gamut"],
-        "working_directory": "/tmp"
-      },
-      {
-        "id": "display-analysis-local-dimming-apl-gallery",
-        "enabled": true,
-        "visible": false,
-        "page": "_internal",
-        "text": "Local Dimming APL Report Gallery",
-        "program": "/usr/bin/touch-gallery",
-        "arguments": ["/home/pi/test-reports/local-dimming-apl"],
+        "arguments": ["/home/pi/test-reports"],
         "working_directory": "/tmp"
       },
       {

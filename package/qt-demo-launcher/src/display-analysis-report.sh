@@ -31,7 +31,7 @@ case "$suite_arg" in
         REPORT_PANELS="gamut,zoom_gamut"
         REPORT_TITLE="Color Gamut Analysis"
         DEFAULT_RENDERING_APP_ID="display-analysis-color-gamut-rendering"
-        DEFAULT_GALLERY_APP_ID="display-analysis-color-gamut-gallery"
+        DEFAULT_GALLERY_APP_ID="display-analysis-report-gallery"
         LEGACY_LOG_DIR="/tmp/gamut-test"
         LEGACY_LOG_NAME="analyze-color-gamut.log"
         ;;
@@ -41,7 +41,7 @@ case "$suite_arg" in
         REPORT_PANELS="local_dimming_apl"
         REPORT_TITLE="Local Dimming APL Analysis"
         DEFAULT_RENDERING_APP_ID="display-analysis-local-dimming-apl-rendering"
-        DEFAULT_GALLERY_APP_ID="display-analysis-local-dimming-apl-gallery"
+        DEFAULT_GALLERY_APP_ID="display-analysis-report-gallery"
         LEGACY_LOG_DIR=""
         LEGACY_LOG_NAME=""
         ;;
@@ -65,6 +65,7 @@ RESULTS_DIR="$SUITE_DIR/$RUN_ID"
 PNG_PATH="$SUITE_DIR/$RUN_ID.png"
 ARCHIVE_DIR="$ARCHIVE_ROOT/$SUITE_DIR_NAME"
 ARCHIVE_PNG_PATH="$ARCHIVE_DIR/$RUN_ID.png"
+COMMON_ARCHIVE_PNG_PATH="$ARCHIVE_ROOT/$RUN_ID-$SUITE_DIR_NAME.png"
 LATEST_DIR_LINK="$SUITE_DIR/latest"
 LATEST_PNG_LINK="$SUITE_DIR/latest.png"
 DISPLAY_PNG_PATH="$PNG_PATH"
@@ -300,6 +301,8 @@ show_report() {
 }
 
 archive_report_png() {
+    archive_status=0
+
     if ! mkdir -p "$ARCHIVE_DIR" 2>/dev/null; then
         log "WARNING: failed to create report archive directory: $ARCHIVE_DIR"
         return 1
@@ -307,12 +310,21 @@ archive_report_png() {
 
     if ! cp "$PNG_PATH" "$ARCHIVE_PNG_PATH" 2>/dev/null; then
         log "WARNING: failed to archive report PNG to: $ARCHIVE_PNG_PATH"
-        return 1
+        archive_status=1
+    else
+        DISPLAY_PNG_PATH="$ARCHIVE_PNG_PATH"
+        log "Archived suite report PNG: $ARCHIVE_PNG_PATH"
     fi
 
-    DISPLAY_PNG_PATH="$ARCHIVE_PNG_PATH"
-    log "Archived report PNG: $ARCHIVE_PNG_PATH"
-    return 0
+    if ! cp "$PNG_PATH" "$COMMON_ARCHIVE_PNG_PATH" 2>/dev/null; then
+        log "WARNING: failed to archive report PNG to combined gallery: $COMMON_ARCHIVE_PNG_PATH"
+        archive_status=1
+    else
+        DISPLAY_PNG_PATH="$COMMON_ARCHIVE_PNG_PATH"
+        log "Archived combined report PNG: $COMMON_ARCHIVE_PNG_PATH"
+    fi
+
+    return "$archive_status"
 }
 
 LAUNCHER_CLIENT_BIN="$(detect_launcher_client)"
@@ -340,6 +352,7 @@ log "Gallery app: $GALLERY_APP_ID"
 log "Results: $RESULTS_DIR"
 log "PNG: $PNG_PATH"
 log "Archive PNG: $ARCHIVE_PNG_PATH"
+log "Combined archive PNG: $COMMON_ARCHIVE_PNG_PATH"
 
 if [ ! -x "$RUNNER" ]; then
     log "ERROR: runner not found or not executable: $RUNNER"
