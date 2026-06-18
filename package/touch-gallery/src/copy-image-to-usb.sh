@@ -6,6 +6,7 @@
 USB_MOUNT_POINT="${USB_MOUNT_POINT:-/tmp/micropanel-usb}"
 USB_REPORT_DIR="${USB_REPORT_DIR:-display-reports}"
 USB_MOUNTED_BY_SCRIPT=0
+USB_MOUNT_PATH=""
 
 SUDO_CMD=""
 if [ "$(id -u)" -ne 0 ]; then
@@ -47,9 +48,21 @@ detect_usb_stick() {
     return 1
 }
 
-mounted_path_for_device() {
+is_device_mounted() {
     device="$1"
-    awk -v dev="$device" '$1 == dev { print $2; exit }' /proc/mounts 2>/dev/null
+    awk -v dev="$device" '$1 == dev { found=1 } END { exit found ? 0 : 1 }' /proc/mounts 2>/dev/null
+}
+
+is_path_mounted() {
+    mount_point="$1"
+    awk -v mp="$mount_point" '$2 == mp { found=1 } END { exit found ? 0 : 1 }' /proc/mounts 2>/dev/null
+}
+
+unmount_if_mounted() {
+    target="$1"
+
+    sync
+    $SUDO_CMD umount "$target" 2>/dev/null
 }
 
 detect_filesystem() {
@@ -69,16 +82,21 @@ detect_filesystem() {
 
 mount_usb_stick() {
     device="$1"
+    USB_MOUNT_PATH=""
 
-    existing_mount=$(mounted_path_for_device "$device")
-    if [ -n "$existing_mount" ]; then
-        echo "$existing_mount"
-        return 0
+    # Own the mount lifecycle for report transfers. Reusing desktop/udisks
+    # automounts can leave us with a stale or read-only mount after the stick
+    # is removed and reinserted.
+    if is_device_mounted "$device"; then
+        if ! unmount_if_mounted "$device"; then
+            return 1
+        fi
     fi
 
-    if mount | grep -q " $USB_MOUNT_POINT "; then
-        echo "$USB_MOUNT_POINT"
-        return 0
+    if is_path_mounted "$USB_MOUNT_POINT"; then
+        if ! unmount_if_mounted "$USB_MOUNT_POINT"; then
+            return 1
+        fi
     fi
 
     if [ ! -d "$USB_MOUNT_POINT" ]; then
@@ -90,13 +108,13 @@ mount_usb_stick() {
     fstype=$(detect_filesystem "$device")
     if $SUDO_CMD mount -t "$fstype" "$device" "$USB_MOUNT_POINT" 2>/dev/null; then
         USB_MOUNTED_BY_SCRIPT=1
-        echo "$USB_MOUNT_POINT"
+        USB_MOUNT_PATH="$USB_MOUNT_POINT"
         return 0
     fi
 
     if $SUDO_CMD mount "$device" "$USB_MOUNT_POINT" 2>/dev/null; then
         USB_MOUNTED_BY_SCRIPT=1
-        echo "$USB_MOUNT_POINT"
+        USB_MOUNT_PATH="$USB_MOUNT_POINT"
         return 0
     fi
 
@@ -130,10 +148,11 @@ main() {
         return 1
     fi
 
-    if ! mount_point=$(mount_usb_stick "$usb_device"); then
+    if ! mount_usb_stick "$usb_device"; then
         print_error "Failed to mount USB"
         return 1
     fi
+    mount_point="$USB_MOUNT_PATH"
 
     dest_dir="$mount_point/$USB_REPORT_DIR"
     if ! $SUDO_CMD mkdir -p "$dest_dir" 2>/dev/null; then
