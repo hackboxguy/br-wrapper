@@ -60,5 +60,9 @@ install(TARGETS touch-gallery
     PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
 
+install(PROGRAMS src/copy-image-to-usb.sh
+    DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
+
 message(STATUS "touch-gallery: configured")
 message(STATUS "  Install binary to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")

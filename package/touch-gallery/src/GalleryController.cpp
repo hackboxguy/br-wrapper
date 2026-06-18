@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QCoreApplication>
+#include <QProcess>
 
 GalleryController::GalleryController(QObject *parent)
     : QObject(parent)
@@ -10,6 +11,10 @@ GalleryController::GalleryController(QObject *parent)
     , m_currentIndex(0)
     , m_imageCount(0)
     , m_networkInterface(nullptr)
+    , m_usbCopyProcess(nullptr)
+    , m_usbCopyBusy(false)
+    , m_usbCopyStatus("")
+    , m_usbCopyScript("/usr/bin/copy-image-to-usb.sh")
 {
     // Initialize image list from default directory
     updateImageList();
@@ -17,6 +22,15 @@ GalleryController::GalleryController(QObject *parent)
 
 GalleryController::~GalleryController()
 {
+    if (m_usbCopyProcess) {
+        if (m_usbCopyProcess->state() != QProcess::NotRunning) {
+            m_usbCopyProcess->terminate();
+            if (!m_usbCopyProcess->waitForFinished(1000)) {
+                m_usbCopyProcess->kill();
+            }
+        }
+    }
+
     if (m_networkInterface) {
         delete m_networkInterface;
     }
@@ -46,6 +60,29 @@ void GalleryController::setImageCount(int count)
         m_imageCount = count;
         emit imageCountChanged();
         qDebug() << "Image count changed to:" << m_imageCount;
+    }
+}
+
+void GalleryController::setUsbCopyScript(const QString &scriptPath)
+{
+    if (!scriptPath.isEmpty()) {
+        m_usbCopyScript = scriptPath;
+    }
+}
+
+void GalleryController::setUsbCopyBusy(bool busy)
+{
+    if (m_usbCopyBusy != busy) {
+        m_usbCopyBusy = busy;
+        emit usbCopyBusyChanged();
+    }
+}
+
+void GalleryController::setUsbCopyStatus(const QString &status)
+{
+    if (m_usbCopyStatus != status) {
+        m_usbCopyStatus = status;
+        emit usbCopyStatusChanged();
     }
 }
 
@@ -81,6 +118,99 @@ QString GalleryController::getCurrentImage() const
 QString GalleryController::listImages() const
 {
     return m_imageList.join(",");
+}
+
+QString GalleryController::compactProcessOutput(const QString &output) const
+{
+    QStringList lines;
+    for (const QString &line : output.split('\n')) {
+        QString trimmed = line.trimmed();
+        if (!trimmed.isEmpty()) {
+            lines.append(trimmed);
+        }
+    }
+
+    if (lines.isEmpty()) {
+        return "";
+    }
+
+    return lines.join(". ");
+}
+
+void GalleryController::copyCurrentImageToUsb()
+{
+    if (m_usbCopyBusy) {
+        setUsbCopyStatus("Copy already running");
+        return;
+    }
+
+    setUsbCopyStatus("");
+
+    QString currentImage = getCurrentImage();
+    if (currentImage.isEmpty()) {
+        setUsbCopyStatus("No image selected");
+        return;
+    }
+
+    QFileInfo imageInfo(currentImage);
+    if (!imageInfo.isFile()) {
+        setUsbCopyStatus("Image not found");
+        return;
+    }
+
+    QFileInfo scriptInfo(m_usbCopyScript);
+    if (!scriptInfo.isExecutable()) {
+        setUsbCopyStatus("USB copy script not found");
+        return;
+    }
+
+    QProcess *process = new QProcess(this);
+    m_usbCopyProcess = process;
+    process->setProgram(m_usbCopyScript);
+    process->setArguments(QStringList() << currentImage);
+    process->setProcessChannelMode(QProcess::MergedChannels);
+
+    connect(process,
+            static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
+            this,
+            [this, process](int exitCode, QProcess::ExitStatus exitStatus) {
+                QString output = compactProcessOutput(QString::fromLocal8Bit(process->readAll()));
+
+                if (m_usbCopyProcess == process) {
+                    m_usbCopyProcess = nullptr;
+                }
+
+                setUsbCopyBusy(false);
+                if (exitStatus == QProcess::NormalExit && exitCode == 0) {
+                    setUsbCopyStatus("Copied to USB. Safe to remove.");
+                } else if (!output.isEmpty()) {
+                    setUsbCopyStatus(output);
+                } else {
+                    setUsbCopyStatus("USB copy failed");
+                }
+                process->deleteLater();
+            });
+
+    connect(process,
+            &QProcess::errorOccurred,
+            this,
+            [this, process](QProcess::ProcessError error) {
+                if (error != QProcess::FailedToStart) {
+                    return;
+                }
+
+                if (m_usbCopyProcess == process) {
+                    m_usbCopyProcess = nullptr;
+                }
+
+                setUsbCopyBusy(false);
+                setUsbCopyStatus("USB copy failed to start");
+                process->deleteLater();
+            });
+
+    setUsbCopyStatus("Copying...");
+    setUsbCopyBusy(true);
+    process->start();
 }
 
 void GalleryController::updateImageList()
@@ -207,6 +337,19 @@ void GalleryController::handleNetworkCommand(const QString &command)
         QString directory = parts.mid(1).join(" "); // Handle spaces in path
         setPicturesDirectory(directory);
         m_networkInterface->sendResponse("OK");
+    } else if (cmd == "copy-current-to-usb") {
+        if (m_usbCopyBusy) {
+            m_networkInterface->sendResponse("ERROR: Copy already running");
+        } else {
+            copyCurrentImageToUsb();
+            if (m_usbCopyBusy) {
+                m_networkInterface->sendResponse("OK: Copy started");
+            } else {
+                m_networkInterface->sendResponse("ERROR: " + m_usbCopyStatus);
+            }
+        }
+    } else if (cmd == "get-usb-copy-status") {
+        m_networkInterface->sendResponse(m_usbCopyStatus);
     } else if (cmd == "quit") {
         m_networkInterface->sendResponse("OK");
         QCoreApplication::quit();

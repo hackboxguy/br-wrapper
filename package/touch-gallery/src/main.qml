@@ -15,6 +15,8 @@ ApplicationWindow {
     property bool uiVisible: true
     property bool isSlideshow: slideshowMode || false
     property bool slideshowPaused: false
+    property bool usbCopyMode: usbCopyEnabled || false
+    property string usbCopyStatusText: ""
 
     FolderListModel {
         id: folderModel
@@ -57,6 +59,14 @@ ApplicationWindow {
                     currentImageIndex = i
                     break
                 }
+            }
+        }
+
+        function onUsbCopyStatusChanged() {
+            usbCopyStatusText = galleryController.usbCopyStatus
+            if (usbCopyStatusText !== "") {
+                uiVisible = true
+                usbCopyStatusTimer.restart()
             }
         }
     }
@@ -317,6 +327,41 @@ ApplicationWindow {
                 }
             }
 
+            Rectangle {
+                id: usbCopyButton
+                anchors.top: parent.top
+                anchors.right: exitButton.left
+                anchors.topMargin: 20
+                anchors.rightMargin: 12
+                width: 150
+                height: 60
+                color: galleryController.usbCopyBusy ? "#C0444444" : "#C0004080"
+                radius: 8
+                border.color: galleryController.usbCopyBusy ? "#777777" : "white"
+                border.width: 1
+                opacity: galleryController.usbCopyBusy ? 0.65 : 1.0
+                visible: usbCopyMode && folderModel.count > 0 && !isSlideshow
+
+                Text {
+                    anchors.centerIn: parent
+                    text: "COPY USB"
+                    color: "white"
+                    font.pixelSize: 22
+                    font.family: "DejaVu Sans"
+                    font.bold: true
+                    renderType: Text.NativeRendering
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: !galleryController.usbCopyBusy
+                    onClicked: {
+                        galleryController.copyCurrentImageToUsb()
+                        showUITemporarily()
+                    }
+                }
+            }
+
             // LD / PC overlay toggle buttons (top-right, below the exit button).
             // Shown only when the FPGA responds to register 0x2C / 0x2D with a valid
             // value (0x00 or 0x01). Styled as toggles: green when enabled, gray when off.
@@ -392,6 +437,32 @@ ApplicationWindow {
             }
 
             Rectangle {
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.margins: 20
+                width: Math.min(Math.max(usbCopyStatusTextLabel.implicitWidth + 28, 260), parent.width - 40)
+                height: 58
+                color: "#C0000000"
+                radius: 8
+                border.color: "white"
+                border.width: 1
+                visible: usbCopyMode && usbCopyStatusText !== ""
+
+                Text {
+                    id: usbCopyStatusTextLabel
+                    anchors.centerIn: parent
+                    text: usbCopyStatusText
+                    color: "white"
+                    font.pixelSize: 20
+                    font.family: "DejaVu Sans"
+                    horizontalAlignment: Text.AlignHCenter
+                    elide: Text.ElideRight
+                    width: parent.width - 24
+                    renderType: Text.NativeRendering
+                }
+            }
+
+            Rectangle {
                 anchors.bottom: parent.bottom
                 anchors.horizontalCenter: parent.horizontalCenter
                 anchors.margins: 20
@@ -442,7 +513,24 @@ ApplicationWindow {
             id: uiHideTimer
             interval: 4000
             running: false
-            onTriggered: uiVisible = false
+            onTriggered: {
+                if (galleryController.usbCopyBusy) {
+                    restart()
+                } else {
+                    uiVisible = false
+                }
+            }
+        }
+
+        Timer {
+            id: usbCopyStatusTimer
+            interval: 5000
+            running: false
+            onTriggered: {
+                if (!galleryController.usbCopyBusy) {
+                    usbCopyStatusText = ""
+                }
+            }
         }
 
         Timer {

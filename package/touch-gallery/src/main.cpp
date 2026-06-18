@@ -46,6 +46,15 @@ int main(int argc, char *argv[])
                                  "i2c", "/dev/i2c-1");
     parser.addOption(i2cOption);
 
+    QCommandLineOption usbCopyOption(QStringList() << "enable-usb-copy",
+                                     "Show COPY USB button for the current image.");
+    parser.addOption(usbCopyOption);
+
+    QCommandLineOption usbCopyScriptOption(QStringList() << "usb-copy-script",
+                                           "Script used by COPY USB button.",
+                                           "script", "/usr/bin/copy-image-to-usb.sh");
+    parser.addOption(usbCopyScriptOption);
+
     parser.process(app);
 
     // Get pictures directory
@@ -79,6 +88,7 @@ int main(int argc, char *argv[])
     // Create gallery controller
     GalleryController galleryController;
     galleryController.setPicturesDirectory(picturesDir);
+    galleryController.setUsbCopyScript(parser.value(usbCopyScriptOption));
 
     // Start network interface
     if (!galleryController.startNetworkInterface(port)) {
@@ -97,6 +107,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("galleryController", &galleryController);
     engine.rootContext()->setContextProperty("fpga", &fpgaController);
     engine.rootContext()->setContextProperty("picturesPath", QUrl::fromLocalFile(picturesDir));
+    engine.rootContext()->setContextProperty("usbCopyEnabled", parser.isSet(usbCopyOption));
     engine.rootContext()->setContextProperty("slideshowMode", slideshowMode);
     engine.rootContext()->setContextProperty("slideshowInterval", slideshowInterval * 1000); // Convert to milliseconds
 

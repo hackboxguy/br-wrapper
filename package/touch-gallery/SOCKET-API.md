@@ -14,6 +14,9 @@ Options:
   --version               Show version information
   -p, --port <port>       TCP server port (default: 8086)
   -s, --slideshow <sec>   Enable slideshow mode with interval in seconds
+  --enable-usb-copy       Show COPY USB button for the current image
+  --usb-copy-script <path>
+                          Script used by COPY USB button
 
 Positional Arguments:
   directory               Pictures directory to display (default: /Pictures)
@@ -33,6 +36,9 @@ touch-gallery --port 8084 /media/images
 
 # Start in slideshow mode (5 second interval)
 touch-gallery --slideshow 5 /media/images
+
+# Start report gallery with USB copy enabled
+touch-gallery --enable-usb-copy /home/pi/test-reports
 ```
 
 ## Socket API Commands
@@ -138,6 +144,22 @@ echo "set-directory /media/photos" | nc 127.0.0.1 8086
 # Returns: OK
 ```
 
+#### `copy-current-to-usb`
+**Description**: Starts copying the currently displayed image to USB.
+**Response**:
+- Success: `OK: Copy started\n`
+- Error: `ERROR: <reason>\n`
+**Example**:
+```bash
+echo "copy-current-to-usb" | nc 127.0.0.1 8086
+# Returns: OK: Copy started
+```
+
+#### `get-usb-copy-status`
+**Description**: Returns the latest USB copy status text.
+**Response**:
+- Status text, for example `Copied to USB. Safe to remove.\n`
+
 #### `quit`
 **Description**: Closes the application
 **Response**: `OK\n`
@@ -168,6 +190,9 @@ The `launcher-client` utility can be used for remote control:
 # Get state
 ./launcher-client --srv=192.168.1.197:8086 --command=get-count
 ./launcher-client --srv=192.168.1.197:8086 --command=get-index
+
+# Copy current image to USB
+./launcher-client --srv=192.168.1.197:8086 --command=copy-current-to-usb
 ```
 
 ## Error Responses

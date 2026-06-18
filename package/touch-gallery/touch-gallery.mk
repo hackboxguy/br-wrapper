@@ -16,6 +16,7 @@ endef
 
 define TOUCH_GALLERY_INSTALL_TARGET_CMDS
     $(INSTALL) -D -m 0755 $(@D)/touch-gallery $(TARGET_DIR)/usr/bin/touch-gallery
+    $(INSTALL) -D -m 0755 $(@D)/copy-image-to-usb.sh $(TARGET_DIR)/usr/bin/copy-image-to-usb.sh
 endef
 
 $(eval $(generic-package))
