@@ -14,7 +14,7 @@ GalleryController::GalleryController(QObject *parent)
     , m_usbCopyProcess(nullptr)
     , m_usbCopyBusy(false)
     , m_usbCopyStatus("")
-    , m_usbCopyScript("/usr/bin/copy-image-to-usb.sh")
+    , m_usbCopyScript("")
 {
     // Initialize image list from default directory
     updateImageList();
@@ -155,6 +155,11 @@ void GalleryController::copyCurrentImageToUsb()
     QFileInfo imageInfo(currentImage);
     if (!imageInfo.isFile()) {
         setUsbCopyStatus("Image not found");
+        return;
+    }
+
+    if (m_usbCopyScript.isEmpty()) {
+        setUsbCopyStatus("USB copy script not configured");
         return;
     }
 

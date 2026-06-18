@@ -612,7 +612,11 @@
         "text": "View Reports",
         "icon": "/usr/share/icons/tools-large.png",
         "program": "/usr/bin/touch-gallery",
-        "arguments": ["--enable-usb-copy", "/home/pi/test-reports"],
+        "arguments": [
+          "--enable-usb-copy",
+          "--usb-copy-script", "/home/pi/micropanel/bin/copy-image-to-usb.sh",
+          "/home/pi/test-reports"
+        ],
         "working_directory": "/tmp",
         "position": {
           "row": 2,
@@ -679,7 +683,11 @@
         "page": "_internal",
         "text": "Display Analysis Report Gallery",
         "program": "/usr/bin/touch-gallery",
-        "arguments": ["--enable-usb-copy", "/home/pi/test-reports"],
+        "arguments": [
+          "--enable-usb-copy",
+          "--usb-copy-script", "/home/pi/micropanel/bin/copy-image-to-usb.sh",
+          "/home/pi/test-reports"
+        ],
         "working_directory": "/tmp"
       },
       {

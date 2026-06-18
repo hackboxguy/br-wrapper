@@ -38,7 +38,9 @@ touch-gallery --port 8084 /media/images
 touch-gallery --slideshow 5 /media/images
 
 # Start report gallery with USB copy enabled
-touch-gallery --enable-usb-copy /home/pi/test-reports
+touch-gallery --enable-usb-copy \
+  --usb-copy-script /home/pi/micropanel/bin/copy-image-to-usb.sh \
+  /home/pi/test-reports
 ```
 
 ## Socket API Commands

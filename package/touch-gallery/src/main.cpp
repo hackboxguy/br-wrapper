@@ -52,7 +52,7 @@ int main(int argc, char *argv[])
 
     QCommandLineOption usbCopyScriptOption(QStringList() << "usb-copy-script",
                                            "Script used by COPY USB button.",
-                                           "script", "/usr/bin/copy-image-to-usb.sh");
+                                           "script");
     parser.addOption(usbCopyScriptOption);
 
     parser.process(app);
