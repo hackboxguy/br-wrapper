@@ -80,6 +80,49 @@ detect_filesystem() {
     return 0
 }
 
+find_companion_data_dir() {
+    image_path="$1"
+    image_dir=$(dirname "$image_path")
+    image_name=$(basename "$image_path")
+    image_stem="${image_name%.*}"
+
+    for candidate in \
+        "$image_dir/$image_stem-data" \
+        "$image_dir/$image_stem"
+    do
+        if [ -d "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    case "$image_stem" in
+        *-local-dimming-apl)
+            run_id="${image_stem%-local-dimming-apl}"
+            suite_dir="local-dimming-apl"
+            ;;
+        *-color-gamut)
+            run_id="${image_stem%-color-gamut}"
+            suite_dir="color-gamut"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+
+    for candidate in \
+        "$image_dir/$suite_dir/$run_id-data" \
+        "$image_dir/$suite_dir/$run_id"
+    do
+        if [ -d "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 mount_usb_stick() {
     device="$1"
     USB_MOUNT_PATH=""
@@ -162,11 +205,29 @@ main() {
     fi
 
     image_name=$(basename "$image_path")
+    image_stem="${image_name%.*}"
     dest_path="$dest_dir/$image_name"
     if ! $SUDO_CMD cp -f "$image_path" "$dest_path" 2>/dev/null; then
         print_error "USB copy failed"
         unmount_usb_stick
         return 1
+    fi
+
+    data_copied=0
+    if data_dir=$(find_companion_data_dir "$image_path"); then
+        data_dest="$dest_dir/$image_stem-data"
+        if ! $SUDO_CMD mkdir -p "$data_dest" 2>/dev/null; then
+            print_error "USB data copy failed"
+            unmount_usb_stick
+            return 1
+        fi
+
+        if ! $SUDO_CMD cp -rf "$data_dir/." "$data_dest/" 2>/dev/null; then
+            print_error "USB data copy failed"
+            unmount_usb_stick
+            return 1
+        fi
+        data_copied=1
     fi
 
     sync
@@ -175,7 +236,12 @@ main() {
         return 1
     fi
 
-    print_info "Copied to USB"
+    if [ "$data_copied" = "1" ]; then
+        print_info "Copied image and data to USB"
+    else
+        print_info "Copied image only"
+        print_info "Data not found"
+    fi
     if [ "$USB_MOUNTED_BY_SCRIPT" = "1" ]; then
         print_info "Safe to remove"
     fi

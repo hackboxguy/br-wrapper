@@ -187,7 +187,7 @@ void GalleryController::copyCurrentImageToUsb()
 
                 setUsbCopyBusy(false);
                 if (exitStatus == QProcess::NormalExit && exitCode == 0) {
-                    setUsbCopyStatus("Copied to USB. Safe to remove.");
+                    setUsbCopyStatus(output.isEmpty() ? "Copied to USB. Safe to remove." : output);
                 } else if (!output.isEmpty()) {
                     setUsbCopyStatus(output);
                 } else {

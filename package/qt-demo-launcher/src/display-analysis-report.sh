@@ -66,6 +66,8 @@ PNG_PATH="$SUITE_DIR/$RUN_ID.png"
 ARCHIVE_DIR="$ARCHIVE_ROOT/$SUITE_DIR_NAME"
 ARCHIVE_PNG_PATH="$ARCHIVE_DIR/$RUN_ID.png"
 COMMON_ARCHIVE_PNG_PATH="$ARCHIVE_ROOT/$RUN_ID-$SUITE_DIR_NAME.png"
+ARCHIVE_DATA_DIR="$ARCHIVE_DIR/$RUN_ID-data"
+COMMON_ARCHIVE_DATA_DIR="$ARCHIVE_ROOT/$RUN_ID-$SUITE_DIR_NAME-data"
 LATEST_DIR_LINK="$SUITE_DIR/latest"
 LATEST_PNG_LINK="$SUITE_DIR/latest.png"
 DISPLAY_PNG_PATH="$PNG_PATH"
@@ -327,6 +329,44 @@ archive_report_png() {
     return "$archive_status"
 }
 
+copy_results_dir() {
+    dest_dir="$1"
+
+    if ! mkdir -p "$dest_dir" 2>/dev/null; then
+        log "WARNING: failed to create measurement data archive directory: $dest_dir"
+        return 1
+    fi
+
+    if ! cp -rf "$RESULTS_DIR/." "$dest_dir/" 2>/dev/null; then
+        log "WARNING: failed to archive measurement data to: $dest_dir"
+        return 1
+    fi
+
+    if [ -f "$PNG_PATH" ]; then
+        cp -f "$PNG_PATH" "$dest_dir/report.png" 2>/dev/null || true
+    fi
+
+    return 0
+}
+
+archive_measurement_data() {
+    archive_status=0
+
+    if ! copy_results_dir "$ARCHIVE_DATA_DIR"; then
+        archive_status=1
+    else
+        log "Archived suite measurement data: $ARCHIVE_DATA_DIR"
+    fi
+
+    if ! copy_results_dir "$COMMON_ARCHIVE_DATA_DIR"; then
+        archive_status=1
+    else
+        log "Archived combined measurement data: $COMMON_ARCHIVE_DATA_DIR"
+    fi
+
+    return "$archive_status"
+}
+
 LAUNCHER_CLIENT_BIN="$(detect_launcher_client)"
 export LAUNCHER_CLIENT="$LAUNCHER_CLIENT_BIN"
 export MICROPANEL_HOME
@@ -353,6 +393,8 @@ log "Results: $RESULTS_DIR"
 log "PNG: $PNG_PATH"
 log "Archive PNG: $ARCHIVE_PNG_PATH"
 log "Combined archive PNG: $COMMON_ARCHIVE_PNG_PATH"
+log "Archive data: $ARCHIVE_DATA_DIR"
+log "Combined archive data: $COMMON_ARCHIVE_DATA_DIR"
 
 if [ ! -x "$RUNNER" ]; then
     log "ERROR: runner not found or not executable: $RUNNER"
@@ -398,6 +440,7 @@ fi
 ln -sfn "$PNG_PATH" "$LATEST_PNG_LINK" 2>/dev/null || true
 log "Report rendered successfully"
 archive_report_png || true
+archive_measurement_data || true
 
 if ! show_report; then
     log "ERROR: failed to show report in touch-gallery"
