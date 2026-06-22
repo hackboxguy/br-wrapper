@@ -123,6 +123,36 @@ find_companion_data_dir() {
     return 1
 }
 
+split_image_name() {
+    image_name="$1"
+
+    case "$image_name" in
+        *.*)
+            image_stem="${image_name%.*}"
+            image_ext=".${image_name##*.}"
+            ;;
+        *)
+            image_stem="$image_name"
+            image_ext=""
+            ;;
+    esac
+}
+
+next_available_report_stem() {
+    dest_dir="$1"
+    base_stem="$2"
+    image_ext="$3"
+
+    candidate="$base_stem"
+    suffix=2
+    while [ -e "$dest_dir/$candidate$image_ext" ] || [ -e "$dest_dir/$candidate-data" ]; do
+        candidate="$base_stem-$suffix"
+        suffix=$((suffix + 1))
+    done
+
+    echo "$candidate"
+}
+
 mount_usb_stick() {
     device="$1"
     USB_MOUNT_PATH=""
@@ -205,8 +235,9 @@ main() {
     fi
 
     image_name=$(basename "$image_path")
-    image_stem="${image_name%.*}"
-    dest_path="$dest_dir/$image_name"
+    split_image_name "$image_name"
+    dest_stem=$(next_available_report_stem "$dest_dir" "$image_stem" "$image_ext")
+    dest_path="$dest_dir/$dest_stem$image_ext"
     if ! $SUDO_CMD cp -f "$image_path" "$dest_path" 2>/dev/null; then
         print_error "USB copy failed"
         unmount_usb_stick
@@ -215,7 +246,7 @@ main() {
 
     data_copied=0
     if data_dir=$(find_companion_data_dir "$image_path"); then
-        data_dest="$dest_dir/$image_stem-data"
+        data_dest="$dest_dir/$dest_stem-data"
         if ! $SUDO_CMD mkdir -p "$data_dest" 2>/dev/null; then
             print_error "USB data copy failed"
             unmount_usb_stick
