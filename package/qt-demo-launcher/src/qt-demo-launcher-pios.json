@@ -398,7 +398,7 @@
       },
       {
         "id": "color-matching-new",
-        "enabled": true,
+        "enabled": false,
         "page": "calibration-tools",
         "text": "White Point Matching New",
         "icon": "/usr/share/icons/tools-large.png",
@@ -523,7 +523,7 @@
       },
       {
         "id": "d65-calibration",
-        "enabled": true,
+        "enabled": false,
         "page": "calibration-tools",
         "text": "D65 Calibration",
         "icon": "/usr/share/icons/tools-large.png",
