@@ -358,7 +358,7 @@ ApplicationWindow {
                     onClicked: {
                         if (typeof galleryController !== 'undefined' && folderModel.count > 0) {
                             galleryController.setCurrentIndex(currentImageIndex)
-                            galleryController.copyImageToUsb(folderModel.get(currentImageIndex, "filePath"))
+                            galleryController.copyCurrentImageToUsb()
                         }
                         showUITemporarily()
                     }
