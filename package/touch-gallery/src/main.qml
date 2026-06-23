@@ -356,10 +356,8 @@ ApplicationWindow {
                     anchors.fill: parent
                     enabled: !galleryController.usbCopyBusy
                     onClicked: {
-                        if (typeof galleryController !== 'undefined' && folderModel.count > 0) {
-                            galleryController.setCurrentIndex(currentImageIndex)
-                            galleryController.copyCurrentImageToUsb()
-                        }
+                        galleryController.currentIndex = currentImageIndex
+                        galleryController.copyCurrentImageToUsb()
                         showUITemporarily()
                     }
                 }

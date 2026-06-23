@@ -139,11 +139,6 @@ QString GalleryController::compactProcessOutput(const QString &output) const
 
 void GalleryController::copyCurrentImageToUsb()
 {
-    copyImageToUsb(getCurrentImage());
-}
-
-void GalleryController::copyImageToUsb(const QString &imagePath)
-{
     if (m_usbCopyBusy) {
         setUsbCopyStatus("Copy already running");
         return;
@@ -151,7 +146,7 @@ void GalleryController::copyImageToUsb(const QString &imagePath)
 
     setUsbCopyStatus("");
 
-    QString currentImage = imagePath;
+    QString currentImage = getCurrentImage();
     if (currentImage.isEmpty()) {
         setUsbCopyStatus("No image selected");
         return;

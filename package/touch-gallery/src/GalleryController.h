@@ -46,7 +46,6 @@ public slots:
     QString getCurrentImage() const;
     QString listImages() const;
     Q_INVOKABLE void copyCurrentImageToUsb();
-    Q_INVOKABLE void copyImageToUsb(const QString &imagePath);
 
 signals:
     void picturesDirectoryChanged();
