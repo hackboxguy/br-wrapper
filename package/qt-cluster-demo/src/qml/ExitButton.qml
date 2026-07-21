@@ -38,10 +38,10 @@ Item {
         anchors.margins: root.buttonMargin
         spacing: root.buttonSpacing
 
-        // FPGA Local Dimming toggle — left of T/B/X.
-        // Visible only when the FPGA at 0x1D responds to register 0x2C with
-        // a valid value (0x00 or 0x01). Existing T/B/X buttons keep their
-        // positions because the Row is right-anchored.
+        // FPGA Local Dimming toggle — left of T/B/X. The controller selects
+        // the new 0x1E or legacy 0x1D protocol before exposing this button.
+        // Existing T/B/X buttons keep their positions because the Row is
+        // right-anchored.
         Rectangle {
             width: root.buttonSize
             height: width

@@ -4,14 +4,17 @@
 #include <QObject>
 #include <QTimer>
 #include <QString>
+#include <cstdint>
 
 /**
  * FpgaController - I2C communication with FPGA
  *
- * Register map:
- * - 0x00: Firmware version (8 bytes)
- * - 0x10: Board info (8 bytes)
- * - 0x34: Privacy mode (1 byte, 0x00=off, 0x01=on)
+ * The controller auto-detects the new FPGA slave (0x1E) before the legacy
+ * slave (0x1D) using only the VERSION register. New writes use the
+ * page/register form [0x00, reg, data]; legacy writes use the four-byte
+ * register prefix [0x00, 0x00, 0x00, reg]. Legacy LD/PC controls are
+ * write-only, so their last requested values are kept in /tmp for the
+ * duration of the current system boot.
  */
 class FpgaController : public QObject
 {
@@ -37,6 +40,7 @@ public:
 
     void setI2cBus(const QString &bus);
     void setI2cAddress(int address);
+    void setProtocolOverride(const QString &protocol);
     void start();
 
     QString firmwareVersion() const { return m_firmwareVersion; }
@@ -75,10 +79,24 @@ signals:
     void errorOccurred(const QString &message);
 
 private:
+    enum class Protocol { None, New, Legacy };
+
     int openI2c();
+    int openI2cAt(uint8_t address);
     void closeI2c(int fd);
     bool readRegister(int fd, uint8_t reg, uint8_t *data, int len);
     bool writeRegister(int fd, uint8_t reg, uint8_t value);
+    bool readRegisterNew(int fd, uint8_t reg, uint8_t *data, int len);
+    bool writeRegisterNew(int fd, uint8_t reg, const uint8_t *data, int len);
+    bool readRegisterLegacy(int fd, uint8_t reg, uint8_t *data, int len);
+    bool writeRegisterLegacy(int fd, uint8_t reg, const uint8_t *data, int len);
+    bool ensureProtocol();
+    bool probeProtocol(Protocol protocol);
+    bool pingCurrentProtocol(int fd);
+    void clearProtocol();
+    void initializeLegacyState();
+    bool loadLegacyState(bool *localDimming, bool *pixelCompensation) const;
+    void saveLegacyState() const;
     void parseFirmwareInfo(const uint8_t *data);
     void parseBoardInfo(const uint8_t *data);
     void parseBuildTime(const uint8_t *data);
@@ -87,6 +105,9 @@ private:
 private:
     QString m_i2cBus;
     int m_i2cAddress;
+    QString m_protocolOverride;
+    Protocol m_protocol;
+    bool m_legacyStateInitialized;
 
     QString m_firmwareVersion;
     QString m_firmwareId;

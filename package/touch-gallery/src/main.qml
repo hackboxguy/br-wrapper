@@ -364,8 +364,8 @@ ApplicationWindow {
             }
 
             // LD / PC overlay toggle buttons (top-right, below the exit button).
-            // Shown only when the FPGA responds to register 0x2C / 0x2D with a valid
-            // value (0x00 or 0x01). Styled as toggles: green when enabled, gray when off.
+            // The controller selects the new 0x1E or legacy 0x1D protocol and
+            // exposes the controls only when the selected FPGA supports them.
             Row {
                 id: fpgaToggleRow
                 anchors.top: exitButton.bottom

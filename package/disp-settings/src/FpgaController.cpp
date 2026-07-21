@@ -1,6 +1,10 @@
 #include "FpgaController.h"
 #include "config.h"
 #include <QDebug>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
@@ -13,6 +17,21 @@
 #define REG_LOCAL_DIMMING   0x2C    // 1 byte: 0x00=enabled (default), 0x01=disabled — optional
 #define REG_PIXEL_COMP      0x2D    // 1 byte: 0x00=enabled (default), 0x01=disabled — optional
 #define REG_PRIVACY_MODE    0x34    // 1 byte: 0=off, 1=on
+#define REG_LEGACY_LOCAL_DIMMING 0x29
+#define REG_LEGACY_PIXEL_COMP    0x47
+#define FPGA_NEW_I2C_ADDR  0x1E
+
+namespace {
+const char * const LEGACY_STATE_FILE = "/tmp/fpga-ldpc-state.json";
+bool isPlausibleVersion(const uint8_t version[4]) {
+    if (version[0] == 0x48) return true;
+    if (((version[0] >> 4) & 0x0F) > 9 || (version[0] & 0x0F) > 9 ||
+        ((version[1] >> 4) & 0x0F) > 9 || (version[1] & 0x0F) > 9) return false;
+    const int month = ((version[0] >> 4) & 0x0F) * 10 + (version[0] & 0x0F);
+    const int day = ((version[1] >> 4) & 0x0F) * 10 + (version[1] & 0x0F);
+    return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+}
 
 // Data sizes
 #define VERSION_SIZE        4
@@ -23,6 +42,9 @@ FpgaController::FpgaController(QObject *parent)
     : QObject(parent)
     , m_i2cBus(DEFAULT_I2C_BUS)
     , m_i2cAddress(FPGA_I2C_ADDR)
+    , m_protocolOverride("auto")
+    , m_protocol(Protocol::None)
+    , m_legacyStateInitialized(false)
     , m_buildTimeValid(false)
     , m_privacyMode(false)
     , m_localDimmingSupported(false)
@@ -45,21 +67,33 @@ FpgaController::~FpgaController()
 void FpgaController::setI2cBus(const QString &bus)
 {
     m_i2cBus = bus;
+    clearProtocol();
 }
 
 void FpgaController::setI2cAddress(int address)
 {
     m_i2cAddress = address;
+    clearProtocol();
+}
+
+void FpgaController::setProtocolOverride(const QString &protocol)
+{
+    const QString value = protocol.trimmed().toLower();
+    m_protocolOverride = (value == "auto" || value == "new" || value == "legacy") ? value : "auto";
+    if (m_protocolOverride != value)
+        qWarning() << "FpgaController: invalid protocol override" << protocol;
+    clearProtocol();
 }
 
 void FpgaController::start()
 {
-    qDebug() << "FpgaController: Starting with bus" << m_i2cBus << "address 0x" << Qt::hex << m_i2cAddress;
+    qDebug() << "FpgaController: Starting with bus" << m_i2cBus
+             << "protocol override" << m_protocolOverride;
     refresh();
     m_refreshTimer->start();
 }
 
-int FpgaController::openI2c()
+int FpgaController::openI2cAt(uint8_t address)
 {
     int fd = open(m_i2cBus.toLocal8Bit().constData(), O_RDWR);
     if (fd < 0) {
@@ -67,13 +101,22 @@ int FpgaController::openI2c()
         return -1;
     }
 
-    if (ioctl(fd, I2C_SLAVE, m_i2cAddress) < 0) {
+    if (ioctl(fd, I2C_SLAVE, address) < 0) {
         qWarning() << "FpgaController: Failed to set I2C address";
         close(fd);
         return -1;
     }
 
     return fd;
+}
+
+int FpgaController::openI2c()
+{
+    if (m_protocol == Protocol::New)
+        return openI2cAt(FPGA_NEW_I2C_ADDR);
+    if (m_protocol == Protocol::Legacy)
+        return openI2cAt(static_cast<uint8_t>(m_i2cAddress));
+    return -1;
 }
 
 void FpgaController::closeI2c(int fd)
@@ -85,7 +128,17 @@ void FpgaController::closeI2c(int fd)
 
 bool FpgaController::readRegister(int fd, uint8_t reg, uint8_t *data, int len)
 {
-    // FPGA protocol: Write 4-byte register address [0x00, 0x00, 0x00, REGISTER]
+    return m_protocol == Protocol::New ? readRegisterNew(fd, reg, data, len)
+                                       : readRegisterLegacy(fd, reg, data, len);
+}
+
+bool FpgaController::readRegisterNew(int fd, uint8_t reg, uint8_t *data, int len)
+{
+    return write(fd, &reg, 1) == 1 && read(fd, data, len) == len;
+}
+
+bool FpgaController::readRegisterLegacy(int fd, uint8_t reg, uint8_t *data, int len)
+{
     uint8_t regAddr[4] = {0x00, 0x00, 0x00, reg};
     if (write(fd, regAddr, 4) != 4) {
         qWarning() << "FpgaController: Failed to write register address";
@@ -103,13 +156,121 @@ bool FpgaController::readRegister(int fd, uint8_t reg, uint8_t *data, int len)
 
 bool FpgaController::writeRegister(int fd, uint8_t reg, uint8_t value)
 {
-    // FPGA protocol: Write [0x00, 0x00, 0x00, REGISTER, VALUE]
-    uint8_t buf[5] = {0x00, 0x00, 0x00, reg, value};
-    if (write(fd, buf, 5) != 5) {
+    return m_protocol == Protocol::New ? writeRegisterNew(fd, reg, &value, 1)
+                                       : writeRegisterLegacy(fd, reg, &value, 1);
+}
+
+bool FpgaController::writeRegisterNew(int fd, uint8_t reg, const uint8_t *data, int len)
+{
+    if (len < 1 || len > 2) return false;
+    uint8_t buf[4] = {0x00, reg, 0x00, 0x00};
+    for (int i = 0; i < len; ++i) buf[2 + i] = data[i];
+    return write(fd, buf, len + 2) == len + 2;
+}
+
+bool FpgaController::writeRegisterLegacy(int fd, uint8_t reg, const uint8_t *data, int len)
+{
+    if (len < 1 || len > 2) return false;
+    uint8_t packet[6] = {0x00, 0x00, 0x00, reg, 0x00, 0x00};
+    for (int i = 0; i < len; ++i) packet[4 + i] = data[i];
+    if (write(fd, packet, len + 4) != len + 4) {
         qWarning() << "FpgaController: Failed to write register";
         return false;
     }
     return true;
+}
+
+bool FpgaController::probeProtocol(Protocol protocol)
+{
+    const int fd = openI2cAt(protocol == Protocol::New ? FPGA_NEW_I2C_ADDR
+                                                       : static_cast<uint8_t>(m_i2cAddress));
+    if (fd < 0) return false;
+    uint8_t version[4];
+    const bool ok = protocol == Protocol::New ? readRegisterNew(fd, REG_VERSION, version, 4)
+                                               : readRegisterLegacy(fd, REG_VERSION, version, 4);
+    closeI2c(fd);
+    return ok && isPlausibleVersion(version);
+}
+
+bool FpgaController::ensureProtocol()
+{
+    if (m_protocol != Protocol::None) return true;
+    if (m_protocolOverride != "legacy" && probeProtocol(Protocol::New))
+        m_protocol = Protocol::New;
+    else if (m_protocolOverride != "new" && probeProtocol(Protocol::Legacy))
+        m_protocol = Protocol::Legacy;
+    else
+        return false;
+    m_legacyStateInitialized = false;
+    qDebug() << "FpgaController: selected"
+             << (m_protocol == Protocol::New ? "new FPGA protocol (0x1E)"
+                                               : "legacy FPGA protocol (0x1D)");
+    return true;
+}
+
+bool FpgaController::pingCurrentProtocol(int fd)
+{
+    uint8_t version[4];
+    const bool ok = m_protocol == Protocol::New ? readRegisterNew(fd, REG_VERSION, version, 4)
+                                                  : readRegisterLegacy(fd, REG_VERSION, version, 4);
+    return ok && isPlausibleVersion(version);
+}
+
+void FpgaController::clearProtocol()
+{
+    m_protocol = Protocol::None;
+    m_legacyStateInitialized = false;
+    const bool ldChanged = m_localDimmingSupported;
+    const bool pcChanged = m_pixelCompSupported;
+    m_localDimmingSupported = false;
+    m_pixelCompSupported = false;
+    if (ldChanged) emit localDimmingChanged();
+    if (pcChanged) emit pixelCompChanged();
+}
+
+bool FpgaController::loadLegacyState(bool *localDimming, bool *pixelCompensation) const
+{
+    QFile file(LEGACY_STATE_FILE);
+    if (!file.open(QIODevice::ReadOnly)) return false;
+    QJsonParseError error;
+    const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
+    if (error.error != QJsonParseError::NoError || !document.isObject()) return false;
+    const QJsonObject state = document.object();
+    if (state.value("protocol").toString() != "legacy") return false;
+    *localDimming = state.value("local_dimming").toBool(true);
+    *pixelCompensation = state.value("pixel_compensation").toBool(true);
+    return true;
+}
+
+void FpgaController::saveLegacyState() const
+{
+    QJsonObject state;
+    state["version"] = 1;
+    state["protocol"] = "legacy";
+    state["local_dimming"] = m_localDimmingEnabled;
+    state["pixel_compensation"] = m_pixelCompEnabled;
+    QSaveFile file(LEGACY_STATE_FILE);
+    if (!file.open(QIODevice::WriteOnly) ||
+        file.write(QJsonDocument(state).toJson(QJsonDocument::Compact)) < 0 || !file.commit())
+        qWarning() << "FpgaController: failed to save legacy LD/PC state";
+}
+
+void FpgaController::initializeLegacyState()
+{
+    if (m_legacyStateInitialized) return;
+    bool ld = true, pc = true;
+    const bool restored = loadLegacyState(&ld, &pc);
+    m_legacyStateInitialized = true;
+    const bool ldChanged = !m_localDimmingSupported || m_localDimmingEnabled != ld;
+    const bool pcChanged = !m_pixelCompSupported || m_pixelCompEnabled != pc;
+    m_localDimmingSupported = true;
+    m_localDimmingEnabled = ld;
+    m_pixelCompSupported = true;
+    m_pixelCompEnabled = pc;
+    if (ldChanged) emit localDimmingChanged();
+    if (pcChanged) emit pixelCompChanged();
+    qDebug() << "FpgaController: legacy LD/PC state"
+             << (restored ? "restored from /tmp" : "assumed on after FPGA power-on");
 }
 
 // Helper to convert BCD byte to decimal
@@ -261,8 +422,18 @@ void FpgaController::parseBuildTime(const uint8_t *data)
 
 void FpgaController::refresh()
 {
+    if (!ensureProtocol()) {
+        if (m_connected) {
+            m_connected = false;
+            emit connectedChanged();
+        }
+        return;
+    }
+
     int fd = openI2c();
-    if (fd < 0) {
+    if (fd < 0 || !pingCurrentProtocol(fd)) {
+        closeI2c(fd);
+        clearProtocol();
         if (m_connected) {
             m_connected = false;
             emit connectedChanged();
@@ -325,6 +496,11 @@ void FpgaController::setPrivacyMode(bool enabled)
 {
     qDebug() << "FpgaController: Setting privacy mode to" << enabled;
 
+    if (!ensureProtocol()) {
+        emit errorOccurred("No compatible FPGA interface found");
+        return;
+    }
+
     int fd = openI2c();
     if (fd < 0) {
         emit errorOccurred("Failed to open I2C bus");
@@ -345,6 +521,11 @@ void FpgaController::setPrivacyMode(bool enabled)
 
 void FpgaController::readToggleSettings(int fd)
 {
+    if (m_protocol == Protocol::Legacy) {
+        initializeLegacyState();
+        return;
+    }
+
     // Local dimming (0x2C) and pixel compensation (0x2D) are write-only registers
     // that echo back the last-written value (block-RAM, powers up at 0). A valid
     // response is exactly 0x00 (enabled) or 0x01 (disabled); anything else means
@@ -380,6 +561,11 @@ void FpgaController::setLocalDimming(bool enabled)
 {
     qDebug() << "FpgaController: Setting local dimming to" << enabled;
 
+    if (!ensureProtocol()) {
+        emit errorOccurred("No compatible FPGA LD/PC interface found");
+        return;
+    }
+    if (m_protocol == Protocol::Legacy) initializeLegacyState();
     int fd = openI2c();
     if (fd < 0) {
         emit errorOccurred("Failed to open I2C bus");
@@ -388,16 +574,20 @@ void FpgaController::setLocalDimming(bool enabled)
 
     // Inverted semantics: 0x00 = enabled, 0x01 = disabled
     uint8_t value = enabled ? 0x00 : 0x01;
-    if (writeRegister(fd, REG_LOCAL_DIMMING, value)) {
+    const bool writeOk = m_protocol == Protocol::New
+        ? writeRegisterNew(fd, REG_LOCAL_DIMMING, &value, 1)
+        : writeRegisterLegacy(fd, REG_LEGACY_LOCAL_DIMMING, &value, 1);
+    if (writeOk) {
         // Read back to confirm the write took effect
         uint8_t readBack;
-        if (readRegister(fd, REG_LOCAL_DIMMING, &readBack, 1) &&
+        if (m_protocol == Protocol::New && readRegister(fd, REG_LOCAL_DIMMING, &readBack, 1) &&
             (readBack == 0x00 || readBack == 0x01)) {
             m_localDimmingSupported = true;
             m_localDimmingEnabled = (readBack == 0x00);
         } else {
             m_localDimmingEnabled = enabled;
         }
+        if (m_protocol == Protocol::Legacy) saveLegacyState();
         emit localDimmingChanged();
     } else {
         emit errorOccurred("Failed to set local dimming");
@@ -410,6 +600,11 @@ void FpgaController::setPixelCompensation(bool enabled)
 {
     qDebug() << "FpgaController: Setting pixel compensation to" << enabled;
 
+    if (!ensureProtocol()) {
+        emit errorOccurred("No compatible FPGA LD/PC interface found");
+        return;
+    }
+    if (m_protocol == Protocol::Legacy) initializeLegacyState();
     int fd = openI2c();
     if (fd < 0) {
         emit errorOccurred("Failed to open I2C bus");
@@ -418,16 +613,21 @@ void FpgaController::setPixelCompensation(bool enabled)
 
     // Inverted semantics: 0x00 = enabled, 0x01 = disabled
     uint8_t value = enabled ? 0x00 : 0x01;
-    if (writeRegister(fd, REG_PIXEL_COMP, value)) {
+    const uint8_t legacyValue[2] = {0x00, static_cast<uint8_t>(enabled ? 0x70 : 0x00)};
+    const bool writeOk = m_protocol == Protocol::New
+        ? writeRegisterNew(fd, REG_PIXEL_COMP, &value, 1)
+        : writeRegisterLegacy(fd, REG_LEGACY_PIXEL_COMP, legacyValue, 2);
+    if (writeOk) {
         // Read back to confirm the write took effect
         uint8_t readBack;
-        if (readRegister(fd, REG_PIXEL_COMP, &readBack, 1) &&
+        if (m_protocol == Protocol::New && readRegister(fd, REG_PIXEL_COMP, &readBack, 1) &&
             (readBack == 0x00 || readBack == 0x01)) {
             m_pixelCompSupported = true;
             m_pixelCompEnabled = (readBack == 0x00);
         } else {
             m_pixelCompEnabled = enabled;
         }
+        if (m_protocol == Protocol::Legacy) saveLegacyState();
         emit pixelCompChanged();
     } else {
         emit errorOccurred("Failed to set pixel compensation");

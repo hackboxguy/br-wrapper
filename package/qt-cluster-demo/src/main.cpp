@@ -38,6 +38,11 @@ int main(int argc, char *argv[])
         "FPGA I2C bus device (default: /dev/i2c-1)", "i2c", "/dev/i2c-1");
     parser.addOption(i2cOption);
 
+    QCommandLineOption fpgaProtocolOption(
+        "fpga-protocol", "FPGA LD/PC interface: auto, new, or legacy (default: auto)",
+        "protocol", "auto");
+    parser.addOption(fpgaProtocolOption);
+
     parser.process(app);
 
     ClusterModel model;
@@ -110,6 +115,7 @@ int main(int argc, char *argv[])
     // FPGA controller for optional local-dimming / pixel-compensation overlay toggles
     FpgaController fpgaController;
     fpgaController.setI2cBus(parser.value(i2cOption));
+    fpgaController.setProtocolOverride(parser.value(fpgaProtocolOption));
     fpgaController.start();
 
     QQmlApplicationEngine engine;

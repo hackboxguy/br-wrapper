@@ -4,16 +4,16 @@
 #include <QObject>
 #include <QTimer>
 #include <QString>
+#include <cstdint>
 
 /**
- * FpgaController - minimal FPGA I2C access for local-dimming / pixel-compensation
+ * Runtime-selecting local-dimming / pixel-compensation controller.
  *
- * The display FPGA (slave 0x1D) exposes two write-only-with-readback controls:
- * - 0x2C: Local-Dimming Enable     (0x00 = enabled [default], 0x01 = disabled)
- * - 0x2D: Pixel-Compensation Enable (0x00 = enabled [default], 0x01 = disabled)
- *
- * A control is considered "supported" only if the register reads back exactly
- * 0x00 or 0x01; any other value (e.g. 0xFF) means the bitstream does not wire it.
+ * auto mode probes the read-only VERSION register, preferring the new FPGA
+ * slave (0x1E) and its page/register transport. If that is absent it probes
+ * the legacy slave (0x1D) and its four-byte register prefix. Legacy LD/PC
+ * controls are write-only, so their last requested values are retained in
+ * /tmp/fpga-ldpc-state.json while the system remains booted.
  */
 class FpgaController : public QObject
 {
@@ -29,6 +29,7 @@ public:
     ~FpgaController();
 
     void setI2cBus(const QString &bus);
+    void setProtocolOverride(const QString &protocol);
     void start();
 
     bool connected() const { return m_connected; }
@@ -48,15 +49,33 @@ signals:
     void pixelCompChanged();
 
 private:
+    enum class Protocol { None, New, Legacy };
+
     int openI2c();
+    int openI2cAt(uint8_t address);
     void closeI2c(int fd);
-    bool readRegister(int fd, uint8_t reg, uint8_t *data, int len);
-    bool writeRegister(int fd, uint8_t reg, uint8_t value);
+    bool ensureProtocol();
+    bool probeProtocol(Protocol protocol);
+    bool pingCurrentProtocol(int fd);
+    void clearProtocol();
+    void initializeLegacyState();
     void readToggleSettings(int fd);
 
-private:
+    bool readRegisterNew(int fd, uint8_t reg, uint8_t *data, int len);
+    bool writeRegisterNew(int fd, uint8_t reg, const uint8_t *data, int len);
+    bool readRegisterLegacy(int fd, uint8_t reg, uint8_t *data, int len);
+    bool writeRegisterLegacy(int fd, uint8_t reg, const uint8_t *data, int len);
+    bool writeLocalDimming(int fd, bool enabled);
+    bool writePixelCompensation(int fd, bool enabled);
+
+    bool loadLegacyState(bool *localDimming, bool *pixelCompensation) const;
+    void saveLegacyState() const;
+    void updateConnected(bool connected);
+
     QString m_i2cBus;
-    int m_i2cAddress;
+    QString m_protocolOverride;
+    Protocol m_protocol;
+    bool m_legacyStateInitialized;
 
     bool m_connected;
     bool m_localDimmingSupported;

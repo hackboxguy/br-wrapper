@@ -70,6 +70,11 @@ int main(int argc, char *argv[])
                                  "i2c", DEFAULT_I2C_BUS);
     parser.addOption(i2cOption);
 
+    QCommandLineOption fpgaProtocolOption("fpga-protocol",
+                                          "FPGA LD/PC interface: auto, new, or legacy (default: auto)",
+                                          "protocol", "auto");
+    parser.addOption(fpgaProtocolOption);
+
     parser.process(app);
 
     // Get screen resolution for debugging
@@ -94,6 +99,7 @@ int main(int argc, char *argv[])
 
     FpgaController fpgaController;
     fpgaController.setI2cBus(parser.value(i2cOption));
+    fpgaController.setProtocolOverride(parser.value(fpgaProtocolOption));
     fpgaController.start();
 
     TemperatureController temperatureController;
