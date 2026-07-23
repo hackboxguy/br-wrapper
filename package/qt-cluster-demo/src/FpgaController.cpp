@@ -128,13 +128,14 @@ void FpgaController::saveLegacyState() const {
         qWarning() << "FpgaController: failed to save legacy LD/PC state";
 }
 void FpgaController::initializeLegacyState() {
-    if (m_legacyStateInitialized) return;
+    const bool firstObservation = !m_legacyStateInitialized;
     bool ld = true, pc = true; const bool restored = loadLegacyState(&ld, &pc); m_legacyStateInitialized = true;
     const bool ldChanged = !m_localDimmingSupported || m_localDimmingEnabled != ld;
     const bool pcChanged = !m_pixelCompSupported || m_pixelCompEnabled != pc;
     m_localDimmingSupported = true; m_localDimmingEnabled = ld; m_pixelCompSupported = true; m_pixelCompEnabled = pc;
     if (ldChanged) emit localDimmingChanged(); if (pcChanged) emit pixelCompChanged();
-    qDebug() << "FpgaController: legacy LD/PC state" << (restored ? "restored from /tmp" : "assumed on after FPGA power-on");
+    if (firstObservation || ldChanged || pcChanged)
+        qDebug() << "FpgaController: legacy LD/PC state" << (restored ? "synchronized from /tmp" : "assumed on after FPGA power-on");
 }
 void FpgaController::readToggleSettings(int fd) {
     if (m_protocol == Protocol::Legacy) { initializeLegacyState(); return; }
@@ -169,9 +170,9 @@ void FpgaController::setLocalDimming(bool enabled) {
             emit localDimmingChanged();
         } else {
             m_localDimmingEnabled = enabled;
-            saveLegacyState();
             emit localDimmingChanged();
         }
+        saveLegacyState();
         updateConnected(true);
     }
     closeI2c(fd);
@@ -193,9 +194,9 @@ void FpgaController::setPixelCompensation(bool enabled) {
             emit pixelCompChanged();
         } else {
             m_pixelCompEnabled = enabled;
-            saveLegacyState();
             emit pixelCompChanged();
         }
+        saveLegacyState();
         updateConnected(true);
     }
     closeI2c(fd);

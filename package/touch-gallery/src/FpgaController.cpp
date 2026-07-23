@@ -254,9 +254,7 @@ void FpgaController::saveLegacyState() const
 
 void FpgaController::initializeLegacyState()
 {
-    if (m_legacyStateInitialized)
-        return;
-
+    const bool firstObservation = !m_legacyStateInitialized;
     bool localDimming = true;
     bool pixelCompensation = true;
     const bool restored = loadLegacyState(&localDimming, &pixelCompensation);
@@ -273,8 +271,10 @@ void FpgaController::initializeLegacyState()
     if (pcChanged)
         emit pixelCompChanged();
 
-    qDebug() << "FpgaController: legacy LD/PC state"
-             << (restored ? "restored from /tmp" : "assumed on after FPGA power-on");
+    if (firstObservation || ldChanged || pcChanged) {
+        qDebug() << "FpgaController: legacy LD/PC state"
+                 << (restored ? "synchronized from /tmp" : "assumed on after FPGA power-on");
+    }
 }
 
 void FpgaController::readToggleSettings(int fd)
@@ -383,9 +383,12 @@ void FpgaController::setLocalDimming(bool enabled)
         } else {
             m_localDimmingSupported = true;
             m_localDimmingEnabled = enabled;
-            saveLegacyState();
             emit localDimmingChanged();
         }
+        // New FPGA hardware remains the readback authority.  This runtime
+        // record also lets write-only legacy FPGA users synchronize with the
+        // Stream Deck and other local UI clients during the same boot.
+        saveLegacyState();
         updateConnected(true);
     }
     closeI2c(fd);
@@ -417,9 +420,9 @@ void FpgaController::setPixelCompensation(bool enabled)
         } else {
             m_pixelCompSupported = true;
             m_pixelCompEnabled = enabled;
-            saveLegacyState();
             emit pixelCompChanged();
         }
+        saveLegacyState();
         updateConnected(true);
     }
     closeI2c(fd);

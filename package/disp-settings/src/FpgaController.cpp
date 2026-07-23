@@ -257,7 +257,7 @@ void FpgaController::saveLegacyState() const
 
 void FpgaController::initializeLegacyState()
 {
-    if (m_legacyStateInitialized) return;
+    const bool firstObservation = !m_legacyStateInitialized;
     bool ld = true, pc = true;
     const bool restored = loadLegacyState(&ld, &pc);
     m_legacyStateInitialized = true;
@@ -269,8 +269,10 @@ void FpgaController::initializeLegacyState()
     m_pixelCompEnabled = pc;
     if (ldChanged) emit localDimmingChanged();
     if (pcChanged) emit pixelCompChanged();
-    qDebug() << "FpgaController: legacy LD/PC state"
-             << (restored ? "restored from /tmp" : "assumed on after FPGA power-on");
+    if (firstObservation || ldChanged || pcChanged) {
+        qDebug() << "FpgaController: legacy LD/PC state"
+                 << (restored ? "synchronized from /tmp" : "assumed on after FPGA power-on");
+    }
 }
 
 // Helper to convert BCD byte to decimal
@@ -587,7 +589,7 @@ void FpgaController::setLocalDimming(bool enabled)
         } else {
             m_localDimmingEnabled = enabled;
         }
-        if (m_protocol == Protocol::Legacy) saveLegacyState();
+        saveLegacyState();
         emit localDimmingChanged();
     } else {
         emit errorOccurred("Failed to set local dimming");
@@ -627,7 +629,7 @@ void FpgaController::setPixelCompensation(bool enabled)
         } else {
             m_pixelCompEnabled = enabled;
         }
-        if (m_protocol == Protocol::Legacy) saveLegacyState();
+        saveLegacyState();
         emit pixelCompChanged();
     } else {
         emit errorOccurred("Failed to set pixel compensation");
