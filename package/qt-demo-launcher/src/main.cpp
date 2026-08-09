@@ -1007,40 +1007,52 @@ private:
         m_runningProcess->setProcessEnvironment(env);
         m_runningProcess->setWorkingDirectory(workingDir);
 
+        // Signals can arrive from a process that a newer launch has already
+        // superseded (deleteLater() defers destruction and ~QProcess kills a
+        // still-running child), so each handler must verify it belongs to the
+        // current process before touching shared state.
+        QProcess *proc = m_runningProcess;
+
         // Connect to process signals for async handling
-        connect(m_runningProcess, &QProcess::started,
-                [this, program, appId]() {
+        connect(proc, &QProcess::started,
+                [this, proc, program, appId]() {
+                    if (m_runningProcess != proc)
+                        return;
                     m_runningAppId = appId;
                     qDebug() << "App started successfully:" << program << "App ID:" << appId;
                     // Hide launcher after successful start
                     this->hide();
                 });
 
-        connect(m_runningProcess, &QProcess::errorOccurred,
-                [this, program, appId](QProcess::ProcessError error) {
+        connect(proc, &QProcess::errorOccurred,
+                [this, proc, program, appId](QProcess::ProcessError error) {
                     qWarning() << "Failed to start app:" << program << "App ID:" << appId << "Error:" << error;
+                    if (m_runningProcess != proc)
+                        return;
+                    // Only FailedToStart ends without a finished() signal;
+                    // Crashed etc. are cleaned up by the finished() handler.
+                    if (error != QProcess::FailedToStart)
+                        return;
                     // Don't send network response here - connection already closed
                     m_runningAppId = "";
-                    if (m_runningProcess) {
-                        m_runningProcess->deleteLater();
-                        m_runningProcess = nullptr;
-                    }
+                    m_runningProcess = nullptr;
+                    proc->deleteLater();
                 });
 
         // Show launcher again when app exits
-        connect(m_runningProcess, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-                [this, program, appId](int exitCode, QProcess::ExitStatus /*exitStatus*/) {
+        connect(proc, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
+                [this, proc, program, appId](int exitCode, QProcess::ExitStatus /*exitStatus*/) {
                     qDebug() << "App finished:" << program << "App ID:" << appId << "Exit code:" << exitCode;
+                    if (m_runningProcess != proc)
+                        return;
                     this->show();
                     m_runningAppId = "";
-                    if (m_runningProcess) {
-                        m_runningProcess->deleteLater();
-                        m_runningProcess = nullptr;
-                    }
+                    m_runningProcess = nullptr;
+                    proc->deleteLater();
                 });
 
         // Start the process (non-blocking)
-        m_runningProcess->start(program, args);
+        proc->start(program, args);
 
         qDebug() << "Process start initiated for:" << program << "with args:" << args << "App ID:" << appId;
     }
@@ -1086,16 +1098,18 @@ private:
         // Hide launcher while app is running
         this->hide();
 
-        // Show launcher again when app exits
-        connect(m_runningProcess, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
-                [this, program, appId](int exitCode, QProcess::ExitStatus /*exitStatus*/) {
+        // Show launcher again when app exits; guard against signals from a
+        // process that a newer launch has already superseded.
+        QProcess *proc = m_runningProcess;
+        connect(proc, static_cast<void(QProcess::*)(int, QProcess::ExitStatus)>(&QProcess::finished),
+                [this, proc, program, appId](int exitCode, QProcess::ExitStatus /*exitStatus*/) {
                     qDebug() << "App finished:" << program << "App ID:" << appId << "Exit code:" << exitCode;
+                    if (m_runningProcess != proc)
+                        return;
                     this->show();
                     m_runningAppId = "";
-                    if (m_runningProcess) {
-                        m_runningProcess->deleteLater();
-                        m_runningProcess = nullptr;
-                    }
+                    m_runningProcess = nullptr;
+                    proc->deleteLater();
                 });
 
         return true;
