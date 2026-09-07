@@ -10,6 +10,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/kernel.h>
 #include <linux/version.h>
 #include <linux/i2c.h>
 #include <linux/of.h>
@@ -25,6 +26,22 @@ MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default
 static int poll_interval_ms = 1000;
 module_param(poll_interval_ms, int, 0644);
 MODULE_PARM_DESC(poll_interval_ms, "Link status poll interval in ms (0=disable, default: 1000)");
+
+/* Mode 0 (983+984) DP video guard.
+ *
+ * Without DP input video the 983 timing generator keeps running but
+ * stretches every line while it waits for data.  The 984 forwards that
+ * distorted timing to the eDP panel: after ~5 s the 984 DTG wedges
+ * (measured line length stays wrong after video returns) and after ~10 s
+ * an eDP panel TCON can latch black until a power cycle.  The guard
+ * disables the 984 main video stream while the 983 VP is out of sync so
+ * the panel sees an idle link, then pulses the 984 DTG reset and
+ * re-enables the stream once the VP has resynced.  Verified on the
+ * OTS-OLED 17.3 (2880x1620) with 25 s, 60 s and Pi-reboot outages.
+ */
+static int dp_guard = 1;
+module_param(dp_guard, int, 0444);
+MODULE_PARM_DESC(dp_guard, "Mode 0 only: 1=cut 984 video stream on DP video loss, restore after 983 resync (default: 1), 0=off");
 
 /* Common serializer registers */
 #define SER_RESET_CTL            0x01  /* Reset control */
@@ -43,6 +60,11 @@ MODULE_PARM_DESC(poll_interval_ms, "Link status poll interval in ms (0=disable, 
 #define SER_TARGET_DEST0         0x88
 #define SER_TARGET_DEST1         0x89
 #define SER_INTERRUPT_CTRL       0xC6
+#define SER_IND_ACC_CTL          0x40  /* [5:2]=page, [1]=auto-inc, [0]=read strobe */
+#define SER_IND_ACC_ADDR         0x41
+#define SER_IND_ACC_DATA         0x42
+#define SER_IND_PAGE_VP          0x0C  /* Video processor 0..3 registers (script byte 0x32) */
+#define SER_VP0_STS              0x30  /* VP_STS_VP0: [0]=TIMING_GEN_STS synced to input video */
 
 /* Serializer configuration values */
 #define SER_ENABLE_PASSTHROUGH   0xD8
@@ -71,6 +93,22 @@ MODULE_PARM_DESC(poll_interval_ms, "Link status poll interval in ms (0=disable, 
 #define DES984_GP_STATUS_0       0x53  /* [0]=FPD4RX_LOCK [1]=FPD3RX_LOCK [2]=FPDTX_PLL_LOCK */
 #define DES984_GP_STATUS_1       0x54  /* [0]=LOCK [6]=FPDRX_PLL_LOCK (no SIG_DET) */
 #define DES984_INTB_VALUE        0x81
+/* 984 local display timing generator and DP TX (same indirect/APB scheme as 983) */
+#define DES984_IND_PAGE_DTG      0x14  /* DTG page (script byte 0x50) */
+#define DES984_DTG_P0_CTL        0x32  /* Port 0 DTG control */
+#define DES984_DTG_P1_CTL        0x62  /* Port 1 DTG control */
+#define DES984_DTG_HOLD_RESET    0x06
+#define DES984_DTG_RELEASE       0x04
+#define DES984_DTG_MEAS_HTOTAL_HI 0x40 /* Measured input H total, 15-bit big-endian */
+#define DES984_DTG_MEAS_HTOTAL_LO 0x41
+#define DES984_APB_MAIN_STREAM_EN 0x0084 /* DP TX main video stream enable (1=on) */
+#define SER_VP0_H_TOTAL_LO       0x16  /* VID_H_TOTAL0_VP0 (programmed output H total) */
+#define SER_VP0_H_TOTAL_HI       0x17
+#define DP_GUARD_HTOTAL_TOL      32    /* pixels; a wedged 984 DTG is off by >1000 */
+
+/* DP guard poll debouncing (in poll_interval_ms units) */
+#define DP_GUARD_LOSS_POLLS      2     /* consecutive unsynced polls before cutting the stream */
+#define DP_GUARD_RESYNC_POLLS    2     /* consecutive synced polls before restoring the stream */
 
 /* 984 configuration values */
 #define DES984_ENABLE_PASSTHROUGH 0xC9  /* GENERAL_CFG default 0xC1 | bit[3] I2C_PASS_THROUGH */
@@ -119,6 +157,10 @@ struct hh983_data {
 	int recovery_count;
 	int recovery_cooldown;  /* poll cycles to skip after recovery */
 	int down_count;         /* consecutive polls with link down */
+	/* Mode 0 DP video guard */
+	bool guard_video_up;    /* last known 983 VP0 sync state */
+	int guard_up_count;     /* consecutive synced polls while down */
+	bool guard_stream_cut;  /* 984 main stream currently disabled by the guard */
 };
 
 static int hh983_write_reg(struct i2c_client *client, u8 reg, u8 value)
@@ -283,6 +325,237 @@ static void hh983_check_link_status(struct hh983_data *data)
 				 (des_sts1 & 0x40) ? "PLL_LOCK " : "",
 				 (des_sts1 & 0x01) ? "LOCK" : "NO_LOCK");
 	}
+}
+
+/* Read a 983 indirect-page register (page select in IND_ACC_CTL[5:2], read strobe bit 0). */
+static int hh983_ind_read(struct i2c_client *client, u8 page, u8 offset)
+{
+	int ret;
+
+	ret = hh983_write_reg(client, SER_IND_ACC_CTL, (u8)((page << 2) | 0x01));
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, SER_IND_ACC_ADDR, offset);
+	if (ret < 0)
+		return ret;
+	return hh983_read_reg(client, SER_IND_ACC_DATA);
+}
+
+/* Read a deserializer indirect-page register (through 983 I2C passthrough). */
+static int hh983_deser_ind_read(struct i2c_client *client, u8 deser_addr,
+				u8 page, u8 offset)
+{
+	int ret;
+
+	ret = hh983_write_deser_reg(client, deser_addr, SER_IND_ACC_CTL,
+				    (u8)((page << 2) | 0x01));
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_IND_ACC_ADDR, offset);
+	if (ret < 0)
+		return ret;
+	return hh983_read_deser_reg(client, deser_addr, SER_IND_ACC_DATA);
+}
+
+/* Read the low byte of a deserializer APB register (DP TX block). */
+static int hh983_deser_apb_read8(struct i2c_client *client, u8 deser_addr, u16 apb_addr)
+{
+	int ret;
+
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_CTL, APB_ENABLE);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_ADR0, apb_addr & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_ADR1, (apb_addr >> 8) & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_CTL, APB_ENABLE | APB_READ);
+	if (ret < 0)
+		return ret;
+	usleep_range(500, 1000);
+	return hh983_read_deser_reg(client, deser_addr, SER_APB_DATA0);
+}
+
+/* Write a deserializer indirect-page register (through 983 I2C passthrough). */
+static int hh983_deser_ind_write(struct i2c_client *client, u8 deser_addr,
+				 u8 page, u8 offset, u8 value)
+{
+	int ret;
+
+	ret = hh983_write_deser_reg(client, deser_addr, SER_IND_ACC_CTL, (u8)(page << 2));
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_IND_ACC_ADDR, offset);
+	if (ret < 0)
+		return ret;
+	return hh983_write_deser_reg(client, deser_addr, SER_IND_ACC_DATA, value);
+}
+
+/* Write a 32-bit deserializer APB register (DP TX block). */
+static int hh983_deser_apb_write32(struct i2c_client *client, u8 deser_addr,
+				   u16 apb_addr, u32 value)
+{
+	int ret;
+
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_CTL, APB_ENABLE);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_ADR0, apb_addr & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_ADR1, (apb_addr >> 8) & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_DATA0, value & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_DATA0 + 1, (value >> 8) & 0xFF);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_deser_reg(client, deser_addr, SER_APB_DATA0 + 2, (value >> 16) & 0xFF);
+	if (ret < 0)
+		return ret;
+	/* The write is issued when the last data byte is written */
+	return hh983_write_deser_reg(client, deser_addr, SER_APB_DATA0 + 3, (value >> 24) & 0xFF);
+}
+
+/* Mode 0 DP guard: stop feeding the panel while the 983 has no input video. */
+static void hh983_guard_cut_stream(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+
+	if (hh983_deser_apb_write32(client, data->deser_addr,
+				    DES984_APB_MAIN_STREAM_EN, 0) == 0)
+		data->guard_stream_cut = true;
+}
+
+/* Mode 0 DP guard: bring the 984 output back after the 983 VP has resynced.
+ *
+ * Order matters and follows the sequence verified with a colorimeter:
+ *   1. make sure the main stream is off while the DTG is touched;
+ *   2. pulse the 984 DTG reset only if it is actually wedged (its measured
+ *      input line length no longer matches the 983 programmed H total);
+ *   3. wait for the DTG to settle, then enable the main stream.
+ * On a healthy pipeline (stream on, DTG fine) this is a no-op, so displays
+ * that never lost video are not disturbed.
+ */
+static void hh983_guard_restore_stream(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int stream_en, meas_hi, meas_lo, prog_hi, prog_lo;
+	int meas_htotal = -1, prog_htotal = -1;
+	bool wedged = false;
+
+	stream_en = hh983_deser_apb_read8(client, data->deser_addr,
+					  DES984_APB_MAIN_STREAM_EN);
+
+	meas_hi = hh983_deser_ind_read(client, data->deser_addr,
+				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_HI);
+	meas_lo = hh983_deser_ind_read(client, data->deser_addr,
+				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_LO);
+	prog_lo = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_LO);
+	prog_hi = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_HI);
+	if (meas_hi >= 0 && meas_lo >= 0 && prog_lo >= 0 && prog_hi >= 0) {
+		meas_htotal = ((meas_hi & 0x7F) << 8) | meas_lo;
+		prog_htotal = (prog_hi << 8) | prog_lo;
+		wedged = abs(meas_htotal - prog_htotal) > DP_GUARD_HTOTAL_TOL;
+	} else {
+		/* Cannot judge: assume the worst, a pulse is harmless with the stream off */
+		wedged = true;
+	}
+
+	dev_info(&client->dev,
+		 "DP guard restore: 984 stream_en=%d, DTG measured Htotal=%d, 983 Htotal=%d%s\n",
+		 stream_en, meas_htotal, prog_htotal, wedged ? " (DTG wedged)" : "");
+
+	if (!wedged && stream_en == 1 && !data->guard_stream_cut)
+		return;	/* healthy, nothing to do */
+
+	if (stream_en != 0)
+		hh983_deser_apb_write32(client, data->deser_addr,
+					DES984_APB_MAIN_STREAM_EN, 0);
+
+	if (wedged) {
+		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+				      DES984_DTG_P0_CTL, DES984_DTG_HOLD_RESET);
+		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+				      DES984_DTG_P1_CTL, DES984_DTG_HOLD_RESET);
+		msleep(200);
+		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+				      DES984_DTG_P0_CTL, DES984_DTG_RELEASE);
+		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+				      DES984_DTG_P1_CTL, DES984_DTG_RELEASE);
+	}
+	msleep(500);
+
+	if (hh983_deser_apb_write32(client, data->deser_addr,
+				    DES984_APB_MAIN_STREAM_EN, 1) == 0)
+		data->guard_stream_cut = false;
+
+	msleep(50);
+	stream_en = hh983_deser_apb_read8(client, data->deser_addr,
+					  DES984_APB_MAIN_STREAM_EN);
+	if (stream_en != 1)
+		dev_warn(&client->dev,
+			 "DP guard restore: 984 main stream readback %d (expected 1)\n",
+			 stream_en);
+}
+
+/* Mode 0 DP guard poll.  Tracks the 983 VP0 timing-generator sync bit:
+ * lost for DP_GUARD_LOSS_POLLS -> cut the 984 stream (must happen within a
+ * few seconds; the OTS-OLED panel tolerates ~5 s of distorted timing but
+ * latches black at ~10 s), back for DP_GUARD_RESYNC_POLLS -> restore.
+ */
+static void hh983_dp_guard_work_fn(struct work_struct *work)
+{
+	struct hh983_data *data = container_of(work, struct hh983_data,
+					       link_work.work);
+	struct i2c_client *client = data->client;
+	int vp_sts;
+	bool synced;
+
+	vp_sts = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_STS);
+	if (vp_sts < 0)
+		goto resched;
+	synced = (vp_sts & 0x01) != 0;
+
+	if (data->guard_video_up) {
+		if (!synced) {
+			data->down_count++;
+			if (data->down_count >= DP_GUARD_LOSS_POLLS) {
+				dev_notice(&client->dev,
+					   "DP video lost (VP_STS=0x%02X), cutting 984 video stream\n",
+					   vp_sts);
+				hh983_guard_cut_stream(data);
+				data->guard_video_up = false;
+				data->guard_up_count = 0;
+			}
+		} else {
+			data->down_count = 0;
+		}
+	} else {
+		if (synced) {
+			data->guard_up_count++;
+			if (data->guard_up_count >= DP_GUARD_RESYNC_POLLS) {
+				dev_notice(&client->dev,
+					   "DP video back (VP_STS=0x%02X), restoring 984 video stream\n",
+					   vp_sts);
+				hh983_guard_restore_stream(data);
+				data->guard_video_up = true;
+				data->down_count = 0;
+				data->recovery_count++;
+			}
+		} else {
+			data->guard_up_count = 0;
+		}
+	}
+
+resched:
+	if (poll_interval_ms > 0)
+		schedule_delayed_work(&data->link_work,
+				      msecs_to_jiffies(poll_interval_ms));
 }
 
 /* Reset the video link: GPIO toggle + digital reset + HPD toggle.
@@ -726,11 +999,47 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 		if (poll_interval_ms > 0)
 			schedule_delayed_work(&data->link_work,
 					      msecs_to_jiffies(poll_interval_ms));
+	} else if (data->mode == 0 && dp_guard) {
+		/* Start in the "down" state: after a reboot the shutdown hook
+		 * has left the 984 stream cut and the 984 DTG is usually wedged
+		 * by the outage, so the first stable VP sync triggers a restore
+		 * (DTG pulse + stream enable).  The existing DP link is not
+		 * touched.
+		 */
+		data->guard_video_up = false;
+		data->guard_up_count = 0;
+		INIT_DELAYED_WORK(&data->link_work, hh983_dp_guard_work_fn);
+		if (poll_interval_ms > 0)
+			schedule_delayed_work(&data->link_work,
+					      msecs_to_jiffies(poll_interval_ms));
+		if (poll_interval_ms > 2000)
+			dev_warn(&client->dev,
+				 "dp_guard needs poll_interval_ms <= 2000 to cut the stream within the panel tolerance (~5 s)\n");
 	}
 
-	dev_info(&client->dev, "HH983 initialization successful (mode=%d, poll=%s)\n",
-		 data->mode, (data->mode == 1 && poll_interval_ms > 0) ? "on" : "off");
+	dev_info(&client->dev, "HH983 initialization successful (mode=%d, poll=%s%s)\n",
+		 data->mode,
+		 (poll_interval_ms > 0 && (data->mode == 1 || (data->mode == 0 && dp_guard))) ? "on" : "off",
+		 (data->mode == 0 && dp_guard) ? ", dp_guard" : "");
 	return 0;
+}
+
+/* System shutdown/reboot: DP video is about to disappear for tens of seconds.
+ * Cut the 984 video stream now so the eDP panel idles instead of latching
+ * black on the distorted timing; probe() restores it after the reboot.
+ */
+static void hh983_shutdown(struct i2c_client *client)
+{
+	struct hh983_data *data = i2c_get_clientdata(client);
+
+	if (!data || !data->initialized)
+		return;
+
+	if (data->mode == 0 && dp_guard) {
+		cancel_delayed_work_sync(&data->link_work);
+		dev_info(&client->dev, "shutdown: cutting 984 video stream\n");
+		hh983_guard_cut_stream(data);
+	}
 }
 
 static void hh983_remove(struct i2c_client *client)
@@ -740,8 +1049,11 @@ static void hh983_remove(struct i2c_client *client)
 	dev_info(&client->dev, "HH983 driver removed\n");
 
 	if (data && data->initialized) {
-		/* Stop link monitor before tearing down hardware */
-		cancel_delayed_work_sync(&data->link_work);
+		/* Stop link monitor before tearing down hardware
+		 * (only initialized for mode 1 and for mode 0 with dp_guard)
+		 */
+		if (data->mode == 1 || (data->mode == 0 && dp_guard))
+			cancel_delayed_work_sync(&data->link_work);
 
 		/* Tear down the full interrupt chain in reverse order.
 		 * Just disabling GPIO4 leaves REM_INT and INTB_IN active,
@@ -793,6 +1105,7 @@ MODULE_DEVICE_TABLE(of, hh983_of_match);
 static struct i2c_driver hh983_driver = {
 	.probe = hh983_probe,
 	.remove = hh983_remove,
+	.shutdown = hh983_shutdown,
 	.id_table = hh983_id,
 	.driver = {
 		.name = "hh983-serializer",
