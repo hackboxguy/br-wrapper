@@ -24,8 +24,14 @@ MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default
 
 /* Link status poll interval (0 = disable monitoring) */
 static int poll_interval_ms = 1000;
-module_param(poll_interval_ms, int, 0644);
-MODULE_PARM_DESC(poll_interval_ms, "Link status poll interval in ms (0=disable, default: 1000)");
+static struct hh983_data *hh983_poll_owner;	/* device whose poll follows the parameter */
+static int hh983_set_poll_interval(const char *val, const struct kernel_param *kp);
+static const struct kernel_param_ops hh983_poll_ops = {
+	.set = hh983_set_poll_interval,
+	.get = param_get_int,
+};
+module_param_cb(poll_interval_ms, &hh983_poll_ops, &poll_interval_ms, 0644);
+MODULE_PARM_DESC(poll_interval_ms, "Link status poll interval in ms (0=disable, default: 1000); writing a positive value restarts a stopped poll");
 
 /* Mode 0 (983+984) DP video guard.
  *
@@ -501,6 +507,23 @@ static void hh983_guard_restore_stream(struct hh983_data *data)
 		dev_warn(&client->dev,
 			 "DP guard restore: 984 main stream readback %d (expected 1)\n",
 			 stream_en);
+}
+
+/* poll_interval_ms sysfs write: the poll work only reschedules itself while
+ * the interval is positive, so a 0 stops it for good.  Restart it here when
+ * a positive value is written and the work is not pending.
+ */
+static int hh983_set_poll_interval(const char *val, const struct kernel_param *kp)
+{
+	int ret = param_set_int(val, kp);
+
+	if (ret)
+		return ret;
+	if (poll_interval_ms > 0 && hh983_poll_owner &&
+	    !delayed_work_pending(&hh983_poll_owner->link_work))
+		schedule_delayed_work(&hh983_poll_owner->link_work,
+				      msecs_to_jiffies(poll_interval_ms));
+	return 0;
 }
 
 /* Mode 0 DP guard poll.  Tracks the 983 VP0 timing-generator sync bit:
@@ -996,6 +1019,7 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 		/* Start link monitoring */
 		data->link_up = true;
 		INIT_DELAYED_WORK(&data->link_work, hh983_link_work_fn);
+		hh983_poll_owner = data;
 		if (poll_interval_ms > 0)
 			schedule_delayed_work(&data->link_work,
 					      msecs_to_jiffies(poll_interval_ms));
@@ -1009,6 +1033,7 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 		data->guard_video_up = false;
 		data->guard_up_count = 0;
 		INIT_DELAYED_WORK(&data->link_work, hh983_dp_guard_work_fn);
+		hh983_poll_owner = data;
 		if (poll_interval_ms > 0)
 			schedule_delayed_work(&data->link_work,
 					      msecs_to_jiffies(poll_interval_ms));
@@ -1052,8 +1077,10 @@ static void hh983_remove(struct i2c_client *client)
 		/* Stop link monitor before tearing down hardware
 		 * (only initialized for mode 1 and for mode 0 with dp_guard)
 		 */
-		if (data->mode == 1 || (data->mode == 0 && dp_guard))
+		if (data->mode == 1 || (data->mode == 0 && dp_guard)) {
+			hh983_poll_owner = NULL;
 			cancel_delayed_work_sync(&data->link_work);
+		}
 
 		/* Tear down the full interrupt chain in reverse order.
 		 * Just disabling GPIO4 leaves REM_INT and INTB_IN active,
