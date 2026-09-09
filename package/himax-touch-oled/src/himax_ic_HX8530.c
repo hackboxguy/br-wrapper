@@ -770,8 +770,11 @@ static bool HX8530_chip_detect(void)
 			I("%s:Read driver IC ID = HX%2X%2X%02X\n", __func__, tmp_data[3],
 			tmp_data[2], tmp_data[1]);
 
-			if ((tmp_data[3] == 0x85U) && (tmp_data[2] == 0x30U) &&
-				((tmp_data[1] == 0x0AU) || (tmp_data[1] == 0x0BU))) {
+			/* Vendor hxchipset (260604, hx8530k_chip_detect) accepts any
+			 * silicon revision: match on IC-ID 0x85 0x30 only. This unit
+			 * reports rev 0x0C ("HX85300C"); the old 0x0A/0x0B gate
+			 * rejected it. */
+			if ((tmp_data[3] == 0x85U) && (tmp_data[2] == 0x30U)) {
 
 				strscpy(private_ts->chip_name, HX_8530_PWON, 30);
 				ic_data->HX_FW_SIZE = FW_SIZE_255k;

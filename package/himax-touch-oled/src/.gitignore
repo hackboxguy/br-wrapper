@@ -1,0 +1,12 @@
+# Kernel module in-tree build artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+*.cmd
+.*.cmd
+*.o.d
+.*.o.d
+Module.symvers
+modules.order
+.tmp_versions/
