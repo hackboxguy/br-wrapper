@@ -1,0 +1,58 @@
+/*
+ * Device Tree Overlay for the Himax HX8530 (OLED-OTS 17.3") touch controller
+ * behind a TI DS90UB983 serializer + DS90UB984 deserializer on Raspberry Pi 4.
+ *
+ * The HX8530 sits on the 984's SECOND local I2C bus (Port 1), physically at
+ * 0x49; the hh983-serializer driver (config_mode=0 ots_touch=1) programs a
+ * 983 target-alias so it appears to the host at 0x48. This overlay binds the
+ * dedicated single-IC driver (himax_oled, compatible "himax,hxoled") to 0x48.
+ *
+ * Enable in /boot/firmware/config.txt (OTS-OLED board ONLY - do NOT also
+ * enable dtoverlay=himax-touch, which binds the multi-chip himax_mmi):
+ *   dtoverlay=hh983-serializer
+ *   dtoverlay=himax-touch-oled
+ * and in /etc/modprobe.d: options hh983-serializer config_mode=0 ots_touch=1
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2711";
+
+	fragment@0 {
+		target = <&i2c1>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/* TI HH983 serializer */
+			serializer@18 {
+				compatible = "ti,hh983-serializer";
+				reg = <0x18>;
+				status = "okay";
+			};
+
+			/* Himax HX8530 TDDI touch (routed to host 0x48 via the 984 Port 1) */
+			hxoled_ts@48 {
+				compatible = "himax,hxoled";
+				reg = <0x48>;
+				status = "okay";
+				report_type = <1>;
+				himax,TSIX = <&gpio 17 0>; /* GPIO17 = touch interrupt (983 REM_INTB) */
+			};
+		};
+	};
+
+	/* GPIO17 as input with pull-up */
+	fragment@1 {
+		target = <&gpio>;
+		__overlay__ {
+			hxoled_pins: hxoled_pins {
+				brcm,pins = <17>;
+				brcm,function = <0>;
+				brcm,pull = <2>;
+			};
+		};
+	};
+};

@@ -49,6 +49,25 @@ static int dp_guard = 1;
 module_param(dp_guard, int, 0444);
 MODULE_PARM_DESC(dp_guard, "Mode 0 only: 1=cut 984 video stream on DP video loss, restore after 983 resync (default: 1), 0=off");
 
+/* Mode 0 (983+984) OLED-OTS touch controller routing.
+ *
+ * On the OLED-OTS 17.3 board the HX8530 TDDI touch controller is on the
+ * DS90UB984's SECOND local I2C bus (I2C_SDA1/SCL1 = "Port 1"), physically
+ * at address 0x49.  Plain I2C pass-through (reg 0x07) only reaches the 984's
+ * Port 0, so the touch is invisible to the host by default.  A 983
+ * target-alias entry hops the transaction over the back channel to the
+ * deserializer's I2C Port 1 (TARGET_DEST=0x20, datasheet SNLS608 Table 7-45)
+ * and remaps the physical 0x49 to the host-visible 0x48 the himax driver
+ * probes.  Off by default so other 983+984 boards are unchanged.
+ */
+static int ots_touch;
+module_param(ots_touch, int, 0444);
+MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984 I2C Port 1, phys 0x49) to host 0x48 (default: 0)");
+
+/* HX8530 on the 984's local I2C Port 1: physical address vs host-visible alias. */
+#define OTS_TOUCH_PHYS_ADDR	0x49	/* actual 7-bit addr on the 984 Port 1 bus */
+#define OTS_TOUCH_HOST_ADDR	0x48	/* address presented to the Pi (himax DT reg) */
+
 /* Common serializer registers */
 #define SER_RESET_CTL            0x01  /* Reset control */
 #define SER_I2C_CONTROL          0x07
@@ -854,6 +873,28 @@ static int hh983_init_mode_984(struct hh983_data *data)
 	if (ret < 0) {
 		dev_err(&client->dev, "Failed to configure 984 INTB\n");
 		return ret;
+	}
+
+	if (ots_touch) {
+		/* Route HX8530 (phys 0x49 on 984 I2C Port 1) to host 0x48.
+		 * TARGET_ID  = physical remote address, TARGET_ALIAS = host address,
+		 * TARGET_DEST = 0x20 (deserializer I2C Port 1).  Pass-through for the
+		 * other devices (0x2c/0x50/0x66/0x70 on Port 0) stays as set above.
+		 */
+		ret = hh983_write_reg(client, SER_TARGET_ID0,
+				      MAKE_TARGET_ID(OTS_TOUCH_PHYS_ADDR));
+		if (ret < 0)
+			return ret;
+		ret = hh983_write_reg(client, SER_TARGET_ALIAS0,
+				      MAKE_TARGET_ID(OTS_TOUCH_HOST_ADDR));
+		if (ret < 0)
+			return ret;
+		ret = hh983_write_reg(client, SER_TARGET_DEST0, TARGET_DEST_PORT1);
+		if (ret < 0)
+			return ret;
+		dev_info(&client->dev,
+			 "OTS touch routed: host 0x%02x -> 984 Port 1 phys 0x%02x\n",
+			 OTS_TOUCH_HOST_ADDR, OTS_TOUCH_PHYS_ADDR);
 	}
 
 	dev_info(&client->dev, "Mode 0 (983+984) initialization complete\n");

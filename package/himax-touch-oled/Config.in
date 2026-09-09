@@ -1,0 +1,12 @@
+config BR2_PACKAGE_HIMAX_TOUCH_OLED
+	bool "himax-touch-oled"
+	depends on BR2_LINUX_KERNEL
+	select BR2_PACKAGE_HH983_SERIALIZER
+	help
+	  Himax HX8530(C) TDDI touchscreen driver for the OLED-OTS 17.3"
+	  panel, behind a DS90UB983/984 FPD-Link IV pair. Single-IC build
+	  (module himax_oled, DT compatible "himax,hxoled"), kept separate
+	  from the multi-chip himax-touch package because HX8530 is
+	  incompatible with that build. Installs a DT overlay for RPi4.
+
+	  Enable on the OTS-OLED board only; do not also enable himax-touch.
