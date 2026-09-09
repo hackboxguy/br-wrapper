@@ -538,7 +538,7 @@ bool hx8530_mcu_fts_ctpm_fw_upgrade(const u8 *fw_data, unsigned int bin_size)
 	hybrid_fw = kzalloc(sizeof(uint8_t) * FW_SIZE_255k, GFP_KERNEL);
 	if (hybrid_fw == NULL) {
 		E("%s: Memory allocation falied!\n", __func__);
-		return;
+		return false;   /* bool function: allocation failed = upgrade failed */
 	}
 	time_func(&timeStart);
 	if (bin_size == FW_SIZE_255k) {
