@@ -16,6 +16,7 @@
 #include <linux/of.h>
 #include <linux/delay.h>
 #include <linux/workqueue.h>
+#include <linux/jiffies.h>
 
 /* Configuration mode: 0=983+984, 1=983+988 */
 static int config_mode = 0;
@@ -48,6 +49,43 @@ MODULE_PARM_DESC(poll_interval_ms, "Link status poll interval in ms (0=disable, 
 static int dp_guard = 1;
 module_param(dp_guard, int, 0444);
 MODULE_PARM_DESC(dp_guard, "Mode 0 only: 1=cut 984 video stream on DP video loss, restore after 983 resync (default: 1), 0=off");
+
+/* Mode 0 (983+984) DTG-wedge check, the guard's second failure mode.
+ *
+ * The guard above keys on the 983 losing DP input video.  Twice on the
+ * OTS-OLED bench (2026-09-08 and both black screens of 2026-09-10) the panel
+ * went black without any such loss: the 983 VP stayed synced, the 984 main
+ * stream stayed on, and only the 984 DTG's *measured* input line length
+ * wandered off -- 4400..6300 and once 5313, against a programmed 3440.  The
+ * panel latches black about ten seconds later and only a power cycle brings it
+ * back, so it has to be caught inside the panel's ~5 s tolerance.
+ *
+ * The measurement and the recovery already exist here: the restore path reads
+ * both H totals and compares them, and it knows the safe order (cut the
+ * stream, pulse the DTG only while it is off, settle, enable).  This check
+ * simply runs that comparison on every poll while video is up, and calls the
+ * same restore.  Two consecutive bad polls are required, and a holdoff keeps a
+ * genuinely broken link from looping the pulse.
+ */
+static int dtg_check = 1;
+module_param(dtg_check, int, 0444);
+MODULE_PARM_DESC(dtg_check, "Mode 0 dp_guard only: 1=also restore when the 984 DTG wedges with no video loss (default: 1), 0=off");
+
+/* A wedged 984 DTG is off by more than a thousand pixels; a healthy one
+ * measures 3441..3443 against a programmed 3440, so 32 leaves room for the
+ * measurement's own jitter without hiding a real wedge. */
+#define DP_GUARD_HTOTAL_TOL_DEFAULT  32
+static int dtg_tolerance = DP_GUARD_HTOTAL_TOL_DEFAULT;
+module_param(dtg_tolerance, int, 0644);
+MODULE_PARM_DESC(dtg_tolerance, "Mode 0 dp_guard: |measured - programmed| H total, in pixels, before the 984 DTG counts as wedged (default: 32)");
+
+static int wedge_holdoff_s = 30;
+module_param(wedge_holdoff_s, int, 0644);
+MODULE_PARM_DESC(wedge_holdoff_s, "Mode 0 dp_guard: minimum seconds between two DTG-wedge restores (default: 30)");
+
+static int dtg_wedge_count;
+module_param(dtg_wedge_count, int, 0444);
+MODULE_PARM_DESC(dtg_wedge_count, "Mode 0 dp_guard: DTG-wedge restores performed since load (read-only)");
 
 /* Mode 0 (983+984) OLED-OTS touch controller routing.
  *
@@ -129,11 +167,13 @@ MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984
 #define DES984_APB_MAIN_STREAM_EN 0x0084 /* DP TX main video stream enable (1=on) */
 #define SER_VP0_H_TOTAL_LO       0x16  /* VID_H_TOTAL0_VP0 (programmed output H total) */
 #define SER_VP0_H_TOTAL_HI       0x17
-#define DP_GUARD_HTOTAL_TOL      32    /* pixels; a wedged 984 DTG is off by >1000 */
+/* The H-total tolerance is the dtg_tolerance module parameter above, so the
+ * restore path and the wedge check cannot drift apart. */
 
 /* DP guard poll debouncing (in poll_interval_ms units) */
 #define DP_GUARD_LOSS_POLLS      2     /* consecutive unsynced polls before cutting the stream */
 #define DP_GUARD_RESYNC_POLLS    2     /* consecutive synced polls before restoring the stream */
+#define DP_GUARD_WEDGE_POLLS     2     /* consecutive out-of-tolerance polls before calling it a wedge */
 
 /* 984 configuration values */
 #define DES984_ENABLE_PASSTHROUGH 0xC9  /* GENERAL_CFG default 0xC1 | bit[3] I2C_PASS_THROUGH */
@@ -186,6 +226,10 @@ struct hh983_data {
 	bool guard_video_up;    /* last known 983 VP0 sync state */
 	int guard_up_count;     /* consecutive synced polls while down */
 	bool guard_stream_cut;  /* 984 main stream currently disabled by the guard */
+	/* Mode 0 DTG-wedge check (video up, DTG measurement wrong) */
+	int guard_dtg_count;         /* consecutive out-of-tolerance polls */
+	unsigned long guard_wedge_at;/* jiffies of the last wedge restore */
+	bool guard_wedge_armed;      /* guard_wedge_at holds a real timestamp */
 };
 
 static int hh983_write_reg(struct i2c_client *client, u8 reg, u8 value)
@@ -456,6 +500,30 @@ static void hh983_guard_cut_stream(struct hh983_data *data)
 		data->guard_stream_cut = true;
 }
 
+/* Read the 984's measured input line length and the 983's programmed output
+ * line length, the pair the guard compares to decide whether the 984 DTG has
+ * wedged.  Returns 0 with both filled in, or a negative value if any of the
+ * four register reads failed.
+ */
+static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog)
+{
+	struct i2c_client *client = data->client;
+	int meas_hi, meas_lo, prog_hi, prog_lo;
+
+	meas_hi = hh983_deser_ind_read(client, data->deser_addr,
+				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_HI);
+	meas_lo = hh983_deser_ind_read(client, data->deser_addr,
+				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_LO);
+	prog_lo = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_LO);
+	prog_hi = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_HI);
+	if (meas_hi < 0 || meas_lo < 0 || prog_lo < 0 || prog_hi < 0)
+		return -EIO;
+
+	*meas = ((meas_hi & 0x7F) << 8) | meas_lo;
+	*prog = (prog_hi << 8) | prog_lo;
+	return 0;
+}
+
 /* Mode 0 DP guard: bring the 984 output back after the 983 VP has resynced.
  *
  * Order matters and follows the sequence verified with a colorimeter:
@@ -465,28 +533,27 @@ static void hh983_guard_cut_stream(struct hh983_data *data)
  *   3. wait for the DTG to settle, then enable the main stream.
  * On a healthy pipeline (stream on, DTG fine) this is a no-op, so displays
  * that never lost video are not disturbed.
+ *
+ * force_wedged is for a caller that has already measured and decided -- the
+ * DTG-wedge check below. The measurement jitters by a pixel or two from one
+ * read to the next, so re-deciding here would let the recovery be skipped for
+ * a caller that had just seen a bad value, and would make the log claim a
+ * restore that never happened.
  */
-static void hh983_guard_restore_stream(struct hh983_data *data)
+static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedged)
 {
 	struct i2c_client *client = data->client;
-	int stream_en, meas_hi, meas_lo, prog_hi, prog_lo;
+	int stream_en;
 	int meas_htotal = -1, prog_htotal = -1;
-	bool wedged = false;
+	bool wedged = force_wedged;
 
 	stream_en = hh983_deser_apb_read8(client, data->deser_addr,
 					  DES984_APB_MAIN_STREAM_EN);
 
-	meas_hi = hh983_deser_ind_read(client, data->deser_addr,
-				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_HI);
-	meas_lo = hh983_deser_ind_read(client, data->deser_addr,
-				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_LO);
-	prog_lo = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_LO);
-	prog_hi = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_HI);
-	if (meas_hi >= 0 && meas_lo >= 0 && prog_lo >= 0 && prog_hi >= 0) {
-		meas_htotal = ((meas_hi & 0x7F) << 8) | meas_lo;
-		prog_htotal = (prog_hi << 8) | prog_lo;
-		wedged = abs(meas_htotal - prog_htotal) > DP_GUARD_HTOTAL_TOL;
-	} else {
+	if (hh983_read_htotals(data, &meas_htotal, &prog_htotal) == 0) {
+		if (!force_wedged)
+			wedged = abs(meas_htotal - prog_htotal) > dtg_tolerance;
+	} else if (!force_wedged) {
 		/* Cannot judge: assume the worst, a pulse is harmless with the stream off */
 		wedged = true;
 	}
@@ -526,6 +593,59 @@ static void hh983_guard_restore_stream(struct hh983_data *data)
 		dev_warn(&client->dev,
 			 "DP guard restore: 984 main stream readback %d (expected 1)\n",
 			 stream_en);
+}
+
+/* Mode 0 DP guard, second failure mode: the 984 DTG's measured line length
+ * wanders off while the 983 stays synced and the main stream stays on.  The
+ * VP-sync guard never sees this -- there is no video loss to trigger it -- and
+ * the panel latches black about ten seconds later, recoverable only by a power
+ * cycle.  Both black screens recorded on 2026-09-10 had this signature (once
+ * with a measured H total of 5313 against a programmed 3440).
+ *
+ * Runs on every poll while video is up, and hands the recovery to the same
+ * restore path a resync uses, so there is exactly one place that knows the safe
+ * order.  Two consecutive bad polls plus the restore is about 3 s, inside the
+ * panel's ~5 s tolerance for distorted timing.
+ */
+static void hh983_guard_check_dtg(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int meas = -1, prog = -1;
+
+	if (!dtg_check || data->guard_stream_cut)
+		return;
+
+	if (hh983_read_htotals(data, &meas, &prog) < 0) {
+		/* A failed read is not evidence of a wedge -- a bus that has
+		 * gone away is the VP-sync guard's problem, not this one. */
+		data->guard_dtg_count = 0;
+		return;
+	}
+
+	if (abs(meas - prog) <= dtg_tolerance) {
+		data->guard_dtg_count = 0;
+		return;
+	}
+
+	data->guard_dtg_count++;
+	if (data->guard_dtg_count < DP_GUARD_WEDGE_POLLS)
+		return;			/* one odd measurement is not a wedge */
+	data->guard_dtg_count = 0;
+
+	/* A link that is genuinely broken would otherwise loop the DTG pulse. */
+	if (data->guard_wedge_armed &&
+	    time_before(jiffies, data->guard_wedge_at +
+				 msecs_to_jiffies(wedge_holdoff_s * 1000)))
+		return;
+
+	data->guard_wedge_at = jiffies;
+	data->guard_wedge_armed = true;
+	dtg_wedge_count++;
+
+	dev_notice(&client->dev,
+		   "DP guard: DTG wedge without video loss (measured %d, programmed %d), restoring\n",
+		   meas, prog);
+	hh983_guard_restore_stream(data, true);
 }
 
 /* poll_interval_ms sysfs write: the poll work only reschedules itself while
@@ -573,9 +693,13 @@ static void hh983_dp_guard_work_fn(struct work_struct *work)
 				hh983_guard_cut_stream(data);
 				data->guard_video_up = false;
 				data->guard_up_count = 0;
+				data->guard_dtg_count = 0;
 			}
 		} else {
 			data->down_count = 0;
+			/* Video is up and the stream is on: the only failure
+			 * left to look for is the DTG wedging under us. */
+			hh983_guard_check_dtg(data);
 		}
 	} else {
 		if (synced) {
@@ -584,9 +708,10 @@ static void hh983_dp_guard_work_fn(struct work_struct *work)
 				dev_notice(&client->dev,
 					   "DP video back (VP_STS=0x%02X), restoring 984 video stream\n",
 					   vp_sts);
-				hh983_guard_restore_stream(data);
+				hh983_guard_restore_stream(data, false);
 				data->guard_video_up = true;
 				data->down_count = 0;
+				data->guard_dtg_count = 0;
 				data->recovery_count++;
 			}
 		} else {
@@ -1073,6 +1198,8 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 		 */
 		data->guard_video_up = false;
 		data->guard_up_count = 0;
+		data->guard_dtg_count = 0;
+		data->guard_wedge_armed = false;
 		INIT_DELAYED_WORK(&data->link_work, hh983_dp_guard_work_fn);
 		hh983_poll_owner = data;
 		if (poll_interval_ms > 0)
@@ -1083,10 +1210,11 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 				 "dp_guard needs poll_interval_ms <= 2000 to cut the stream within the panel tolerance (~5 s)\n");
 	}
 
-	dev_info(&client->dev, "HH983 initialization successful (mode=%d, poll=%s%s)\n",
+	dev_info(&client->dev, "HH983 initialization successful (mode=%d, poll=%s%s%s)\n",
 		 data->mode,
 		 (poll_interval_ms > 0 && (data->mode == 1 || (data->mode == 0 && dp_guard))) ? "on" : "off",
-		 (data->mode == 0 && dp_guard) ? ", dp_guard" : "");
+		 (data->mode == 0 && dp_guard) ? ", dp_guard" : "",
+		 (data->mode == 0 && dp_guard && dtg_check) ? ", dtg_check" : "");
 	return 0;
 }
 
