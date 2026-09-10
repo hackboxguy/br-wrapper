@@ -539,6 +539,14 @@ static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog)
  * read to the next, so re-deciding here would let the recovery be skipped for
  * a caller that had just seen a bad value, and would make the log claim a
  * restore that never happened.
+ *
+ * When the measurement cannot be read at all this used to assume a wedge and
+ * pulse anyway, on the reasoning that a pulse is harmless with the stream off.
+ * It is not harmless: on 2026-09-10 a pulse on a healthy DTG black-latched the
+ * OTS-OLED panel, recoverable only by a power cycle. The read is retried once
+ * and then the stream is simply re-enabled without a pulse -- and if the DTG
+ * really was wedged, the periodic check catches it within two polls and pulses
+ * then, on a measurement it actually has.
  */
 static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedged)
 {
@@ -546,23 +554,31 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 	int stream_en;
 	int meas_htotal = -1, prog_htotal = -1;
 	bool wedged = force_wedged;
+	bool unreadable = false;
 
 	stream_en = hh983_deser_apb_read8(client, data->deser_addr,
 					  DES984_APB_MAIN_STREAM_EN);
 
-	if (hh983_read_htotals(data, &meas_htotal, &prog_htotal) == 0) {
-		if (!force_wedged)
-			wedged = abs(meas_htotal - prog_htotal) > dtg_tolerance;
-	} else if (!force_wedged) {
-		/* Cannot judge: assume the worst, a pulse is harmless with the stream off */
-		wedged = true;
+	if (hh983_read_htotals(data, &meas_htotal, &prog_htotal) != 0) {
+		/* One retry: a single failed transfer on a bus this busy is not
+		 * evidence of anything. */
+		msleep(20);
+		unreadable = hh983_read_htotals(data, &meas_htotal, &prog_htotal) != 0;
 	}
 
-	dev_info(&client->dev,
-		 "DP guard restore: 984 stream_en=%d, DTG measured Htotal=%d, 983 Htotal=%d%s\n",
-		 stream_en, meas_htotal, prog_htotal, wedged ? " (DTG wedged)" : "");
+	if (!force_wedged && !unreadable)
+		wedged = abs(meas_htotal - prog_htotal) > dtg_tolerance;
 
-	if (!wedged && stream_en == 1 && !data->guard_stream_cut)
+	if (unreadable && !force_wedged) {
+		dev_info(&client->dev,
+			 "DP guard restore: H totals unreadable, enabling stream without DTG pulse\n");
+	} else {
+		dev_info(&client->dev,
+			 "DP guard restore: 984 stream_en=%d, DTG measured Htotal=%d, 983 Htotal=%d%s\n",
+			 stream_en, meas_htotal, prog_htotal, wedged ? " (DTG wedged)" : "");
+	}
+
+	if (!wedged && !unreadable && stream_en == 1 && !data->guard_stream_cut)
 		return;	/* healthy, nothing to do */
 
 	if (stream_en != 0)
