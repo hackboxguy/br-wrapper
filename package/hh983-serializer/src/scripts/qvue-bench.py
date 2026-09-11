@@ -99,6 +99,46 @@ def apb(addr, reg):
 # DP link symbol rate in MHz per DPCD LINK_BW_SET code.
 LINK_RATE_MHZ = {0x06: 162.0, 0x0A: 270.0, 0x14: 540.0, 0x1E: 810.0}
 
+# Plausible frame rates for anything on this bench; used to infer the trained
+# link rate (see infer_pclk).
+REFRESH_MIN, REFRESH_MAX = 45.0, 85.0
+
+
+def infer_pclk(adv_rate, mvid, nvid, h_tot, v_tot):
+    """Return (pclk_MHz, link_rate_MHz, how) for the DP stream clock.
+
+    fstream = fLS * Mvid / Nvid, where fLS is the *trained* link symbol rate.
+    APB 0x074 is MAX_LINK_RATE -- what the sink advertises it can do, not what
+    the link trained at -- and nothing in the 983's APB 0x000..0x11C range was
+    found to expose the trained rate as a code.  Measured on this bench
+    2026-09-12: a 1920x1080 @ 136.687 MHz stream reported 0x074 = 0x14 (HBR2)
+    while Mvid/Nvid only reconciles with fLS = 270 MHz (HBR).  Assuming the
+    advertised rate -- as otsctl.py does -- reports exactly double there.
+
+    So infer instead: try every rate at or below the advertised maximum and
+    keep the one whose implied frame rate is plausible for the MSA totals.
+    """
+    adv_ls = LINK_RATE_MHZ.get(adv_rate)
+    if not (adv_ls and nvid and h_tot and v_tot):
+        return 0.0, None, "insufficient data"
+
+    fits = []
+    for ls in sorted(LINK_RATE_MHZ.values()):
+        if ls > adv_ls:
+            continue
+        pclk = ls * mvid / nvid
+        refresh = pclk * 1e6 / (h_tot * v_tot)
+        if REFRESH_MIN <= refresh <= REFRESH_MAX:
+            fits.append((pclk, ls, refresh))
+
+    if len(fits) == 1:
+        pclk, ls, refresh = fits[0]
+        return pclk, ls, "trained rate inferred as %g MHz -> %.2f Hz" % (ls, refresh)
+    if not fits:
+        pclk = adv_ls * mvid / nvid
+        return pclk, adv_ls, "no rate gives a plausible frame rate; assuming advertised %g MHz" % adv_ls
+    return fits[0][0], fits[0][1], "ambiguous (%s)" % ", ".join("%g MHz" % f[1] for f in fits)
+
 
 def rh_read(reg, n):
     """Read n bytes from the 0x67 16-bit sub-addressed slave."""
@@ -138,12 +178,13 @@ def status():
     h_act, v_act = apb(SER, 0x500), apb(SER, 0x514)
     h_tot, v_tot = apb(SER, 0x510), apb(SER, 0x524)
     mvid, nvid = apb(SER, 0x530), apb(SER, 0x534)
-    ls = LINK_RATE_MHZ.get(rate)
-    pclk = (ls * mvid / nvid) if (ls and nvid) else 0.0
+    pclk, ls, how = infer_pclk(rate, mvid, nvid, h_tot, v_tot)
     print("983    DP in  : MSA %dx%d  Htot %d  Vtot %d  pclk %.2f MHz"
           % (h_act, v_act, h_tot, v_tot, pclk))
-    print("               rate 0x%02X (%s)  Mvid %d  Nvid %d"
-          % (rate, ("%g Mbps/lane" % (ls * 10)) if ls else "unknown", mvid, nvid))
+    print("               MAX_LINK_RATE(0x074)=0x%02X (advertised %s)  Mvid %d  Nvid %d"
+          % (rate, ("%g MHz" % LINK_RATE_MHZ[rate]) if rate in LINK_RATE_MHZ else "unknown",
+             mvid, nvid))
+    print("               %s" % how)
 
     # ---- 983 VP output
     print("983    VP out : programmed H total %d (0x%04X)" % (prog_htot, prog_htot))
