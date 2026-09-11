@@ -15,6 +15,10 @@
 #   fpdlink-tool.sh --target=<983|988|984> --pattern=<name> [--bus=N]
 #   fpdlink-tool.sh --touch-diag [--target=988|984] [--bus=N]
 #
+# --target=988-video is the same DS90UH988 at the same address, driven by the
+# driver's config_mode=2 (video only, no touch): --diagnose and --touch-diag
+# then expect no TDDI routing and no REM_INTB configuration.
+#
 
 # Default I2C addresses
 ADDR_983=0x18
@@ -58,9 +62,9 @@ for arg in "$@"; do
             echo "  --pattern              Read current pattern generator state"
             echo "  --pattern=<name>       Set pattern generator"
             echo "  --touch-diag           Dump touch interrupt/I2C/BCC registers (983+deser)"
-            echo "                         Use with --target=988 (default) or --target=984"
+            echo "                         Use with --target=988 (default), 984 or 988-video"
             echo "  --diagnose             End-to-end pipeline health snapshot with verdict."
-            echo "                         Use with --target=984 (default) or --target=988."
+            echo "                         Use with --target=984 (default), 988 or 988-video."
             echo "  --diagnose=baseline    Save current state to a baseline file"
             echo "  --diagnose=compare     Print current state + diff vs saved baseline"
             echo "  --recover              Recover deser video pipeline (soft digital reset)"
@@ -68,7 +72,9 @@ for arg in "$@"; do
             echo "                         Use with --target=984 (default) or --target=988."
             echo ""
             echo "Options:"
-            echo "  --target=<983|988|984> Target device (required)"
+            echo "  --target=<983|988|984|988-video>"
+            echo "                         Target device (required). 988-video is a 988"
+            echo "                         driven in config_mode=2 (no touch)."
             echo "  --bus=N                I2C bus number (default: 1)"
             echo "  --stream=N             FPDLink stream number for 984 (default: 0)"
             echo "  --file=PATH            Baseline file for --diagnose=baseline|compare"
@@ -799,7 +805,7 @@ diag_save_baseline() {
     {
         echo "# fpdlink-tool --diagnose baseline"
         echo "# saved: $(date -Iseconds 2>/dev/null || date)"
-        echo "# mode: $_mode  (0=983+984, 1=983+988)"
+        echo "# mode: $_mode  (0=983+984, 1=983+988, 2=983+988 video only)"
         for _v in $DV_VAR_LIST; do
             eval "printf '%s=%s\n' \"$_v\" \"\$$_v\""
         done
@@ -882,9 +888,15 @@ diag_print() {
     # Mode 0 (984): driver leaves 0x04 at default 0xC1; passthrough (0xC9)
     #   is only asserted during hh983_recover_link(), not at init.
     # Mode 1 (988): init sets 0xD9 (default 0xD1 | bit3 I2C_PASSTHROUGH).
+    # Mode 2 (988 video only): sets the same 0xD9, but never calls
+    #   hh983_configure_rem_intb(), so 0x51 is whatever reset or the RH850
+    #   left it -- there is no expected value to check against.
     if [ "$_deser_mode" -eq 0 ]; then
         _exp_983_51="0x83"
         _exp_des_04="0xC1"
+    elif [ "$_deser_mode" -eq 2 ]; then
+        _exp_983_51=""
+        _exp_des_04="0xD9"
     else
         _exp_983_51="0x93"
         _exp_des_04="0xD9"
@@ -1064,6 +1076,13 @@ cmd_diagnose() {
             _deser_label="DS90UH988"
             _deser_mode=1
             ;;
+        988-video)
+            # Same part and same address as 988; only the driver's expected
+            # register state differs (no touch routing, no REM_INTB).
+            _deser_addr="$ADDR_988"
+            _deser_label="DS90UH988 video-only"
+            _deser_mode=2
+            ;;
         *)  # default 984
             _deser_addr="$ADDR_984"
             _deser_label="DS90HH984"
@@ -1129,6 +1148,12 @@ cmd_touch_diag() {
             _deser_mode=0
             _passthru_expected="0xC9"
             ;;
+        988-video)
+            _deser_addr="$ADDR_988"
+            _deser_label="DS90UH988 video-only"
+            _deser_mode=2
+            _passthru_expected="0xD9"
+            ;;
         *)  # default to 988
             _deser_addr="$ADDR_988"
             _deser_label="DS90UH988"
@@ -1172,6 +1197,8 @@ cmd_touch_diag() {
         "$_v" "$((_r >> 7 & 1))" "$((_r >> 4 & 1))" "$((_r & 1))" "$((_r >> 1 & 1))"
     if [ "$_deser_mode" -eq 0 ]; then
         check_reg "$_v" 0x83  # Mode 0 (984): no IE_DP_RX0 to avoid INTB contention
+    elif [ "$_deser_mode" -eq 2 ]; then
+        :                     # Mode 2 (988 video only): driver never writes 0x51
     else
         check_reg "$_v" 0x93  # Mode 1 (988): IE_DP_RX0 enabled
     fi
@@ -1224,6 +1251,9 @@ cmd_touch_diag() {
     echo ""
     if [ "$_deser_mode" -eq 1 ]; then
         echo "I2C Routing (TDDI Touch 0x48/0x49 — configured by driver for mode 1):"
+    elif [ "$_deser_mode" -eq 2 ]; then
+        echo "I2C Routing (raw TARGET_ID/ALIAS/DEST — mode 2 leaves slot 0 alone;"
+        echo "             on a 3x QVue the RH850 uses it to alias the 988 to 0x2c):"
     else
         echo "I2C Routing (raw TARGET_ID/ALIAS/DEST — not configured by driver for mode 0):"
     fi
@@ -1444,6 +1474,8 @@ cmd_touch_diag() {
     echo "  Host -> 983 GENERAL_CFG(0x07) I2C passthrough"
     if [ "$_deser_mode" -eq 1 ]; then
         echo "    -> 983 TARGET_ID/ALIAS(0x70-0x79) routes 0x48/0x49 to Port 1"
+    elif [ "$_deser_mode" -eq 2 ]; then
+        echo "    (mode 2 is video only — no touch controller on this display)"
     fi
     echo "    -> BCC backchannel -> $_deser_label GENERAL_CFG(0x04) passthrough"
     echo "    -> Touch controller on $_deser_label local I2C bus"
@@ -1496,7 +1528,9 @@ case "$TARGET" in
             fi
         fi
         ;;
-    988)
+    988|988-video)
+        # Same DS90UH988 at the same address; only the driver's expected
+        # register state differs, which only --diagnose / --touch-diag care about.
         if [ "$TIMINGS" -eq 1 ]; then
             cmd_988_timings
         fi
@@ -1521,7 +1555,7 @@ case "$TARGET" in
         fi
         ;;
     *)
-        echo "Error: Unknown target '$TARGET' (use 983, 988, or 984)"
+        echo "Error: Unknown target '$TARGET' (use 983, 988, 984 or 988-video)"
         exit 1
         ;;
 esac
