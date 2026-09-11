@@ -85,7 +85,29 @@ MODULE_PARM_DESC(wedge_holdoff_s, "Mode 0 dp_guard: minimum seconds between two 
 
 static int dtg_wedge_count;
 module_param(dtg_wedge_count, int, 0444);
-MODULE_PARM_DESC(dtg_wedge_count, "Mode 0 dp_guard: DTG-wedge restores performed since load (read-only)");
+MODULE_PARM_DESC(dtg_wedge_count, "Mode 0 dp_guard: DTG wedges detected since load (read-only)");
+
+/*
+ * Whether a detected wedge is acted on.
+ *
+ * The recovery is a DTG reset pulse, and a pulse is known to be able to
+ * black-latch this panel: forcing one on a healthy DTG on 2026-09-10 did
+ * exactly that. What is not known is whether the pulse is also what latches the
+ * panel during a *real* wedge, or whether the wedge would have taken it anyway.
+ * Three observations do not separate the two -- one real wedge was pulsed and
+ * the panel stayed lit, a later burst of two was pulsed and it did not.
+ *
+ * dtg_recover=0 detects and logs without pulsing, which answers that question:
+ * if the panel goes black on a wedge that was never pulsed, the wedge takes the
+ * panel and the recovery is worth keeping; if it stays lit, the pulse is
+ * implicated. The VP-sync resync path is untouched either way, so a genuine
+ * video loss still recovers normally.
+ *
+ * Default 1: this is an experiment, not a change of behaviour.
+ */
+static int dtg_recover = 1;
+module_param(dtg_recover, int, 0644);
+MODULE_PARM_DESC(dtg_recover, "Mode 0 dp_guard: 1=pulse the DTG to recover a detected wedge (default), 0=detect and log only");
 
 /* Mode 0 (983+984) OLED-OTS touch controller routing.
  *
@@ -657,6 +679,13 @@ static void hh983_guard_check_dtg(struct hh983_data *data)
 	data->guard_wedge_at = jiffies;
 	data->guard_wedge_armed = true;
 	dtg_wedge_count++;
+
+	if (!dtg_recover) {
+		dev_notice(&client->dev,
+			   "DP guard: DTG wedge detected (measured %d, programmed %d), NOT recovering (log-only)\n",
+			   meas, prog);
+		return;
+	}
 
 	dev_notice(&client->dev,
 		   "DP guard: DTG wedge without video loss (measured %d, programmed %d), restoring\n",
@@ -1230,7 +1259,8 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 		 data->mode,
 		 (poll_interval_ms > 0 && (data->mode == 1 || (data->mode == 0 && dp_guard))) ? "on" : "off",
 		 (data->mode == 0 && dp_guard) ? ", dp_guard" : "",
-		 (data->mode == 0 && dp_guard && dtg_check) ? ", dtg_check" : "");
+		 (data->mode == 0 && dp_guard && dtg_check)
+			? (dtg_recover ? ", dtg_check" : ", dtg_check(log-only)") : "");
 	return 0;
 }
 
