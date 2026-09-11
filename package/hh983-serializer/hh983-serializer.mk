@@ -27,6 +27,8 @@ define HH983_SERIALIZER_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/bin/fpdlink-tool.sh
 	$(INSTALL) -D -m 0755 $(@D)/scripts/toggle-pi-hdmi.sh \
 		$(TARGET_DIR)/usr/bin/toggle-pi-hdmi.sh
+	$(INSTALL) -D -m 0755 $(@D)/scripts/qvue-bench.py \
+		$(TARGET_DIR)/usr/bin/qvue-bench.py
 endef
 
 $(eval $(kernel-module))
