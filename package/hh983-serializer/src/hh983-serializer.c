@@ -2,9 +2,10 @@
 /*
  * HH983 FPDLink Serializer Driver
  *
- * Supports two configurations:
+ * Supports three configurations:
  *   Mode 0: DS90UH983 + DS90UH984 (REM_INTB forwarding)
  *   Mode 1: DS90UH983 + DS90UH988 (I2C passthrough for TDDI + REM_INTB)
+ *   Mode 2: DS90UH983 + DS90Ux988, video only (no touch, no interrupts)
  *
  * Author: Albert David
  */
@@ -18,10 +19,10 @@
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
 
-/* Configuration mode: 0=983+984, 1=983+988 */
+/* Configuration mode: 0=983+984, 1=983+988, 2=983+988 video only */
 static int config_mode = 0;
 module_param(config_mode, int, 0444);
-MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default: 0)");
+MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988, 2=983+988 video only, no touch (default: 0)");
 
 /* Link status poll interval (0 = disable monitoring) */
 static int poll_interval_ms = 1000;
@@ -396,7 +397,8 @@ static void hh983_check_link_status(struct hh983_data *data)
 			 (ser_sts & 0x10) ? "LINK_LOST " : "",
 			 (ser_sts & 0x01) ? "LINK_DET" : "NO_LINK");
 
-	if (data->mode == 1) {
+	if (data->mode == 1 || data->mode == 2) {
+		/* Mode 2 is a 988 too, so the same status registers apply. */
 		int des_sts0, des_sts1;
 
 		des_sts0 = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_0);
@@ -837,6 +839,12 @@ resched:
 /* Reset the video link: GPIO toggle + digital reset + HPD toggle.
  * Reusable by both probe() and the link monitor work function.
  *
+ * Modes 0 and 1 only: mode 2 starts no link monitor, so nothing calls this.
+ * If that ever changes, note that the sequence below does a 983 digital reset
+ * and an HPD toggle unconditionally, which a mode-2 board must not get for
+ * free -- plan 4.3 describes the mode-2 variant (983 reset + HPD only, no 988
+ * GPIO forcing) if phase 2 is ever needed.
+ *
  * Sequence (both mode 0/984 and mode 1/988):
  *   1. Ensure I2C passthrough is up (so we can talk to deserializer)
  *   2. Deserializer GPIO4/GPIO6 LOW — hold display driver board in reset
@@ -1227,6 +1235,70 @@ static int hh983_init_mode_988(struct hh983_data *data)
 	return 0;
 }
 
+/* Mode 2: 983 + 988, video only (no touch controller on the panel).
+ *
+ * Deliberately does far less than mode 1, and the omissions are the point:
+ *
+ *   - No SER_TARGET_ID0/ALIAS0/DEST0 writes.  On a 3x QVue the RH850 firmware
+ *     has already used target slot 0 to alias the 988 from its strapped
+ *     physical 7-bit 0x38 to 0x2C (TARGET_ID0=0x70, TARGET_ALIAS0=0x58).
+ *     Overwriting that slot -- which mode 1 does, with 0x90/0x90/0x20 for the
+ *     TDDI touch -- would make the 988 vanish from 0x2C for every later
+ *     access: link status here, the recovery path, and every Pi-side debug
+ *     script.  On the existing 988 boards this went unnoticed because their
+ *     988 sits at 0x2C physically, so plain pass-through still reached it.
+ *
+ *   - No hh983_configure_rem_intb() and no DES988_RX_INTN_CTL.  There is no
+ *     touch controller, so the 988's INTB_IN pin floats and REM_INTB toward
+ *     the host GPIO has no consumer; arming an interrupt path with no owner
+ *     is a good way to latch GPIO4 LOW for no reason.
+ *
+ * What is left is the pass-through pair plus a lock-status read, which is
+ * everything a video-only board needs from the host.
+ */
+static int hh983_init_mode_988_video(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int ret;
+
+	dev_info(&client->dev, "Initializing Mode 2: 983 + 988 (video only, no touch)\n");
+
+	/* Step 1: Enable I2C passthrough on serializer */
+	ret = hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
+	if (ret < 0)
+		return ret;
+	msleep(10);
+
+	/* Step 2: Enable I2C passthrough on 988 deserializer */
+	ret = hh983_write_deser_reg(client, data->deser_addr, DES988_I2C_CONTROL,
+				    DES988_ENABLE_PASSTHROUGH);
+	if (ret < 0) {
+		dev_err(&client->dev, "Failed to enable 988 passthrough\n");
+		return ret;
+	}
+	usleep_range(5000, 10000);
+
+	/* Step 3: Report link status.  Both registers, because a video-only
+	 * board gives no other sign of life -- there is no touch device
+	 * appearing on the bus to confirm the back channel works.
+	 */
+	ret = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_0);
+	if (ret >= 0)
+		dev_info(&client->dev, "988 GP_STATUS_0=0x%02X [%s%s]\n", ret,
+			 (ret & 0x01) ? "FPD4_LOCK " : "",
+			 (ret & 0x04) ? "FPDTX_PLL_LOCK" : "");
+
+	ret = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_1);
+	if (ret >= 0)
+		dev_info(&client->dev, "988 GP_STATUS_1=0x%02X [%s%s%s]\n", ret,
+			 (ret & 0x02) ? "SIG_DET " : "",
+			 (ret & 0x40) ? "FPD_PLL_LOCK " : "",
+			 (ret & 0x01) ? "LOCK" : "NO_LOCK");
+
+	dev_info(&client->dev, "Mode 2 (983+988 video only) initialization complete\n");
+	return 0;
+}
+
 /* Kernel 6.3+ changed I2C probe signature - handle both versions */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 static int hh983_probe(struct i2c_client *client)
@@ -1263,8 +1335,11 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	case 1:
 		ret = hh983_init_mode_988(data);
 		break;
+	case 2:
+		ret = hh983_init_mode_988_video(data);
+		break;
 	default:
-		dev_err(&client->dev, "Invalid config_mode %d (use 0 or 1)\n", data->mode);
+		dev_err(&client->dev, "Invalid config_mode %d (use 0, 1 or 2)\n", data->mode);
 		return -EINVAL;
 	}
 
@@ -1279,7 +1354,12 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	/* Link monitoring and APB interrupt unmasking are only needed for
 	 * mode 1 (988) where HDMI-switch recovery is supported.  Mode 0
 	 * (984) matches the old driver behavior: configure registers and
-	 * leave the existing DP link undisturbed.
+	 * leave the existing DP link undisturbed.  Mode 2 does neither in
+	 * phase 1: no delayed work is started and APB_SINK_0_INT_MASK is
+	 * left at its default, so poll_interval_ms has no effect there.
+	 * Whether a mode-2 monitor is needed is decided from bench evidence
+	 * (does the QVue come back on its own after a Pi reboot?), not up
+	 * front -- see plan 4.3.
 	 */
 	if (data->mode == 1) {
 		/* Unmask SINK_0 video interrupts so SINK_0_INT_CAUSE fires on
@@ -1362,6 +1442,18 @@ static void hh983_remove(struct i2c_client *client)
 			cancel_delayed_work_sync(&data->link_work);
 		}
 
+		/* Mode 2 armed no interrupt chain and owns no reset: it only
+		 * enabled pass-through.  Tearing down what was never set up
+		 * would be noise, and the digital reset below would drop a
+		 * running video link on a plain module reload, so mode 2 stops
+		 * here.
+		 */
+		if (data->mode == 2) {
+			dev_info(&client->dev,
+				 "Mode 2: nothing to tear down, link left running\n");
+			return;
+		}
+
 		/* Tear down the full interrupt chain in reverse order.
 		 * Just disabling GPIO4 leaves REM_INT and INTB_IN active,
 		 * which can latch an interrupt that persists across
@@ -1422,6 +1514,6 @@ static struct i2c_driver hh983_driver = {
 
 module_i2c_driver(hh983_driver);
 
-MODULE_DESCRIPTION("HH983 FPDLink Serializer Driver (983+984 / 983+988)");
+MODULE_DESCRIPTION("HH983 FPDLink Serializer Driver (983+984 / 983+988 / 983+988 video only)");
 MODULE_AUTHOR("Albert David");
 MODULE_LICENSE("GPL");
