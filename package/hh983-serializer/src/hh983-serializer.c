@@ -2,9 +2,16 @@
 /*
  * HH983 FPDLink Serializer Driver
  *
- * Supports two configurations:
+ * Supports three configurations:
  *   Mode 0: DS90UH983 + DS90UH984 (REM_INTB forwarding)
  *   Mode 1: DS90UH983 + DS90UH988 (I2C passthrough for TDDI + REM_INTB)
+ *   Mode 2: DS90UH983 + DS90Ux988, video only (no touch, no interrupts)
+ *
+ * All three modes guard against the same deserializer DTG wedge: the DTG's
+ * measured input line length wanders away from the line length the 983 is
+ * actually sending, the panel goes black, and it never recovers on its own.
+ * Mode 0 has done this since the OTS-OLED bring-up; modes 1 and 2 gained it
+ * after the failure was reproduced on a 988 (see hh983_des988_check_dtg).
  *
  * Author: Albert David
  */
@@ -18,10 +25,10 @@
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
 
-/* Configuration mode: 0=983+984, 1=983+988 */
+/* Configuration mode: 0=983+984, 1=983+988, 2=983+988 video only */
 static int config_mode = 0;
 module_param(config_mode, int, 0444);
-MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988 (default: 0)");
+MODULE_PARM_DESC(config_mode, "Configuration mode: 0=983+984, 1=983+988, 2=983+988 video only, no touch (default: 0)");
 
 /* Link status poll interval (0 = disable monitoring) */
 static int poll_interval_ms = 1000;
@@ -69,7 +76,7 @@ MODULE_PARM_DESC(dp_guard, "Mode 0 only: 1=cut 984 video stream on DP video loss
  */
 static int dtg_check = 1;
 module_param(dtg_check, int, 0444);
-MODULE_PARM_DESC(dtg_check, "Mode 0 dp_guard only: 1=also restore when the 984 DTG wedges with no video loss (default: 1), 0=off");
+MODULE_PARM_DESC(dtg_check, "Modes 0, 1 and 2: 1=detect a wedged deserializer DTG (measured vs programmed H total) and recover it (default: 1), 0=off");
 
 /* A wedged 984 DTG is off by more than a thousand pixels; a healthy one
  * measures 3441..3443 against a programmed 3440, so 32 leaves room for the
@@ -77,15 +84,15 @@ MODULE_PARM_DESC(dtg_check, "Mode 0 dp_guard only: 1=also restore when the 984 D
 #define DP_GUARD_HTOTAL_TOL_DEFAULT  32
 static int dtg_tolerance = DP_GUARD_HTOTAL_TOL_DEFAULT;
 module_param(dtg_tolerance, int, 0644);
-MODULE_PARM_DESC(dtg_tolerance, "Mode 0 dp_guard: |measured - programmed| H total, in pixels, before the 984 DTG counts as wedged (default: 32)");
+MODULE_PARM_DESC(dtg_tolerance, "Modes 0, 1 and 2: |measured - programmed| H total, in pixels, before the deserializer DTG counts as wedged (default: 32)");
 
 static int wedge_holdoff_s = 30;
 module_param(wedge_holdoff_s, int, 0644);
-MODULE_PARM_DESC(wedge_holdoff_s, "Mode 0 dp_guard: minimum seconds between two DTG-wedge restores (default: 30)");
+MODULE_PARM_DESC(wedge_holdoff_s, "Modes 0, 1 and 2: minimum seconds between two DTG-wedge recoveries (default: 30)");
 
 static int dtg_wedge_count;
 module_param(dtg_wedge_count, int, 0444);
-MODULE_PARM_DESC(dtg_wedge_count, "Mode 0 dp_guard: DTG wedges detected since load (read-only)");
+MODULE_PARM_DESC(dtg_wedge_count, "Modes 0, 1 and 2: DTG wedges detected since load (read-only)");
 
 /*
  * Whether a detected wedge is acted on.
@@ -107,7 +114,7 @@ MODULE_PARM_DESC(dtg_wedge_count, "Mode 0 dp_guard: DTG wedges detected since lo
  */
 static int dtg_recover = 1;
 module_param(dtg_recover, int, 0644);
-MODULE_PARM_DESC(dtg_recover, "Mode 0 dp_guard: 1=pulse the DTG to recover a detected wedge (default), 0=detect and log only");
+MODULE_PARM_DESC(dtg_recover, "Modes 0, 1 and 2: 1=pulse the DTG to recover a detected wedge (default), 0=detect and log only");
 
 /* Mode 0 (983+984) OLED-OTS touch controller routing.
  *
@@ -396,7 +403,8 @@ static void hh983_check_link_status(struct hh983_data *data)
 			 (ser_sts & 0x10) ? "LINK_LOST " : "",
 			 (ser_sts & 0x01) ? "LINK_DET" : "NO_LINK");
 
-	if (data->mode == 1) {
+	if (data->mode == 1 || data->mode == 2) {
+		/* Mode 2 is a 988 too, so the same status registers apply. */
 		int des_sts0, des_sts1;
 
 		des_sts0 = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_0);
@@ -755,6 +763,156 @@ static void hh983_guard_check_dtg(struct hh983_data *data)
 	hh983_guard_restore_stream(data, true);
 }
 
+/* Modes 1 and 2: the same DTG wedge mode 0 guards against, on the 988 path.
+ *
+ * Reproduced on a 988 with the owner watching, 2026-09-12: after a plain reboot
+ * of the host the 988's measured input H total wanders (3730, 3862, 3946, 4377,
+ * 4456 against a programmed 2028) while its measured H/V *active* stay correct
+ * and the 983's DP input stays steady.  The panel is black for as long as that
+ * lasts and it does not self-heal -- five minutes of sampling showed the
+ * measurement drifting but never recovering.  A DTG pulse snapped it back and
+ * the picture returned at that instant, twice.  Mode 1 never noticed, because
+ * its monitor watches SINK video events and video is already back by the time
+ * it probes.
+ *
+ * Two deliberate differences from mode 0's hh983_guard_check_dtg():
+ *
+ *   - It gates on the FPD-Link lock, not on VP sync.  The 983's VP free-runs
+ *     its programmed timing when the DP input is absent, and the 988 measures
+ *     that free-running timing correctly, so a wedge is both detectable and
+ *     curable with no DP video at all (measured 5671 / 5872 / 10335 against a
+ *     programmed 5628 in exactly that state).  Requiring VP sync would leave
+ *     those unfixed.  While the 983 is instead stretching lines waiting for
+ *     video the measurement is long for a reason a 988 pulse cannot fix; the
+ *     holdoff is what stops a pulse storm there, as it does in mode 0.
+ *
+ *   - It pulses with the main stream left running.  Mode 0 cuts the 984 stream
+ *     first because an eDP OLED latches black on distorted timing and a pulse
+ *     on a healthy DTG has itself latched that panel.  On this 988/LCD path the
+ *     pulse with the stream running restored the picture every time it was
+ *     tried -- several times across 2026-09-11/12, twice with the owner
+ *     watching -- and cutting the stream would add a visible blank that the
+ *     panel does not need.  If a 988 path ever turns out to latch, this is the
+ *     decision to revisit first.
+ *
+ * Register names below are the DES984_* DTG constants: the two parts share that
+ * block, which hh983_read_htotals() already relies on for whatever deserializer
+ * sits at deser_addr.
+ */
+static void hh983_des988_check_dtg(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int meas = -1, prog = -1;
+	int sts0;
+
+	if (!dtg_check)
+		return;
+
+	/* No lock means there is nothing to measure, and a measurement taken
+	 * across a re-lock is meaningless rather than wrong. */
+	sts0 = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_0);
+	if (sts0 < 0 || (sts0 & 0x01) == 0) {
+		data->guard_dtg_count = 0;
+		return;
+	}
+
+	if (hh983_read_htotals(data, &meas, &prog) < 0) {
+		/* A failed read is a bus problem, not evidence of a wedge. */
+		data->guard_dtg_count = 0;
+		return;
+	}
+
+	/* A measured length of zero is not a wedge, it is "no measurement yet":
+	 * the DTG reads 0 while it is still locking, which happens for a second
+	 * or two after a digital reset or a module reload, and it also reads 0
+	 * when there is no valid stream at all. A pulse cannot help either case
+	 * -- the warm-re-init state that reads 0 needs the DP input back, not a
+	 * DTG reset -- so skip rather than spend a pulse on it. Seen on the bench
+	 * 2026-09-12: a modprobe straight after a mode-1 unload pulsed once for
+	 * exactly this reason before the check was tightened. */
+	if (meas <= 0) {
+		data->guard_dtg_count = 0;
+		return;
+	}
+
+	if (abs(meas - prog) <= dtg_tolerance) {
+		data->guard_dtg_count = 0;
+		data->guard_wedged = false;
+		return;
+	}
+
+	data->guard_dtg_count++;
+	if (data->guard_dtg_count < DP_GUARD_WEDGE_POLLS)
+		return;			/* one odd measurement is not a wedge */
+	data->guard_dtg_count = 0;
+
+	data->guard_wedged = true;
+
+	/* A link that is genuinely broken would otherwise loop the DTG pulse. */
+	if (data->guard_wedge_armed &&
+	    time_before(jiffies, data->guard_wedge_at +
+				 msecs_to_jiffies(wedge_holdoff_s * 1000)))
+		return;
+
+	data->guard_wedge_at = jiffies;
+	data->guard_wedge_armed = true;
+	dtg_wedge_count++;
+
+	if (!dtg_recover) {
+		dev_notice(&client->dev,
+			   "DTG guard (mode %d): DTG wedge detected (measured %d, programmed %d), NOT recovering (log-only)\n",
+			   data->mode, meas, prog);
+		return;
+	}
+
+	dev_notice(&client->dev,
+		   "DTG guard (mode %d): DTG wedge without video loss (measured %d, programmed %d), pulsing DTG\n",
+		   data->mode, meas, prog);
+
+	hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+			      DES984_DTG_P0_CTL, DES984_DTG_HOLD_RESET);
+	hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+			      DES984_DTG_P1_CTL, DES984_DTG_HOLD_RESET);
+	msleep(200);
+	hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+			      DES984_DTG_P0_CTL, DES984_DTG_RELEASE);
+	hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+			      DES984_DTG_P1_CTL, DES984_DTG_RELEASE);
+	msleep(300);
+
+	/* Read back, but give the link a second chance first: when the wedge was
+	 * caused by the video going away and coming back, the DTG is still
+	 * re-locking 300 ms after the release and reads 0, which would log a
+	 * "failed" recovery that in fact succeeded a moment later (seen on the
+	 * bench 2026-09-12 after an HPD drop). One retry, then report whatever it
+	 * says - including a genuine failure. */
+	if (hh983_read_htotals(data, &meas, &prog) == 0 &&
+	    (meas <= 0 || abs(meas - prog) > dtg_tolerance)) {
+		msleep(700);
+		(void)hh983_read_htotals(data, &meas, &prog);
+	}
+
+	dev_notice(&client->dev,
+		   "DTG guard (mode %d): after pulse measured %d, programmed %d\n",
+		   data->mode, meas, prog);
+}
+
+/* Mode 2 poll: the wedge check and nothing else.  Mode 2 arms no interrupts and
+ * has no SINK-event recovery to run, so this work function exists only so that
+ * a mode-2 board is not left black by a wedge the way mode 1 was.
+ */
+static void hh983_des988_dtg_work_fn(struct work_struct *work)
+{
+	struct hh983_data *data = container_of(work, struct hh983_data,
+					       link_work.work);
+
+	hh983_des988_check_dtg(data);
+
+	if (poll_interval_ms > 0)
+		schedule_delayed_work(&data->link_work,
+				      msecs_to_jiffies(poll_interval_ms));
+}
+
 /* poll_interval_ms sysfs write: the poll work only reschedules itself while
  * the interval is positive, so a 0 stops it for good.  Restart it here when
  * a positive value is written and the work is not pending.
@@ -836,6 +994,12 @@ resched:
 
 /* Reset the video link: GPIO toggle + digital reset + HPD toggle.
  * Reusable by both probe() and the link monitor work function.
+ *
+ * Modes 0 and 1 only: mode 2 starts no link monitor, so nothing calls this.
+ * If that ever changes, note that the sequence below does a 983 digital reset
+ * and an HPD toggle unconditionally, which a mode-2 board must not get for
+ * free -- plan 4.3 describes the mode-2 variant (983 reset + HPD only, no 988
+ * GPIO forcing) if phase 2 is ever needed.
  *
  * Sequence (both mode 0/984 and mode 1/988):
  *   1. Ensure I2C passthrough is up (so we can talk to deserializer)
@@ -1028,6 +1192,12 @@ static void hh983_link_work_fn(struct work_struct *work)
 			data->recovery_cooldown = 5;
 		}
 	}
+
+	/* Video is up and no recovery is settling: the failure left to look for
+	 * is the 988 DTG wedging under us, which this monitor is blind to
+	 * because it watches SINK video events and a wedge produces none. */
+	if (data->link_up && data->recovery_cooldown == 0)
+		hh983_des988_check_dtg(data);
 
 resched:
 	if (poll_interval_ms > 0)
@@ -1227,6 +1397,82 @@ static int hh983_init_mode_988(struct hh983_data *data)
 	return 0;
 }
 
+/* Mode 2: 983 + 988, video only (no touch controller on the panel).
+ *
+ * Deliberately does far less than mode 1, and the omissions are the point:
+ *
+ *   - No SER_TARGET_ID0/ALIAS0/DEST0 writes.  On a 3x QVue the RH850 firmware
+ *     has already used target slot 0 to alias the 988 from its strapped
+ *     physical 7-bit 0x38 to 0x2C (TARGET_ID0=0x70, TARGET_ALIAS0=0x58).
+ *     Overwriting that slot -- which mode 1 does, with 0x90/0x90/0x20 for the
+ *     TDDI touch -- would make the 988 vanish from 0x2C for every later
+ *     access: link status here, the recovery path, and every Pi-side debug
+ *     script.  On the existing 988 boards this went unnoticed because their
+ *     988 sits at 0x2C physically, so plain pass-through still reached it.
+ *
+ *   - No hh983_configure_rem_intb() and no DES988_RX_INTN_CTL.  There is no
+ *     touch controller, so the 988's INTB_IN pin floats and REM_INTB toward
+ *     the host GPIO has no consumer; arming an interrupt path with no owner
+ *     is a good way to latch GPIO4 LOW for no reason.
+ *
+ * What is left is the pass-through pair plus a lock-status read, which is
+ * everything a video-only board needs from the host.
+ *
+ * One thing that can mislead on a bench: after a *warm* reboot from mode 1,
+ * mode 2 may appear to have working touch. A host reboot resets neither the
+ * 983 nor the deserializer, and mode 2 writes none of the registers involved,
+ * so the mode-1 touch routing (TARGET_ID0/ALIAS0/DEST0) and the whole
+ * interrupt chain (983 GPIO4_CONFIG, INTERRUPT_CTL, INTERRUPT_CTRL, the
+ * deserializer's RX_INT_CTL) are all still in the silicon, and the touch
+ * driver finds a fully working path - it registers a real interrupt, it is not
+ * falling back to polling. Measured on the bench 2026-09-12. That is leftover
+ * state, not a feature: a cold boot in mode 2 has no touch, because nothing
+ * ever writes those registers. It is also the same property that makes mode 2
+ * safe on a 3x QVue, where the slot holds the RH850's 988 alias instead.
+ */
+static int hh983_init_mode_988_video(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int ret;
+
+	dev_info(&client->dev, "Initializing Mode 2: 983 + 988 (video only, no touch)\n");
+
+	/* Step 1: Enable I2C passthrough on serializer */
+	ret = hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
+	if (ret < 0)
+		return ret;
+	msleep(10);
+
+	/* Step 2: Enable I2C passthrough on 988 deserializer */
+	ret = hh983_write_deser_reg(client, data->deser_addr, DES988_I2C_CONTROL,
+				    DES988_ENABLE_PASSTHROUGH);
+	if (ret < 0) {
+		dev_err(&client->dev, "Failed to enable 988 passthrough\n");
+		return ret;
+	}
+	usleep_range(5000, 10000);
+
+	/* Step 3: Report link status.  Both registers, because a video-only
+	 * board gives no other sign of life -- there is no touch device
+	 * appearing on the bus to confirm the back channel works.
+	 */
+	ret = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_0);
+	if (ret >= 0)
+		dev_info(&client->dev, "988 GP_STATUS_0=0x%02X [%s%s]\n", ret,
+			 (ret & 0x01) ? "FPD4_LOCK " : "",
+			 (ret & 0x04) ? "FPDTX_PLL_LOCK" : "");
+
+	ret = hh983_read_deser_reg(client, data->deser_addr, DES988_GP_STATUS_1);
+	if (ret >= 0)
+		dev_info(&client->dev, "988 GP_STATUS_1=0x%02X [%s%s%s]\n", ret,
+			 (ret & 0x02) ? "SIG_DET " : "",
+			 (ret & 0x40) ? "FPD_PLL_LOCK " : "",
+			 (ret & 0x01) ? "LOCK" : "NO_LOCK");
+
+	dev_info(&client->dev, "Mode 2 (983+988 video only) initialization complete\n");
+	return 0;
+}
+
 /* Kernel 6.3+ changed I2C probe signature - handle both versions */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 3, 0)
 static int hh983_probe(struct i2c_client *client)
@@ -1263,8 +1509,11 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	case 1:
 		ret = hh983_init_mode_988(data);
 		break;
+	case 2:
+		ret = hh983_init_mode_988_video(data);
+		break;
 	default:
-		dev_err(&client->dev, "Invalid config_mode %d (use 0 or 1)\n", data->mode);
+		dev_err(&client->dev, "Invalid config_mode %d (use 0, 1 or 2)\n", data->mode);
 		return -EINVAL;
 	}
 
@@ -1279,7 +1528,12 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	/* Link monitoring and APB interrupt unmasking are only needed for
 	 * mode 1 (988) where HDMI-switch recovery is supported.  Mode 0
 	 * (984) matches the old driver behavior: configure registers and
-	 * leave the existing DP link undisturbed.
+	 * leave the existing DP link undisturbed.  Mode 2 does neither in
+	 * phase 1: no delayed work is started and APB_SINK_0_INT_MASK is
+	 * left at its default, so poll_interval_ms has no effect there.
+	 * Whether a mode-2 monitor is needed is decided from bench evidence
+	 * (does the QVue come back on its own after a Pi reboot?), not up
+	 * front -- see plan 4.3.
 	 */
 	if (data->mode == 1) {
 		/* Unmask SINK_0 video interrupts so SINK_0_INT_CAUSE fires on
@@ -1294,6 +1548,19 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 		/* Start link monitoring */
 		data->link_up = true;
 		INIT_DELAYED_WORK(&data->link_work, hh983_link_work_fn);
+		hh983_poll_owner = data;
+		if (poll_interval_ms > 0)
+			schedule_delayed_work(&data->link_work,
+					      msecs_to_jiffies(poll_interval_ms));
+	} else if (data->mode == 2 && dtg_check) {
+		/* Mode 2 arms nothing else: no APB unmask, no SINK events, no
+		 * recovery path.  The only reason it polls at all is the DTG
+		 * wedge, which would otherwise leave the panel black with
+		 * nothing watching. */
+		data->guard_dtg_count = 0;
+		data->guard_wedged = false;
+		data->guard_wedge_armed = false;
+		INIT_DELAYED_WORK(&data->link_work, hh983_des988_dtg_work_fn);
 		hh983_poll_owner = data;
 		if (poll_interval_ms > 0)
 			schedule_delayed_work(&data->link_work,
@@ -1322,9 +1589,12 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 
 	dev_info(&client->dev, "HH983 initialization successful (mode=%d, poll=%s%s%s)\n",
 		 data->mode,
-		 (poll_interval_ms > 0 && (data->mode == 1 || (data->mode == 0 && dp_guard))) ? "on" : "off",
+		 (poll_interval_ms > 0 && (data->mode == 1 ||
+					   (data->mode == 0 && dp_guard) ||
+					   (data->mode == 2 && dtg_check))) ? "on" : "off",
 		 (data->mode == 0 && dp_guard) ? ", dp_guard" : "",
-		 (data->mode == 0 && dp_guard && dtg_check)
+		 (dtg_check && ((data->mode == 0 && dp_guard) ||
+				data->mode == 1 || data->mode == 2))
 			? (dtg_recover ? ", dtg_check" : ", dtg_check(log-only)") : "");
 	return 0;
 }
@@ -1344,6 +1614,9 @@ static void hh983_shutdown(struct i2c_client *client)
 		cancel_delayed_work_sync(&data->link_work);
 		dev_info(&client->dev, "shutdown: cutting 984 video stream\n");
 		hh983_guard_cut_stream(data);
+	} else if (data->mode == 2 && dtg_check) {
+		/* Stop the wedge poll; mode 2 owns no stream state to unwind. */
+		cancel_delayed_work_sync(&data->link_work);
 	}
 }
 
@@ -1357,9 +1630,22 @@ static void hh983_remove(struct i2c_client *client)
 		/* Stop link monitor before tearing down hardware
 		 * (only initialized for mode 1 and for mode 0 with dp_guard)
 		 */
-		if (data->mode == 1 || (data->mode == 0 && dp_guard)) {
+		if (data->mode == 1 || (data->mode == 0 && dp_guard) ||
+		    (data->mode == 2 && dtg_check)) {
 			hh983_poll_owner = NULL;
 			cancel_delayed_work_sync(&data->link_work);
+		}
+
+		/* Mode 2 armed no interrupt chain and owns no reset: it only
+		 * enabled pass-through.  Tearing down what was never set up
+		 * would be noise, and the digital reset below would drop a
+		 * running video link on a plain module reload, so mode 2 stops
+		 * here.
+		 */
+		if (data->mode == 2) {
+			dev_info(&client->dev,
+				 "Mode 2: nothing to tear down, link left running\n");
+			return;
 		}
 
 		/* Tear down the full interrupt chain in reverse order.
@@ -1422,6 +1708,6 @@ static struct i2c_driver hh983_driver = {
 
 module_i2c_driver(hh983_driver);
 
-MODULE_DESCRIPTION("HH983 FPDLink Serializer Driver (983+984 / 983+988)");
+MODULE_DESCRIPTION("HH983 FPDLink Serializer Driver (983+984 / 983+988 / 983+988 video only)");
 MODULE_AUTHOR("Albert David");
 MODULE_LICENSE("GPL");

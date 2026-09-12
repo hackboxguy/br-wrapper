@@ -8,8 +8,17 @@
  * Optional parameters:
  *   dtoverlay=hh983-serializer,addr=0x18
  *
- * The driver mode (983+984 vs 983+988) is controlled via module parameter:
- *   /etc/modprobe.d/hh983.conf: options hh983-serializer config_mode=1
+ * The driver mode is controlled via module parameter, not from the overlay:
+ *   /etc/modprobe.d/hh983.conf: options hh983-serializer config_mode=<0|1|2>
+ *     0 = 983 + 984  (REM_INTB forwarding)
+ *     1 = 983 + 988  (TDDI touch via I2C pass-through + REM_INTB)
+ *     2 = 983 + 988  video only, no touch (3x QVue); pass-through only, so the
+ *         983 target slots the RH850 used to alias the 988 are left alone
+ *
+ * All three modes also take dtg_check (default 1), which detects a wedged
+ * deserializer DTG - measured input line length away from the line length the
+ * 983 is sending, which blanks the panel - and pulses the DTG to recover it.
+ * See MODULE_PARM_DESC in hh983-serializer.c for the full parameter list.
  */
 
 /dts-v1/;
