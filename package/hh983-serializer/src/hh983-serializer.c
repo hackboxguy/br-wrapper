@@ -822,6 +822,19 @@ static void hh983_des988_check_dtg(struct hh983_data *data)
 		return;
 	}
 
+	/* A measured length of zero is not a wedge, it is "no measurement yet":
+	 * the DTG reads 0 while it is still locking, which happens for a second
+	 * or two after a digital reset or a module reload, and it also reads 0
+	 * when there is no valid stream at all. A pulse cannot help either case
+	 * -- the warm-re-init state that reads 0 needs the DP input back, not a
+	 * DTG reset -- so skip rather than spend a pulse on it. Seen on the bench
+	 * 2026-09-12: a modprobe straight after a mode-1 unload pulsed once for
+	 * exactly this reason before the check was tightened. */
+	if (meas <= 0) {
+		data->guard_dtg_count = 0;
+		return;
+	}
+
 	if (abs(meas - prog) <= dtg_tolerance) {
 		data->guard_dtg_count = 0;
 		data->guard_wedged = false;
@@ -867,10 +880,21 @@ static void hh983_des988_check_dtg(struct hh983_data *data)
 			      DES984_DTG_P1_CTL, DES984_DTG_RELEASE);
 	msleep(300);
 
-	if (hh983_read_htotals(data, &meas, &prog) == 0)
-		dev_notice(&client->dev,
-			   "DTG guard (mode %d): after pulse measured %d, programmed %d\n",
-			   data->mode, meas, prog);
+	/* Read back, but give the link a second chance first: when the wedge was
+	 * caused by the video going away and coming back, the DTG is still
+	 * re-locking 300 ms after the release and reads 0, which would log a
+	 * "failed" recovery that in fact succeeded a moment later (seen on the
+	 * bench 2026-09-12 after an HPD drop). One retry, then report whatever it
+	 * says - including a genuine failure. */
+	if (hh983_read_htotals(data, &meas, &prog) == 0 &&
+	    (meas <= 0 || abs(meas - prog) > dtg_tolerance)) {
+		msleep(700);
+		(void)hh983_read_htotals(data, &meas, &prog);
+	}
+
+	dev_notice(&client->dev,
+		   "DTG guard (mode %d): after pulse measured %d, programmed %d\n",
+		   data->mode, meas, prog);
 }
 
 /* Mode 2 poll: the wedge check and nothing else.  Mode 2 arms no interrupts and
