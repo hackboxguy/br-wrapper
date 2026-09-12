@@ -1417,6 +1417,18 @@ static int hh983_init_mode_988(struct hh983_data *data)
  *
  * What is left is the pass-through pair plus a lock-status read, which is
  * everything a video-only board needs from the host.
+ *
+ * One thing that can mislead on a bench: after a *warm* reboot from mode 1,
+ * mode 2 may appear to have working touch. A host reboot resets neither the
+ * 983 nor the deserializer, and mode 2 writes none of the registers involved,
+ * so the mode-1 touch routing (TARGET_ID0/ALIAS0/DEST0) and the whole
+ * interrupt chain (983 GPIO4_CONFIG, INTERRUPT_CTL, INTERRUPT_CTRL, the
+ * deserializer's RX_INT_CTL) are all still in the silicon, and the touch
+ * driver finds a fully working path - it registers a real interrupt, it is not
+ * falling back to polling. Measured on the bench 2026-09-12. That is leftover
+ * state, not a feature: a cold boot in mode 2 has no touch, because nothing
+ * ever writes those registers. It is also the same property that makes mode 2
+ * safe on a 3x QVue, where the slot holds the RH850's 988 alias instead.
  */
 static int hh983_init_mode_988_video(struct hh983_data *data)
 {
