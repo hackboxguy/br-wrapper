@@ -29,6 +29,8 @@ define HH983_SERIALIZER_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/bin/toggle-pi-hdmi.sh
 	$(INSTALL) -D -m 0755 $(@D)/scripts/qvue-bench.py \
 		$(TARGET_DIR)/usr/bin/qvue-bench.py
+	$(INSTALL) -D -m 0755 $(@D)/scripts/debug-983-988-video-timing.sh \
+		$(TARGET_DIR)/usr/bin/debug-983-988-video-timing.sh
 endef
 
 $(eval $(kernel-module))

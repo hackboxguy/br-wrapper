@@ -10,6 +10,8 @@ install(PROGRAMS
     scripts/re-init-983-pipeline.sh
     scripts/fpdlink-tool.sh
     scripts/toggle-pi-hdmi.sh
+    scripts/qvue-bench.py
+    scripts/debug-983-988-video-timing.sh
     DESTINATION ${SCRIPT_INSTALL_DIR}
 )
 
