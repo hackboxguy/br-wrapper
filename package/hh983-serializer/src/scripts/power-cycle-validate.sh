@@ -296,6 +296,13 @@ soak_sequence()    { echo "white $(printf '%s\n' black red green blue | shuf -n 
 # is the only evidence of what the panel was doing.
 # One reading, matched against what the named pattern should measure.  Appends
 # to SEQ_LOG and returns non-zero on a mismatch.
+is_number() { case "$1" in ''|*[!0-9.]*) return 1 ;; *) return 0 ;; esac; }
+
+# Did any step of the last sequence fail only because the sensor would not
+# answer?  Then the verdict says nothing about the panel and the caller must not
+# call it a black screen.
+SEQ_SENSOR_ERR=0
+
 check_one() {
     local label=$1 ref=$2 out=$3 y cx cy
     y=$(echo  "$out" | awk '{print $1}')
@@ -316,6 +323,11 @@ check_one() {
             SEQ_LOG="$SEQ_LOG ${label}=ok-after-${RETRY_SETTLE}s(${y})"
             return 0
         fi
+    fi
+    if ! is_number "$y"; then
+        SEQ_LOG="$SEQ_LOG ${label}=SENSOR-ERROR(${y:-empty})"
+        SEQ_SENSOR_ERR=1
+        return 1
     fi
     SEQ_LOG="$SEQ_LOG ${label}=MISMATCH(Y=${y:-?} x=${cx:-?} y=${cy:-?})"
     return 1
@@ -339,6 +351,7 @@ check_hold() {
     local colour rc=0
     colour=$(printf '%s\n' red green blue | shuf -n 1)
     SEQ_LOG=""
+    SEQ_SENSOR_ERR=0
     check_one "$colour" "$colour" "$(measure_pattern "$colour")" || rc=1
     sleep "$HOLD_SECS"
     check_one "${colour}+${HOLD_SECS}s" "$colour" "$(measure_only)" || rc=1
@@ -348,19 +361,11 @@ check_hold() {
 
 SEQ_LOG=""
 check_sequence() {
-    local p out y cx cy rc=0
+    local p rc=0
     SEQ_LOG=""
+    SEQ_SENSOR_ERR=0
     for p in $1; do
-        out=$(measure_pattern "$p")
-        y=$(echo  "$out" | awk '{print $1}')
-        cx=$(echo "$out" | awk '{print $2}')
-        cy=$(echo "$out" | awk '{print $3}')
-        if pattern_ok "$p" "$y" "$cx" "$cy"; then
-            SEQ_LOG="$SEQ_LOG ${p}=ok(${y})"
-        else
-            SEQ_LOG="$SEQ_LOG ${p}=MISMATCH(Y=${y:-?} x=${cx:-?} y=${cy:-?})"
-            rc=1
-        fi
+        check_one "$p" "$p" "$(measure_pattern "$p")" || rc=1
     done
     return $rc
 }
@@ -481,10 +486,22 @@ while [ "$cycle" -le "$CYCLES" ]; do
     rec=$(recovery_ran)
     say "  boot: DTG measured $bh, wedged=$bw, recovery=$rec"
 
+    if [ "$seq_rc" != "0" ] && [ "$SEQ_SENSOR_ERR" = "1" ]; then
+        say "  colorimeter did not answer; re-running the verdict once"
+        if [ "$VERDICT_MODE" = "hold" ]; then check_hold; seq_rc=$?
+        else check_sequence "$seq_list"; seq_rc=$?; fi
+        flat=$SEQ_LOG
+    fi
     if [ "$seq_rc" != "0" ]; then
-        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",FAIL"
-        fail_dump "$cycle" "commanded: $seq_list${NL}measured:$flat" \
-                  "the panel did not follow the commanded patterns:$flat"
+        if [ "$SEQ_SENSOR_ERR" = "1" ]; then
+            logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",FAIL-SENSOR"
+            fail_dump "$cycle" "commanded: $seq_list${NL}measured:$flat" \
+                      "the colorimeter would not return a reading - this says nothing about the panel, re-run"
+        else
+            logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",FAIL"
+            fail_dump "$cycle" "commanded: $seq_list${NL}measured:$flat" \
+                      "the panel did not follow the commanded patterns:$flat"
+        fi
         exit 1
     fi
     if [ "$wc_now" != "0" ]; then
