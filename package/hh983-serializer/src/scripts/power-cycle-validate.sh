@@ -39,6 +39,11 @@
 #                     the 2026-09-13 runs used tmp-docs/fable-prompt-v1-data/)
 #   --pass-nits=N     luminance the white step must reach (default 800; this
 #                     panel measures 1102..1110 healthy)
+#   --verdict=MODE    "sequence" (default): walk white + the four others in a
+#                     random order + white.  "hold": show one randomly chosen
+#                     colour, read it twice --hold-secs apart, then command
+#                     white.  See check_hold() for why the cheap one is sound.
+#   --hold-secs=S     gap between the two reads of the held colour (default 10)
 #   --settle=S        seconds between setting a pattern and measuring (default 3)
 #   --xy-tol=T        chromaticity tolerance per axis (default 0.03; the sensor
 #                     repeated to +-0.0007 across a whole session)
@@ -75,6 +80,8 @@ PI=pi@192.168.1.243
 TASMOTA=http://192.168.1.186
 LOG_DIR=$PWD/power-cycle-validate-logs
 PASS_NITS=800
+VERDICT_MODE=sequence
+HOLD_SECS=10
 SETTLE=3
 XY_TOL=0.03
 SOAK_GAP=45
@@ -95,6 +102,8 @@ for arg in "$@"; do
         --tasmota=*)      TASMOTA="${arg#*=}" ;;
         --log-dir=*)      LOG_DIR="${arg#*=}" ;;
         --pass-nits=*)    PASS_NITS="${arg#*=}" ;;
+        --verdict=*)      VERDICT_MODE="${arg#*=}" ;;
+        --hold-secs=*)    HOLD_SECS="${arg#*=}" ;;
         --settle=*)       SETTLE="${arg#*=}" ;;
         --xy-tol=*)       XY_TOL="${arg#*=}" ;;
         --soak-gap=*)     SOAK_GAP="${arg#*=}" ;;
@@ -209,6 +218,13 @@ pat_ref() {
     esac
 }
 
+# Measure whatever is on the glass right now.  Echoes "<Y> <x> <y>".
+measure_only() {
+    rsh 150 "cd $MEASDIR; \
+             timeout 60 ./measure-display.sh --sensor-only=yes --quiet=yes | grep ',SENSOR,' | tail -1 | \
+             awk -F, '{print \$6, \$9, \$10}'"
+}
+
 # Set one pattern, let it settle, measure it.  Echoes "<Y> <x> <y>".
 measure_pattern() {
     rsh 150 "$MICROBIN/launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg=$1 >/dev/null; \
@@ -241,6 +257,46 @@ soak_sequence()    { echo "white $(printf '%s\n' black red green blue | shuf -n 
 # what each pattern actually measured and returns non-zero if any of them did
 # not arrive.  Every step is measured even after a mismatch: when this fails it
 # is the only evidence of what the panel was doing.
+# One reading, matched against what the named pattern should measure.  Appends
+# to SEQ_LOG and returns non-zero on a mismatch.
+check_one() {
+    local label=$1 ref=$2 out=$3 y cx cy
+    y=$(echo  "$out" | awk '{print $1}')
+    cx=$(echo "$out" | awk '{print $2}')
+    cy=$(echo "$out" | awk '{print $3}')
+    if pattern_ok "$ref" "$y" "$cx" "$cy"; then
+        SEQ_LOG="$SEQ_LOG ${label}=ok(${y})"
+        return 0
+    fi
+    SEQ_LOG="$SEQ_LOG ${label}=MISMATCH(Y=${y:-?} x=${cx:-?} y=${cy:-?})"
+    return 1
+}
+
+# The cheap verdict: hold one colour, look at it twice, then command a change.
+#
+# The BIST never rests.  It is a 12-step cycle whose steps last a few seconds,
+# so it can be showing red at one instant but it cannot still be showing red
+# ten seconds later -- and red, green and blue each appear exactly once in that
+# cycle, so the colour is drawn fresh to keep the test from ever lining up with
+# the cycle systematically.  Finding the held colour still there on the second
+# look is therefore proof the Pi is driving the glass, at about a third of the
+# cost of walking the whole set.
+#
+# The closing white is what a held pattern alone cannot give: it rules out a
+# panel frozen on a still frame, which would sit through any number of reads of
+# the same colour.  Together they are a stability check and a command-response
+# check for roughly 30 s.
+check_hold() {
+    local colour rc=0
+    colour=$(printf '%s\n' red green blue | shuf -n 1)
+    SEQ_LOG=""
+    check_one "$colour" "$colour" "$(measure_pattern "$colour")" || rc=1
+    sleep "$HOLD_SECS"
+    check_one "${colour}+${HOLD_SECS}s" "$colour" "$(measure_only)" || rc=1
+    check_one white white "$(measure_pattern white)" || rc=1
+    return $rc
+}
+
 SEQ_LOG=""
 check_sequence() {
     local p out y cx cy rc=0
@@ -322,7 +378,7 @@ fail_dump() {
 # ----------------------------------------------------------------------- main
 
 say "power-cycle-validate: $CYCLES cycles, soak ${SOAK_MIN} min, pi=$PI, tasmota=$TASMOTA"
-say "pass = a randomised pattern sequence arrives on the glass (colorimeter only, white >= $PASS_NITS nits)"
+say "pass = verdict mode '$VERDICT_MODE' arrives on the glass (colorimeter only) and dtg_wedge_count == 0"
 say "log: $LOG"
 logf "# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,measured_sequence,,result"
 
@@ -343,8 +399,13 @@ while [ "$cycle" -le "$CYCLES" ]; do
     wait_for_uptime
 
     start_pattern_app
-    seq_list=$(verdict_sequence)
-    check_sequence "$seq_list"; seq_rc=$?
+    if [ "$VERDICT_MODE" = "hold" ]; then
+        seq_list="hold-one-colour"
+        check_hold; seq_rc=$?
+    else
+        seq_list=$(verdict_sequence)
+        check_sequence "$seq_list"; seq_rc=$?
+    fi
     flat=$SEQ_LOG
     wc_now=$(wedge_count)
     wl_now=$(wedge_lines)
