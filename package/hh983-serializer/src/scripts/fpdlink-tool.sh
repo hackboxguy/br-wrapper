@@ -170,13 +170,28 @@ ind_read16_le() {
 
 # Read 15-bit BE indirect register: ind_read15_be <dev_addr> <page> <msb_offset> <lsb_offset>
 # MSB[6:0] at msb_offset, LSB[7:0] at lsb_offset -> (MSB[6:0] << 8) | LSB
+#
+# The measured-timing registers this reads are free-running counters with no
+# latch, so the MSB is read again after the LSB and the pair is only accepted
+# when both MSBs agree: without that, a value sitting on a 256 boundary tears.
+# On the 15.6" 2K5 profile (measured H total 2811..2817 across 0x0B00) about
+# 15 % of plain reads came back as 2560 or 3070, which is enough for --diagnose
+# to report "984 DTG stuck on corrupt H_TOTAL" on a perfectly healthy pipeline.
+# Three attempts, then take what the last one said rather than fail the caller.
 ind_read15_be() {
     _dev=$1; _page=$2; _msb_off=$3; _lsb_off=$4
     i2c_write "$_dev" 0x40 "$_page"
-    i2c_write "$_dev" 0x41 "$_msb_off"
-    _msb=$(i2c_read "$_dev" 0x42)
-    i2c_write "$_dev" 0x41 "$_lsb_off"
-    _lsb=$(i2c_read "$_dev" 0x42)
+    _try=1
+    while [ "$_try" -le 3 ]; do
+        i2c_write "$_dev" 0x41 "$_msb_off"
+        _msb=$(i2c_read "$_dev" 0x42)
+        i2c_write "$_dev" 0x41 "$_lsb_off"
+        _lsb=$(i2c_read "$_dev" 0x42)
+        i2c_write "$_dev" 0x41 "$_msb_off"
+        _msb2=$(i2c_read "$_dev" 0x42)
+        [ $(( _msb & 0x7F )) -eq $(( _msb2 & 0x7F )) ] && break
+        _try=$((_try + 1))
+    done
     echo $(( ((_msb & 0x7F) << 8) | _lsb ))
 }
 

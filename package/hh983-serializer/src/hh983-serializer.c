@@ -13,6 +13,11 @@
  * Mode 0 has done this since the OTS-OLED bring-up; modes 1 and 2 gained it
  * after the failure was reproduced on a 988 (see hh983_des988_check_dtg).
  *
+ * The measurement all three act on is a free-running counter in two registers,
+ * so it is read tear-proof (hh983_read_meas15) and a wedge is only declared on
+ * measurements that agree with each other (hh983_wedge_consistent): a torn read
+ * of it cost the 15.6" 2K5 panel its picture every 40 s until 2026-09-13.
+ *
  * Author: Albert David
  */
 
@@ -205,6 +210,8 @@ MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984
 #define DP_GUARD_LOSS_POLLS      2     /* consecutive unsynced polls before cutting the stream */
 #define DP_GUARD_RESYNC_POLLS    2     /* consecutive synced polls before restoring the stream */
 #define DP_GUARD_WEDGE_POLLS     2     /* consecutive out-of-tolerance polls before calling it a wedge */
+#define DP_GUARD_WEDGE_SPREAD    64    /* px the out-of-tolerance polls of one wedge may differ by */
+#define DP_GUARD_MEAS_TRIES      3     /* attempts at an untorn read of a measured 15-bit counter */
 
 /* 984 configuration values */
 #define DES984_ENABLE_PASSTHROUGH 0xC9  /* GENERAL_CFG default 0xC1 | bit[3] I2C_PASS_THROUGH */
@@ -260,6 +267,7 @@ struct hh983_data {
 	/* Mode 0 DTG-wedge check (video up, DTG measurement wrong) */
 	bool guard_wedged;           /* currently in the wedged state */
 	int guard_dtg_count;         /* consecutive out-of-tolerance polls */
+	int guard_dtg_first;         /* first measurement of that run, for the plausibility check */
 	unsigned long guard_wedge_at;/* jiffies of the last wedge restore */
 	bool guard_wedge_armed;      /* guard_wedge_at holds a real timestamp */
 };
@@ -533,26 +541,93 @@ static void hh983_guard_cut_stream(struct hh983_data *data)
 		data->guard_stream_cut = true;
 }
 
+/* Read one of the deserializer's measured 15-bit DTG counters without tearing.
+ *
+ * MEAS_HTOTAL and MEAS_VTOTAL are two plain read-only bytes each (SNLS726
+ * 7.6.2.16.29/30): no latch, no shadow register, and the counter keeps
+ * updating between the two I2C transactions it takes to fetch them.  When the
+ * live value happens to sit on a 256 boundary that is a real problem: on the
+ * 15.6" 2K5 profile the programmed H total is 2816 = 0x0B00 and the measured
+ * one jitters 2811..2817, so it crosses the boundary many times a second and
+ * about 15 % of plain MSB+LSB reads came back as 2560 (fresh MSB, stale LSB)
+ * or 3070 (stale MSB, fresh LSB).  Two of those in a row looked exactly like a
+ * wedged DTG, and the guard spent a DTG reset pulse on a healthy pipeline
+ * every 40 s -- which throws that panel into its own BIST four times out of
+ * five (2026-09-13 analysis).  Every other profile on the bench is 12 px or
+ * more from a boundary, which is why only this one ever showed it.
+ *
+ * Re-reading the MSB after the LSB is enough to catch it: if the counter did
+ * not cross a byte boundary between the two MSB reads, the LSB fetched in
+ * between belongs to the same high byte.  A crossing is a few-pixel event
+ * rather than a steady state, so three attempts leave a residue of well under
+ * 0.1 %, and the caller treats what is left as an unreadable measurement --
+ * which is already "not evidence of a wedge" everywhere it is used.
+ *
+ * Returns the 15-bit value, or negative on an I2C failure or on three torn
+ * attempts.
+ */
+static int hh983_read_meas15(struct hh983_data *data, u8 hi_off, u8 lo_off)
+{
+	struct i2c_client *client = data->client;
+	int attempt, hi, lo, hi_again;
+
+	for (attempt = 0; attempt < DP_GUARD_MEAS_TRIES; attempt++) {
+		hi = hh983_deser_ind_read(client, data->deser_addr,
+					  DES984_IND_PAGE_DTG, hi_off);
+		lo = hh983_deser_ind_read(client, data->deser_addr,
+					  DES984_IND_PAGE_DTG, lo_off);
+		hi_again = hh983_deser_ind_read(client, data->deser_addr,
+						DES984_IND_PAGE_DTG, hi_off);
+		if (hi < 0 || lo < 0 || hi_again < 0)
+			return -EIO;
+		if ((hi & 0x7F) == (hi_again & 0x7F))
+			return ((hi & 0x7F) << 8) | lo;
+	}
+
+	return -EAGAIN;
+}
+
+/* Do two consecutive out-of-tolerance measurements describe the same fault?
+ *
+ * A wedged DTG holds a wrong value: the OTS-OLED sat at 4415..5313 against a
+ * programmed 3440 and the 988 at 3730..4456 against 2028, always on the same
+ * side of the programmed value and drifting only slowly.  What a torn read
+ * produces instead is one of two fixed artefacts on opposite sides of it
+ * (2560 and 3070 against 2816, 510 px apart), so requiring the pair to agree
+ * rejects the artefacts without the code having to know anything about byte
+ * boundaries.  Belt and braces after the tear-proof read above: that closes
+ * the window, this catches whatever slips through it.
+ *
+ * Both arguments are known to be outside dtg_tolerance, so neither equals
+ * prog and the side test is unambiguous.
+ */
+static bool hh983_wedge_consistent(int meas, int prev, int prog)
+{
+	return ((meas > prog) == (prev > prog)) &&
+	       abs(meas - prev) <= DP_GUARD_WEDGE_SPREAD;
+}
+
 /* Read the 984's measured input line length and the 983's programmed output
  * line length, the pair the guard compares to decide whether the 984 DTG has
- * wedged.  Returns 0 with both filled in, or a negative value if any of the
- * four register reads failed.
+ * wedged.  Returns 0 with both filled in, or a negative value if the measured
+ * value could not be read untorn or either programmed byte failed.
+ *
+ * Only the measured value needs the tear-proof read: the programmed pair is
+ * static configuration in the 983's VP, not a running counter.
  */
 static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog)
 {
 	struct i2c_client *client = data->client;
-	int meas_hi, meas_lo, prog_hi, prog_lo;
+	int meas_htotal, prog_hi, prog_lo;
 
-	meas_hi = hh983_deser_ind_read(client, data->deser_addr,
-				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_HI);
-	meas_lo = hh983_deser_ind_read(client, data->deser_addr,
-				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_LO);
+	meas_htotal = hh983_read_meas15(data, DES984_DTG_MEAS_HTOTAL_HI,
+					DES984_DTG_MEAS_HTOTAL_LO);
 	prog_lo = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_LO);
 	prog_hi = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_HI);
-	if (meas_hi < 0 || meas_lo < 0 || prog_lo < 0 || prog_hi < 0)
+	if (meas_htotal < 0 || prog_lo < 0 || prog_hi < 0)
 		return -EIO;
 
-	*meas = ((meas_hi & 0x7F) << 8) | meas_lo;
+	*meas = meas_htotal;
 	*prog = (prog_hi << 8) | prog_lo;
 	return 0;
 }
@@ -576,15 +651,15 @@ static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog)
 static void hh983_guard_wedge_snapshot(struct hh983_data *data, int meas, int prog)
 {
 	struct i2c_client *client = data->client;
-	int mv_hi, mv_lo, meas_vtotal = -1;
+	int meas_vtotal;
 	int vp_sts, ser_sts, stream_en, des_sts0, des_sts1;
 
-	mv_hi = hh983_deser_ind_read(client, data->deser_addr,
-				     DES984_IND_PAGE_DTG, DES984_DTG_MEAS_VTOTAL_HI);
-	mv_lo = hh983_deser_ind_read(client, data->deser_addr,
-				     DES984_IND_PAGE_DTG, DES984_DTG_MEAS_VTOTAL_LO);
-	if (mv_hi >= 0 && mv_lo >= 0)
-		meas_vtotal = ((mv_hi & 0x7F) << 8) | mv_lo;
+	/* Same counter, same tearing: V total is only logged, never decided on,
+	 * but a torn one here would misdirect whoever reads the snapshot. */
+	meas_vtotal = hh983_read_meas15(data, DES984_DTG_MEAS_VTOTAL_HI,
+					DES984_DTG_MEAS_VTOTAL_LO);
+	if (meas_vtotal < 0)
+		meas_vtotal = -1;
 
 	vp_sts    = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_STS);
 	ser_sts   = hh983_read_reg(client, SER_GENERAL_STS);
@@ -641,8 +716,29 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 		unreadable = hh983_read_htotals(data, &meas_htotal, &prog_htotal) != 0;
 	}
 
-	if (!force_wedged && !unreadable)
+	if (!force_wedged && !unreadable) {
 		wedged = abs(meas_htotal - prog_htotal) > dtg_tolerance;
+		if (wedged) {
+			/* This path decides on one measurement, and at boot it is
+			 * the path that usually runs: on 15.6-2k5 it pulsed 2 s
+			 * after every probe, on a torn 2560.  A pulse costs that
+			 * panel its picture four times out of five, so make it
+			 * earn a second, agreeing measurement first -- the same
+			 * agreement the periodic check demands of its two polls.
+			 */
+			int confirm = -1, confirm_prog = -1;
+
+			msleep(50);
+			if (hh983_read_htotals(data, &confirm, &confirm_prog) != 0 ||
+			    abs(confirm - confirm_prog) <= dtg_tolerance ||
+			    !hh983_wedge_consistent(confirm, meas_htotal, confirm_prog)) {
+				dev_info(&client->dev,
+					 "DP guard restore: DTG measured %d not confirmed by re-read %d (programmed %d), no pulse\n",
+					 meas_htotal, confirm, confirm_prog);
+				wedged = false;
+			}
+		}
+	}
 
 	if (unreadable && !force_wedged) {
 		dev_info(&client->dev,
@@ -727,6 +823,24 @@ static void hh983_guard_check_dtg(struct hh983_data *data)
 		data->guard_wedged = false;
 		return;
 	}
+
+	/* Out of tolerance.  A run of bad polls only counts as a wedge while the
+	 * polls agree with each other (hh983_wedge_consistent): one that does not
+	 * match its predecessor starts a new run instead of completing the old
+	 * one, so an artefact that alternates sides never reaches
+	 * DP_GUARD_WEDGE_POLLS while a wedge sitting on a wrong value still does.
+	 */
+	if (data->guard_dtg_count > 0 &&
+	    !hh983_wedge_consistent(meas, data->guard_dtg_first, prog)) {
+		dev_dbg(&client->dev,
+			"DP guard: out-of-tolerance %d does not agree with %d (programmed %d), not a wedge\n",
+			meas, data->guard_dtg_first, prog);
+		data->guard_dtg_first = meas;
+		data->guard_dtg_count = 1;
+		return;
+	}
+	if (data->guard_dtg_count == 0)
+		data->guard_dtg_first = meas;
 
 	data->guard_dtg_count++;
 	if (data->guard_dtg_count < DP_GUARD_WEDGE_POLLS)
