@@ -210,7 +210,6 @@ MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984
 #define DP_GUARD_LOSS_POLLS      2     /* consecutive unsynced polls before cutting the stream */
 #define DP_GUARD_RESYNC_POLLS    2     /* consecutive synced polls before restoring the stream */
 #define DP_GUARD_WEDGE_POLLS     2     /* consecutive out-of-tolerance polls before calling it a wedge */
-#define DP_GUARD_WEDGE_SPREAD    64    /* px the out-of-tolerance polls of one wedge may differ by */
 #define DP_GUARD_MEAS_TRIES      3     /* attempts at an untorn read of a measured 15-bit counter */
 
 /* 984 configuration values */
@@ -589,22 +588,29 @@ static int hh983_read_meas15(struct hh983_data *data, u8 hi_off, u8 lo_off)
 
 /* Do two consecutive out-of-tolerance measurements describe the same fault?
  *
- * A wedged DTG holds a wrong value: the OTS-OLED sat at 4415..5313 against a
- * programmed 3440 and the 988 at 3730..4456 against 2028, always on the same
- * side of the programmed value and drifting only slowly.  What a torn read
- * produces instead is one of two fixed artefacts on opposite sides of it
- * (2560 and 3070 against 2816, 510 px apart), so requiring the pair to agree
- * rejects the artefacts without the code having to know anything about byte
- * boundaries.  Belt and braces after the tear-proof read above: that closes
- * the window, this catches whatever slips through it.
+ * A wedged DTG holds a wrong value on one side of the programmed one: the
+ * OTS-OLED sat above a programmed 3440 at 4415..5313, the 988 above 2028 at
+ * 3730..4456, and this bench's own 984 above 2816 at 4201..5110 after a warm
+ * reboot on 2026-09-13.  A torn read lands instead on whichever side the stale
+ * byte came from -- 2560 below 2816, 3070 above it -- so it alternates, and
+ * requiring the pair to fall on the same side rejects it without the code
+ * having to know anything about byte boundaries.
+ *
+ * Deliberately no "and the two agree within N pixels" on top of that.  The
+ * measurement of a real wedge is not steady: the 150 reads taken during the
+ * 2026-09-13 one were spread over 909 px with consecutive samples hundreds of
+ * px apart, so a 64 px agreement rule stretched detection from two polls to
+ * roughly ten -- past the ~10 s at which the OTS-OLED latches black, which is
+ * the deadline this check exists to meet.  Torn reads are kept out by
+ * hh983_read_meas15(), where the problem actually is; this is only here to
+ * stop an alternating artefact from pairing up with itself.
  *
  * Both arguments are known to be outside dtg_tolerance, so neither equals
  * prog and the side test is unambiguous.
  */
 static bool hh983_wedge_consistent(int meas, int prev, int prog)
 {
-	return ((meas > prog) == (prev > prog)) &&
-	       abs(meas - prev) <= DP_GUARD_WEDGE_SPREAD;
+	return (meas > prog) == (prev > prog);
 }
 
 /* Read the 984's measured input line length and the 983's programmed output
@@ -825,10 +831,11 @@ static void hh983_guard_check_dtg(struct hh983_data *data)
 	}
 
 	/* Out of tolerance.  A run of bad polls only counts as a wedge while the
-	 * polls agree with each other (hh983_wedge_consistent): one that does not
-	 * match its predecessor starts a new run instead of completing the old
-	 * one, so an artefact that alternates sides never reaches
-	 * DP_GUARD_WEDGE_POLLS while a wedge sitting on a wrong value still does.
+	 * polls stay on the same side of the programmed value
+	 * (hh983_wedge_consistent): one that does not starts a new run instead of
+	 * completing the old one, so an artefact that alternates sides never
+	 * reaches DP_GUARD_WEDGE_POLLS, while a real wedge -- which sits on one
+	 * side however much it wanders -- still fires on the second poll.
 	 */
 	if (data->guard_dtg_count > 0 &&
 	    !hh983_wedge_consistent(meas, data->guard_dtg_first, prog)) {

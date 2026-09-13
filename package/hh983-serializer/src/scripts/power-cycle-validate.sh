@@ -168,11 +168,21 @@ wedge_lines()  { rsh 30 'dmesg | grep -c "DTG wedge"'; }
 # After the fix the torn outliers (2560, 3066..3071 against a programmed 2816)
 # are still there - the hardware has not changed - and that is the point: the
 # driver is expected to stop acting on them, not to stop seeing them.
+#
+# The driver poll is stopped for the duration and restarted afterwards.  Both
+# it and this loop reach the 984 through the 983's one set of indirect-access
+# registers, so leaving it running lets the two interleave: the driver's own
+# reads come back inconsistent and its wedge check is effectively blind while
+# this runs.  That cost about 40 s of detection latency on 2026-09-13 before
+# the pause was added, and it is why the analysis session paused the poll
+# before every dump it took.
 histogram() {
-    rsh 180 'i2cset -f -y 1 0x2c 0x40 0x50; for i in $(seq 150); do \
+    rsh 200 'echo 0 | sudo tee /sys/module/hh983_serializer/parameters/poll_interval_ms >/dev/null; sleep 1; \
+        i2cset -f -y 1 0x2c 0x40 0x50; for i in $(seq 150); do \
         i2cset -f -y 1 0x2c 0x41 0x40; h=$(i2cget -f -y 1 0x2c 0x42); \
         i2cset -f -y 1 0x2c 0x41 0x41; l=$(i2cget -f -y 1 0x2c 0x42); \
-        echo $(( ((h&0x7f)<<8)|l )); done | sort -n | uniq -c | sort -rn'
+        echo $(( ((h&0x7f)<<8)|l )); done | sort -n | uniq -c | sort -rn; \
+        echo 1000 | sudo tee /sys/module/hh983_serializer/parameters/poll_interval_ms >/dev/null'
 }
 
 # ------------------------------------------------------------------- verdicts
