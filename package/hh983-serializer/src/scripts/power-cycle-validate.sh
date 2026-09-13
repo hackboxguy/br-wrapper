@@ -15,7 +15,13 @@
 #   - it never decides "the screen is on" from 983/984 registers.  While the
 #     panel was black, fpdlink-tool.sh --diagnose said "Pipeline healthy" and
 #     every timing register was correct; only the i1Display Pro on the glass
-#     knows.  Pass = all samples at or above --pass-nits with a white pattern up.
+#     knows.
+#   - it never decides from a measurement of one pattern either, however
+#     thorough.  See pat_ref() below: the panel's own BIST reproduces the Pi's
+#     white, red, green and blue to within the sensor's repeatability, so no
+#     single reading of luminance or chromaticity says which source is on the
+#     glass.  The verdict is a command-response test instead - a randomised
+#     sequence of patterns, each of which has to arrive.
 #   - it does not power-cycle past a failure.  On the first black screen it
 #     dumps the evidence and exits non-zero with the rig left exactly as it is,
 #     so the bad state can be inspected live.
@@ -31,12 +37,12 @@
 #                     (default http://192.168.1.186)
 #   --log-dir=DIR     per-cycle log and failure dumps (default ./power-cycle-validate-logs;
 #                     the 2026-09-13 runs used tmp-docs/fable-prompt-v1-data/)
-#   --pass-nits=N     luminance a white sample must reach (default 800; this
-#                     panel measures 995..1034 healthy, and the BIST it falls
-#                     into cycles 0.8 / 194 / 215 / 233 / 300 / 455 / 580 / 1020)
-#   --samples=N       samples per verdict (default 5)
-#   --sample-gap=S    seconds between them (default 3)
-#   --soak-gap=S      seconds between soak samples (default 30)
+#   --pass-nits=N     luminance the white step must reach (default 800; this
+#                     panel measures 1102..1110 healthy)
+#   --settle=S        seconds between setting a pattern and measuring (default 3)
+#   --xy-tol=T        chromaticity tolerance per axis (default 0.03; the sensor
+#                     repeated to +-0.0007 across a whole session)
+#   --soak-gap=S      seconds between soak checks (default 45)
 #   --off-secs=S      seconds the socket stays off (default 12)
 #   --boot-timeout=S  seconds to wait for ssh after power on (default 180)
 #   --min-uptime=S    seconds of uptime before measuring, so the desktop and the
@@ -54,9 +60,9 @@ PI=pi@192.168.1.243
 TASMOTA=http://192.168.1.186
 LOG_DIR=$PWD/power-cycle-validate-logs
 PASS_NITS=800
-SAMPLES=5
-SAMPLE_GAP=3
-SOAK_GAP=30
+SETTLE=3
+XY_TOL=0.03
+SOAK_GAP=45
 OFF_SECS=12
 BOOT_TIMEOUT=180
 MIN_UPTIME=120
@@ -73,8 +79,8 @@ for arg in "$@"; do
         --tasmota=*)      TASMOTA="${arg#*=}" ;;
         --log-dir=*)      LOG_DIR="${arg#*=}" ;;
         --pass-nits=*)    PASS_NITS="${arg#*=}" ;;
-        --samples=*)      SAMPLES="${arg#*=}" ;;
-        --sample-gap=*)   SAMPLE_GAP="${arg#*=}" ;;
+        --settle=*)       SETTLE="${arg#*=}" ;;
+        --xy-tol=*)       XY_TOL="${arg#*=}" ;;
         --soak-gap=*)     SOAK_GAP="${arg#*=}" ;;
         --off-secs=*)     OFF_SECS="${arg#*=}" ;;
         --boot-timeout=*) BOOT_TIMEOUT="${arg#*=}" ;;
@@ -92,6 +98,7 @@ else
     SSH_BIN="ssh"
 fi
 
+NL='\n'
 RUN_ID=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$LOG_DIR" || exit 2
 LOG="$LOG_DIR/power-cycle-validate-$RUN_ID.log"
@@ -143,22 +150,97 @@ wait_for_uptime() {
     done
 }
 
-white_pattern() {
-    rsh 90 "$MICROBIN/launcher-client --command=start-app --command-arg=pattern-generator; sleep 4; \
-            $MICROBIN/launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg=white" >/dev/null
-    sleep 3
+start_pattern_app() {
+    rsh 90 "$MICROBIN/launcher-client --command=start-app --command-arg=pattern-generator" >/dev/null
+    sleep 4
 }
 
 stop_pattern() { rsh 60 "$MICROBIN/launcher-client --command=stop-app" >/dev/null; }
 
-# N luminance samples, --sample-gap apart, one line of nits each.  Taken in a
-# single ssh call: the sensor read is the slow part and per-sample ssh setup
-# would stretch the window the samples are meant to cover.
-take_samples() {
-    local n=$1 gap=$2
-    rsh $((n * 90 + 60)) "cd $MEASDIR; for i in \$(seq $n); do \
-        timeout 60 ./measure-display.sh --sensor-only=yes --quiet=yes | grep ',SENSOR,' | tail -1 | cut -d, -f6; \
-        [ \$i -lt $n ] && sleep $gap; done"
+# What a Pi-generated pattern must measure on this panel.
+#
+# Measured with the i1Display Pro on the glass, 2026-09-13, and kept in
+# tmp-docs/fable-prompt-v1-data/bist-vs-pi-content.txt:
+#
+#   white Y=1109 x=0.3050 y=0.3301     red   Y=268 x=0.6852 y=0.3134
+#   green Y=710  x=0.2229 y=0.7175     blue  Y=129 x=0.1428 y=0.0856
+#   black Y=0.000
+#
+# The reason the verdict is a sequence and not a threshold is in the same file.
+# Sampled 18 times while the Pi sent nothing but solid white, the panel's TDDI
+# BIST walked a 12-step cycle that contained white at Y=1105 x=0.3044 y=0.3300,
+# red at 267/0.6853/0.3133, green at 709/0.2235/0.7171, blue at
+# 129/0.1427/0.0854, two blacks and five greys.  Every one of those is inside
+# any tolerance worth setting, so a single reading - of luminance, of
+# chromaticity, of both - cannot say which source is on the glass.  What the
+# BIST cannot do is follow the Pi: commanded red and green while it was running
+# it answered 0.93/186/1103 and 129/251/251.
+#
+# Y bands are +-30 % of nominal, which is far wider than the panel drifts and
+# far narrower than the gaps between these colours.  Black is checked on
+# luminance alone (its chromaticity is meaningless at zero) and separates
+# cleanly anyway: the Pi's black reads 0.000 where the BIST's darkest steps
+# read 0.93 and 1.70.
+pat_ref() {
+    case "$1" in
+        white) echo "$PASS_NITS 1400 0.3050 0.3301" ;;
+        red)   echo "188 348 0.6852 0.3134" ;;
+        green) echo "496 922 0.2229 0.7175" ;;
+        blue)  echo "90 168 0.1428 0.0856" ;;
+        black) echo "0 0.3 - -" ;;
+        *)     echo "" ;;
+    esac
+}
+
+# Set one pattern, let it settle, measure it.  Echoes "<Y> <x> <y>".
+measure_pattern() {
+    rsh 150 "$MICROBIN/launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg=$1 >/dev/null; \
+             sleep $SETTLE; cd $MEASDIR; \
+             timeout 60 ./measure-display.sh --sensor-only=yes --quiet=yes | grep ',SENSOR,' | tail -1 | \
+             awk -F, '{print \$6, \$9, \$10}'"
+}
+
+pattern_ok() {
+    local name=$1 y=$2 cx=$3 cy=$4 ref ymin ymax rx ry
+    ref=$(pat_ref "$name")
+    [ -z "$ref" ] && return 1
+    ymin=$(echo "$ref" | cut -d\  -f1); ymax=$(echo "$ref" | cut -d\  -f2)
+    rx=$(echo "$ref" | cut -d\  -f3);   ry=$(echo "$ref" | cut -d\  -f4)
+    awk -v v="$y" -v a="$ymin" -v b="$ymax" 'BEGIN{exit !(v+0>=a+0 && v+0<=b+0)}' || return 1
+    [ "$rx" = "-" ] && return 0
+    awk -v v="$cx" -v r="$rx" -v t="$XY_TOL" 'BEGIN{d=v-r; if(d<0)d=-d; exit !(d<=t+0)}' || return 1
+    awk -v v="$cy" -v r="$ry" -v t="$XY_TOL" 'BEGIN{d=v-r; if(d<0)d=-d; exit !(d<=t+0)}' || return 1
+    return 0
+}
+
+# White first and last - the brightness criterion lives on white - with the
+# rest shuffled in between.  The BIST cycle runs white -> red -> green -> blue,
+# which is exactly the fixed order it could imitate by accident, so the order
+# is drawn fresh every time.
+verdict_sequence() { echo "white $(printf '%s\n' black red green blue | shuf | tr '\n' ' ')white"; }
+soak_sequence()    { echo "white $(printf '%s\n' black red green blue | shuf -n 1)"; }
+
+# Walk a sequence, measuring every step.  Sets SEQ_LOG to a one-line record of
+# what each pattern actually measured and returns non-zero if any of them did
+# not arrive.  Every step is measured even after a mismatch: when this fails it
+# is the only evidence of what the panel was doing.
+SEQ_LOG=""
+check_sequence() {
+    local p out y cx cy rc=0
+    SEQ_LOG=""
+    for p in $1; do
+        out=$(measure_pattern "$p")
+        y=$(echo  "$out" | awk '{print $1}')
+        cx=$(echo "$out" | awk '{print $2}')
+        cy=$(echo "$out" | awk '{print $3}')
+        if pattern_ok "$p" "$y" "$cx" "$cy"; then
+            SEQ_LOG="$SEQ_LOG ${p}=ok(${y})"
+        else
+            SEQ_LOG="$SEQ_LOG ${p}=MISMATCH(Y=${y:-?} x=${cx:-?} y=${cy:-?})"
+            rc=1
+        fi
+    done
+    return $rc
 }
 
 wedge_count()  { rsh 30 'cat /sys/module/hh983_serializer/parameters/dtg_wedge_count 2>/dev/null || echo NA'; }
@@ -187,24 +269,6 @@ histogram() {
 
 # ------------------------------------------------------------------- verdicts
 
-# Pass only if every sample reached PASS_NITS.  A non-numeric sample (the sensor
-# read failed) counts as a failure: it is not evidence that the panel is lit.
-samples_ok() {
-    local s ok=0 n=0
-    for s in $1; do
-        n=$((n + 1))
-        awk -v v="$s" -v t="$PASS_NITS" 'BEGIN{exit !(v+0 >= t)}' 2>/dev/null && ok=$((ok + 1))
-    done
-    [ "$n" -gt 0 ] && [ "$ok" -eq "$n" ]
-}
-
-fmt_samples() { echo "$1" | tr '\n' ' ' | sed 's/  */ /g; s/ $//'; }
-
-minmax() {
-    echo "$1" | awk 'BEGIN{mn="";mx=""} {v=$1+0; if(mn==""||v<mn)mn=v; if(mx==""||v>mx)mx=v}
-                     END{if(mn=="")print "NA/NA"; else printf "%.1f/%.1f", mn, mx}'
-}
-
 fail_dump() {
     local cycle=$1 samples=$2 reason=$3
     local dump="$LOG_DIR/power-cycle-validate-$RUN_ID-FAIL-cycle$cycle.txt"
@@ -217,7 +281,7 @@ fail_dump() {
         echo "reason: $reason"
         echo "pass threshold: $PASS_NITS nits"
         echo ""
-        echo "=== luminance samples (nits)"
+        echo "=== measured sequence"
         echo "$samples"
         echo ""
         echo "=== dtg_wedge_count / module parameters"
@@ -241,9 +305,9 @@ fail_dump() {
 # ----------------------------------------------------------------------- main
 
 say "power-cycle-validate: $CYCLES cycles, soak ${SOAK_MIN} min, pi=$PI, tasmota=$TASMOTA"
-say "pass = $SAMPLES samples >= $PASS_NITS nits on a white pattern, colorimeter only"
+say "pass = a randomised pattern sequence arrives on the glass (colorimeter only, white >= $PASS_NITS nits)"
 say "log: $LOG"
-logf "# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,samples_nits,min/max,result"
+logf "# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,measured_sequence,,result"
 
 if [ "$(tasmota Power)" = "" ]; then
     say "Tasmota at $TASMOTA does not answer - aborting before touching anything"
@@ -261,25 +325,26 @@ while [ "$cycle" -le "$CYCLES" ]; do
     fi
     wait_for_uptime
 
-    white_pattern
-    samples=$(take_samples "$SAMPLES" "$SAMPLE_GAP")
+    start_pattern_app
+    seq_list=$(verdict_sequence)
+    check_sequence "$seq_list"; seq_rc=$?
+    flat=$SEQ_LOG
     wc_now=$(wedge_count)
     wl_now=$(wedge_lines)
     up_now=$(rsh 30 "cut -d. -f1 /proc/uptime")
-    mm=$(minmax "$samples")
-    flat=$(fmt_samples "$samples")
 
-    if ! samples_ok "$samples"; then
-        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,\"$flat\",$mm,FAIL"
-        fail_dump "$cycle" "$samples" "samples below $PASS_NITS nits: $flat"
+    if [ "$seq_rc" != "0" ]; then
+        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,\"$flat\",,FAIL"
+        fail_dump "$cycle" "commanded: $seq_list${NL}measured:$flat" \
+                  "the panel did not follow the commanded patterns:$flat"
         exit 1
     fi
     if [ "$wc_now" != "0" ]; then
-        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,\"$flat\",$mm,FAIL-WEDGE"
-        fail_dump "$cycle" "$samples" "panel lit but dtg_wedge_count=$wc_now (the guard still fired)"
+        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,\"$flat\",,FAIL-WEDGE"
+        fail_dump "$cycle" "$flat" "panel followed every pattern but dtg_wedge_count=$wc_now (the guard still fired)"
         exit 1
     fi
-    say "  cycle $cycle verdict: PASS  samples=$flat  min/max=$mm  wedges=$wc_now"
+    say "  cycle $cycle verdict: PASS $flat  wedges=$wc_now"
 
     # Soak: the false wedges were 30..120 s apart, so the five-sample verdict
     # alone can walk straight past one.  Same pass rule, once every --soak-gap.
@@ -288,14 +353,15 @@ while [ "$cycle" -le "$CYCLES" ]; do
         say "  soak ${SOAK_MIN} min, sampling every ${SOAK_GAP}s"
         while [ "$(date +%s)" -lt "$soak_end" ]; do
             sleep "$SOAK_GAP"
-            s=$(take_samples 1 1)
-            if ! samples_ok "$s"; then
+            s_list=$(soak_sequence)
+            if ! check_sequence "$s_list"; then
                 wc_now=$(wedge_count); wl_now=$(wedge_lines)
-                logf "$cycle,$(date -Is),soak,$wc_now,$wl_now,\"$s\",$s,FAIL-SOAK"
-                fail_dump "$cycle" "$s" "soak sample below $PASS_NITS nits: $s"
+                logf "$cycle,$(date -Is),soak,$wc_now,$wl_now,\"$SEQ_LOG\",,FAIL-SOAK"
+                fail_dump "$cycle" "commanded: $s_list${NL}measured:$SEQ_LOG" \
+                          "soak: the panel did not follow the commanded patterns:$SEQ_LOG"
                 exit 1
             fi
-            logf "  soak $cycle $(date +%H:%M:%S) $s nits wedges=$(wedge_count)"
+            logf "  soak $cycle $(date +%H:%M:%S)$SEQ_LOG wedges=$(wedge_count)"
         done
         wc_now=$(wedge_count)
         wl_now=$(wedge_lines)
@@ -313,7 +379,7 @@ while [ "$cycle" -le "$CYCLES" ]; do
         say "  MEAS_HTOTAL histogram: $(echo "$hist" | cut -c1-110)"
     fi
 
-    logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,\"$flat\",$mm,PASS"
+    logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,\"$flat\",,PASS"
     stop_pattern
     cycle=$((cycle + 1))
 done
