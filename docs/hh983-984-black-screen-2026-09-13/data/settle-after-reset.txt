@@ -1,0 +1,16 @@
+=== red, steady state before any reset ===
+  red steady             Y=  258.525 x=0.6855 y=0.3129
+  red steady             Y=  258.380 x=0.6854 y=0.3129
+=== 984 digital reset, then red sampled repeatedly (pattern NOT re-commanded) ===
+  red after reset #1     Y=  258.380 x=0.6854 y=0.3129
+  red after reset #2     Y=  258.308 x=0.6854 y=0.3129
+  red after reset #3     Y=  258.308 x=0.6854 y=0.3129
+  red after reset #4     Y=  258.088 x=0.6855 y=0.3128
+  red after reset #5     Y=  258.016 x=0.6855 y=0.3128
+  red after reset #6     Y=  257.944 x=0.6855 y=0.3128
+  red after reset #7     Y=  257.872 x=0.6855 y=0.3128
+  red after reset #8     Y=  257.727 x=0.6855 y=0.3128
+=== then command white and red again ===
+  white                  Y= 1090.867 x=0.3016 y=0.3284
+  red recommanded        Y=  257.508 x=0.6855 y=0.3128
+  red recommanded        Y=  257.363 x=0.6855 y=0.3128

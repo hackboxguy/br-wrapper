@@ -1,0 +1,16 @@
+uptime=101s
+/sys/module/hh983_serializer/parameters/dtg_wedge_count:0
+/sys/module/hh983_serializer/parameters/dtg_tolerance:32
+/sys/module/hh983_serializer/parameters/poll_interval_ms:1000
+/sys/module/hh983_serializer/parameters/config_mode:0
+/sys/module/hh983_serializer/parameters/dtg_recover:1
+/sys/module/hh983_serializer/parameters/wedge_recovery:1
+adbe8a63a01e79fd426f2ed876dd427c  /lib/modules/6.12.109-v8+/extra/hh983-serializer.ko
+conf: options hh983-serializer config_mode=0 wedge_recovery=1
+zz test conf present? ls: cannot access '/etc/modprobe.d/zz-hh983-test.conf': No such file or directory
+running app: none
+dmesg wedge lines: 0
+[    3.621836] hh983-serializer 1-0018: HH983 initialization successful (mode=0, poll=on, dp_guard, dtg_check)
+[    5.662077] hh983-serializer 1-0018: DP video back (VP_STS=0x01), restoring 984 video stream
+[    5.664962] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2814, 983 Htotal=2816
+desktop luminance: 9.274064

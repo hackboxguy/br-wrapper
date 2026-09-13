@@ -1,0 +1,56 @@
+=== uptime 209s  wedges=0
+OK
+OK
+0.000000
+0.000000
+0.000000
+=== 983 programmed VP0 H total (page 0x33 0x16/0x17)
+prog=2816 (hi=0x0b lo=0x00)
+=== 20 tear-proof reads, 1 s apart (what the driver poll sees)
+2815 msb_stable=yes
+2815 msb_stable=yes
+3070 msb_stable=yes
+3071 msb_stable=NO
+2815 msb_stable=yes
+2814 msb_stable=yes
+2814 msb_stable=yes
+2815 msb_stable=yes
+2814 msb_stable=yes
+2814 msb_stable=yes
+2814 msb_stable=yes
+2814 msb_stable=yes
+2814 msb_stable=yes
+2815 msb_stable=yes
+2814 msb_stable=yes
+2815 msb_stable=yes
+2815 msb_stable=yes
+2813 msb_stable=yes
+2814 msb_stable=NO
+2560 msb_stable=yes
+=== dmesg
+[    4.666204] hh983-serializer 1-0018: HH983 initialization successful (mode=0, poll=on, dp_guard, dtg_check)
+[    6.722018] hh983-serializer 1-0018: DP video back (VP_STS=0x01), restoring 984 video stream
+[    6.756950] hh983-serializer 1-0018: DP guard restore: H totals unreadable, enabling stream without DTG pulse
+[  226.475947] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=4853 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[  226.475969] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 4853, programmed 2816), restoring
+[  226.504568] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=-1, 983 Htotal=-1 (DTG wedged)
+=== diagnose
+VERDICT: [OK]   Pipeline healthy — Pi -> 983 -> FPDLink -> DS90HH984 -> panel
+  VP0 Timing                         : 2560x1440          @ 2816x1492 total, sync H/V=56/2
+  0x53 GP_STATUS_0                   : 0x01              FPD4_LOCK=1
+  0x54 GP_STATUS_1                   : 0xc1              LOCK=1 PLL_LOCK=1
+  0x50:0x20 DTG_CTL                  : 0x93              PG_DATA_SOURCE_SEL=3 (measured + main-link HACTIVE)
+  0x50:0x32 DTG_RESET_CTL            : 0x04              DTG_RESET_LOCK_EN=1 (auto-retrain on lock)
+  Measured Timing                    : 2560x1440          @ 2815x1492 total (from FPDLink stream)
+  VERDICT: [OK]   Pipeline healthy — Pi -> 983 -> FPDLink -> DS90HH984 -> panel
+=== wedges=1 uptime=285s
+luminance after the driver pulsed the real wedge:
+0.000000
+0.000000
+0.000000
+0.000000
+wedges=1 uptime=374s
+[    6.756950] hh983-serializer 1-0018: DP guard restore: H totals unreadable, enabling stream without DTG pulse
+[  226.475947] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=4853 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[  226.475969] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 4853, programmed 2816), restoring
+[  226.504568] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=-1, 983 Htotal=-1 (DTG wedged)

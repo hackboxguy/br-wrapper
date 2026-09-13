@@ -1,0 +1,9 @@
+17:02:06 power-cycle-validate: 10 cycles, soak 10 min, pi=pi@192.168.1.243, tasmota=http://192.168.1.186
+17:02:06 pass = 5 samples >= 800 nits on a white pattern, colorimeter only
+17:02:07 log: /home/adav/extended-disk/git-repos/tmp12/15-6-0OD-black-screen-issue-fable/tmp-docs/fable-prompt-v1-data/power-cycle-validate-20260913-170206.log
+# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,samples_nits,min/max,result
+17:02:07 
+17:02:07 === cycle 1/10
+17:02:07   sync on the Pi (a write seconds before the cut is still in page cache)
+17:02:07   Tasmota OFF ({"POWER":"OFF"})
+17:02:19   Tasmota ON ({"POWER":"ON"})

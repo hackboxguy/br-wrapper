@@ -1,0 +1,83 @@
+19:32:12 power-cycle-validate: 8 cycles, soak 0 min, pi=pi@192.168.1.243, tasmota=http://192.168.1.186
+19:32:12 pass = verdict mode 'sequence' arrives on the glass (colorimeter only) and dtg_wedge_count == 0
+19:32:12 log: /home/adav/extended-disk/git-repos/tmp12/15-6-0OD-black-screen-issue-fable/tmp-docs/fable-prompt-v1-data/power-cycle-validate-20260913-193212.log
+# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,boot_htotal,wedged_at_boot,recovery,measured_sequence,result
+19:32:12 
+19:32:12 === cycle 1/8
+19:32:12   sync + warm reboot over ssh
+19:32:24   host went down after 3s
+19:32:43   ssh answered after 10s
+19:34:08   uptime 100s
+19:35:02   boot: DTG measured 4777, wedged=yes, recovery=digital-reset
+19:35:02   cycle 1 verdict: PASS  white=ok(1101.066962) green=ok(708.260666) blue=ok(128.969386) red=ok(262.007241) black=ok(0.000000) white=ok(1099.675015)  wedges=0 recovery=digital-reset
+  hist 1:  65 2814; 49 2815; 13 2813; 7 3071; 7 3070; 6 2560; 1 3065; 1 2817; 1 2810;
+19:35:04   MEAS_HTOTAL histogram:  65 2814; 49 2815; 13 2813; 7 3071; 7 3070; 6 2560; 1 3065; 1 2817; 1 2810;
+1,2026-09-13T19:35:04+02:00,153,0,1,4777,yes,digital-reset," white=ok(1101.066962) green=ok(708.260666) blue=ok(128.969386) red=ok(262.007241) black=ok(0.000000) white=ok(1099.675015)",PASS
+19:35:05 
+19:35:05 === cycle 2/8
+19:35:05   sync + warm reboot over ssh
+19:35:16   host went down after 3s
+19:35:27   ssh answered after 5s
+19:36:57   uptime 101s
+19:38:27   boot: DTG measured 4239, wedged=yes, recovery=digital-reset
+19:38:27   cycle 2 verdict: PASS  white=ok(1100.773614) green=ok(708.704537) red=ok(262.443668) blue=retry(Y=ERROR x=ERROR y=ERROR) blue=ok-after-8s(128.665776) black=ok(0.000000) white=ok(1096.593578)  wedges=0 recovery=digital-reset
+2,2026-09-13T19:38:27+02:00,190,0,1,4239,yes,digital-reset," white=ok(1100.773614) green=ok(708.704537) red=ok(262.443668) blue=retry(Y=ERROR x=ERROR y=ERROR) blue=ok-after-8s(128.665776) black=ok(0.000000) white=ok(1096.593578)",PASS
+19:38:27 
+19:38:27 === cycle 3/8
+19:38:27   sync + warm reboot over ssh
+19:38:39   host went down after 3s
+19:38:52   ssh answered after 5s
+19:40:22   uptime 103s
+19:41:12   boot: DTG measured 5006, wedged=yes, recovery=digital-reset
+19:41:12   cycle 3 verdict: PASS  white=ok(1099.163347) black=ok(0.000000) red=ok(262.079522) blue=ok(128.894125) green=ok(707.887390) white=ok(1097.175842)  wedges=0 recovery=digital-reset
+3,2026-09-13T19:41:12+02:00,152,0,1,5006,yes,digital-reset," white=ok(1099.163347) black=ok(0.000000) red=ok(262.079522) blue=ok(128.894125) green=ok(707.887390) white=ok(1097.175842)",PASS
+19:41:12 
+19:41:12 === cycle 4/8
+19:41:12   sync + warm reboot over ssh
+19:41:23   host went down after 3s
+19:41:34   ssh answered after 5s
+19:43:04   uptime 101s
+19:44:00   boot: DTG measured 4852, wedged=yes, recovery=digital-reset
+19:44:00   cycle 4 verdict: PASS  white=ok(1098.725541) green=ok(708.110143) black=ok(0.000000) red=ok(261.862830) blue=ok(128.824693) white=ok(1097.251103)  wedges=0 recovery=digital-reset
+4,2026-09-13T19:44:00+02:00,155,0,1,4852,yes,digital-reset," white=ok(1098.725541) green=ok(708.110143) black=ok(0.000000) red=ok(261.862830) blue=ok(128.824693) white=ok(1097.251103)",PASS
+19:44:00 
+19:44:00 === cycle 5/8
+19:44:00   sync + warm reboot over ssh
+19:44:12   host went down after 3s
+19:44:24   ssh answered after 5s
+19:45:54   uptime 103s
+19:47:36   boot: DTG measured 4462, wedged=yes, recovery=digital-reset
+19:47:36   cycle 5 verdict: PASS  white=ok(1098.722508) red=retry(Y=ERROR x=ERROR y=ERROR) red=ok-after-8s(260.484326) green=ok(707.366623) blue=retry(Y=ERROR x=ERROR y=ERROR) blue=ok-after-8s(128.446057) black=ok(0.000000) white=ok(1096.016675)  wedges=0 recovery=digital-reset
+  hist 5:  74 2814; 35 2815; 16 2560; 8 3070; 7 2813; 4 3071; 2 3069; 2 2816; 1 2811; 1 2561;
+19:47:38   MEAS_HTOTAL histogram:  74 2814; 35 2815; 16 2560; 8 3070; 7 2813; 4 3071; 2 3069; 2 2816; 1 2811; 1 2561;
+5,2026-09-13T19:47:38+02:00,203,0,1,4462,yes,digital-reset," white=ok(1098.722508) red=retry(Y=ERROR x=ERROR y=ERROR) red=ok-after-8s(260.484326) green=ok(707.366623) blue=retry(Y=ERROR x=ERROR y=ERROR) blue=ok-after-8s(128.446057) black=ok(0.000000) white=ok(1096.016675)",PASS
+19:47:39 
+19:47:39 === cycle 6/8
+19:47:39   sync + warm reboot over ssh
+19:47:50   host went down after 3s
+19:48:01   ssh answered after 5s
+19:49:31   uptime 101s
+19:50:31   boot: DTG measured 4751, wedged=yes, recovery=digital-reset
+19:50:31   cycle 6 verdict: PASS  white=ok(1098.069179) red=ok(260.556584) blue=ok(128.746634) green=ok(707.366623) black=ok(0.000000) white=ok(1097.340824)  wedges=0 recovery=digital-reset
+6,2026-09-13T19:50:31+02:00,161,0,1,4751,yes,digital-reset," white=ok(1098.069179) red=ok(260.556584) blue=ok(128.746634) green=ok(707.366623) black=ok(0.000000) white=ok(1097.340824)",PASS
+19:50:32 
+19:50:32 === cycle 7/8
+19:50:32   sync + warm reboot over ssh
+19:50:43   host went down after 3s
+19:50:56   ssh answered after 5s
+19:52:26   uptime 102s
+19:53:26   boot: DTG measured 5007, wedged=yes, recovery=digital-reset
+19:53:26   cycle 7 verdict: PASS  white=ok(1097.697772) red=ok(260.917734) blue=ok(128.748033) black=ok(0.000000) green=ok(708.182372) white=ok(1096.304427)  wedges=0 recovery=digital-reset
+7,2026-09-13T19:53:26+02:00,161,0,1,5007,yes,digital-reset," white=ok(1097.697772) red=ok(260.917734) blue=ok(128.748033) black=ok(0.000000) green=ok(708.182372) white=ok(1096.304427)",PASS
+19:53:26 
+19:53:26 === cycle 8/8
+19:53:26   sync + warm reboot over ssh
+19:53:37   host went down after 3s
+19:53:48   ssh answered after 5s
+19:55:18   uptime 101s
+19:56:08   boot: DTG measured 4463, wedged=yes, recovery=digital-reset
+19:56:08   cycle 8 verdict: PASS  white=ok(1098.138611) black=ok(0.000000) red=ok(261.718378) green=ok(708.034881) blue=ok(128.824693) white=ok(1096.524147)  wedges=0 recovery=digital-reset
+8,2026-09-13T19:56:08+02:00,150,0,1,4463,yes,digital-reset," white=ok(1098.138611) black=ok(0.000000) red=ok(261.718378) green=ok(708.034881) blue=ok(128.824693) white=ok(1096.524147)",PASS
+19:56:09 
+19:56:09 === 8/8 cycles passed, dtg_wedge_count 0 at the end of every one
+19:56:09 rig left on the desktop with the pattern generator stopped

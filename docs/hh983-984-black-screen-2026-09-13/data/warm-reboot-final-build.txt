@@ -1,0 +1,25 @@
+=== WARM REBOOT TEST 18:48:18
+ssh back 18:48:40
+uptime=101 wedges=0
+[    2.457874] hh983_serializer: loading out-of-tree module taints kernel.
+[    4.813986] hh983-serializer 1-0018: DES STS0=0x01 STS1=0xC1 [FPD4_LOCK PLL_LOCK LOCK]
+[    4.813996] hh983-serializer 1-0018: HH983 initialization successful (mode=0, poll=on, dp_guard, dtg_check)
+[    6.846619] hh983-serializer 1-0018: DP video back (VP_STS=0x01), restoring 984 video stream
+[    6.852973] hh983-serializer 1-0018: DP guard restore: DTG measured 4495 not confirmed by further reads (programmed 2816), no pulse
+[    6.852988] hh983-serializer 1-0018: DP guard restore: 984 stream_en=0, DTG measured Htotal=4495, 983 Htotal=2816
+=== 984 measured now
+  H Total:       4751
+=== command-response check
+cmd=white Y=1010.1 x=0.3024 y=0.3287
+cmd=red Y=354.8 x=0.3642 y=0.3795
+cmd=green Y=270.4 x=0.2428 y=0.3288
+cmd=white Y=1008.6 x=0.3023 y=0.3286
+=== 984 digital reset then re-check
+cmd=red Y=570.8 x=0.6854 y=0.3129
+cmd=green Y=222.4 x=0.2251 y=0.7156
+cmd=white Y=1007.1 x=0.3021 y=0.3286
+  H Total:       2815
+wedges=0
+=== END 18:51:07
+
+[exited with code 0]

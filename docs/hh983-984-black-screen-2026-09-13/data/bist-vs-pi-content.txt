@@ -1,0 +1,46 @@
+=== A. Pi4-generated patterns (what a healthy panel shows) ===
+pi:white               Y= 1110.371  x=0.3051  y=0.3302
+pi:red                 Y=  269.772  x=0.6852  y=0.3134
+pi:green               Y=  710.133  x=0.2229  y=0.7175
+pi:blue                Y=  129.433  x=0.1428  y=0.0856
+pi:black               Y=    0.000  x=0.3333  y=0.3333
+pi:white               Y= 1108.977  x=0.3049  y=0.3301
+
+=== B. driver poll paused, DTG pulse replay to induce BIST ===
+pi:white before        Y= 1107.948  x=0.3048  y=0.3301
+--- 18 samples, Pi is still sending solid WHITE the whole time ---
+bist-1                 Y= 1107.288  x=0.3047  y=0.3301
+bist-2                 Y=  251.037  x=0.3062  y=0.3286
+bist-3                 Y=  658.936  x=0.2430  y=0.3484
+bist-4                 Y=  238.746  x=0.3052  y=0.3268
+bist-5                 Y=  215.589  x=0.2976  y=0.3294
+bist-6                 Y= 1106.634  x=0.3045  y=0.3301
+bist-7                 Y=  516.108  x=0.3090  y=0.3314
+bist-8                 Y=    0.932  x=0.2478  y=0.2915
+bist-9                 Y=    1.704  x=0.2454  y=0.2888
+bist-10                Y= 1105.310  x=0.3044  y=0.3300
+bist-11                Y=  267.160  x=0.6853  y=0.3133
+bist-12                Y=  709.090  x=0.2235  y=0.7171
+bist-13                Y=  128.988  x=0.1427  y=0.0854
+bist-14                Y=  251.044  x=0.3058  y=0.3284
+bist-15                Y=  657.980  x=0.2428  y=0.3483
+bist-16                Y=  238.529  x=0.3050  y=0.3266
+bist-17                Y=  215.592  x=0.2975  y=0.3292
+bist-18                Y= 1104.878  x=0.3042  y=0.3300
+
+=== C. does the panel follow a Pi pattern change while in this state? ===
+cmd=red-1              Y=    0.931  x=0.2476  y=0.2914
+cmd=red-2              Y=  186.281  x=0.3048  y=0.3247
+cmd=red-3              Y= 1103.482  x=0.3041  y=0.3298
+cmd=green-1            Y=  128.912  x=0.1428  y=0.0853
+cmd=green-2            Y=  250.905  x=0.3054  y=0.3281
+cmd=green-3            Y=  250.979  x=0.3053  y=0.3283
+
+=== D. recover: 984 digital reset (Sync Video) ===
+recovered:white        Y= 1102.751  x=0.3039  y=0.3298
+recovered:red          Y=  265.056  x=0.6853  y=0.3132
+recovered:green        Y=  708.711  x=0.2243  y=0.7163
+recovered:blue         Y=  128.761  x=0.1428  y=0.0853
+recovered:black        Y=    0.000  x=0.3333  y=0.3333
+recovered:white        Y= 1101.873  x=0.3038  y=0.3297
+poll restored; wedges=0

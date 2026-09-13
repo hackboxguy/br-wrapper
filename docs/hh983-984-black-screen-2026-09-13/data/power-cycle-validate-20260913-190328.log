@@ -1,0 +1,85 @@
+19:03:28 power-cycle-validate: 8 cycles, soak 0 min, pi=pi@192.168.1.243, tasmota=http://192.168.1.186
+19:03:28 pass = verdict mode 'sequence' arrives on the glass (colorimeter only) and dtg_wedge_count == 0
+19:03:28 log: /home/adav/extended-disk/git-repos/tmp12/15-6-0OD-black-screen-issue-fable/tmp-docs/fable-prompt-v1-data/power-cycle-validate-20260913-190328.log
+# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,boot_htotal,wedged_at_boot,recovery,measured_sequence,result
+19:03:29 
+19:03:29 === cycle 1/8
+19:03:29   sync + warm reboot over ssh
+19:03:40   host went down after 3s
+19:03:51   ssh answered after 5s
+19:05:21   uptime 101s
+19:06:27   boot: DTG measured 4206, wedged=yes, recovery=digital-reset
+19:06:27   cycle 1 verdict: PASS  white=ok(1094.770820) red=ok(258.741701) black=ok(0.000000) blue=ok(128.528313) green=ok(706.701399) white=ok(1093.668024)  wedges=0 recovery=digital-reset
+  hist 1:  76 2814; 48 2815; 10 2560; 7 2813; 5 3070; 3 3071; 1 3069;
+19:06:30   MEAS_HTOTAL histogram:  76 2814; 48 2815; 10 2560; 7 2813; 5 3070; 3 3071; 1 3069;
+1,2026-09-13T19:06:30+02:00,166,0,1,4206,yes,digital-reset," white=ok(1094.770820) red=ok(258.741701) black=ok(0.000000) blue=ok(128.528313) green=ok(706.701399) white=ok(1093.668024)",PASS
+19:06:31 
+19:06:31 === cycle 2/8
+19:06:31   sync + warm reboot over ssh
+19:06:42   host went down after 3s
+19:06:53   ssh answered after 5s
+19:08:23   uptime 101s
+19:09:12   boot: DTG measured 4777, wedged=yes, recovery=digital-reset
+19:09:12   cycle 2 verdict: PASS  white=ok(1097.045842) black=ok(0.000000) red=ok(261.209738) blue=ok(128.898321) green=ok(707.664638) white=ok(1095.941648)  wedges=0 recovery=digital-reset
+2,2026-09-13T19:09:12+02:00,150,0,1,4777,yes,digital-reset," white=ok(1097.045842) black=ok(0.000000) red=ok(261.209738) blue=ok(128.898321) green=ok(707.664638) white=ok(1095.941648)",PASS
+19:09:13 
+19:09:13 === cycle 3/8
+19:09:13   sync + warm reboot over ssh
+19:09:24   host went down after 3s
+19:09:37   ssh answered after 5s
+19:11:07   uptime 103s
+19:12:08   boot: DTG measured 4777, wedged=yes, recovery=digital-reset
+19:12:08   cycle 3 verdict: PASS  white=ok(1099.092517) red=ok(261.646103) green=ok(707.663239) black=ok(0.000000) blue=ok(129.050009) white=ok(1097.920290)  wedges=0 recovery=digital-reset
+3,2026-09-13T19:12:08+02:00,163,0,1,4777,yes,digital-reset," white=ok(1099.092517) red=ok(261.646103) green=ok(707.663239) black=ok(0.000000) blue=ok(129.050009) white=ok(1097.920290)",PASS
+19:12:08 
+19:12:08 === cycle 4/8
+19:12:08   sync + warm reboot over ssh
+19:12:20   host went down after 3s
+19:12:30   ssh answered after 5s
+19:14:00   uptime 101s
+19:15:02   boot: DTG measured 5007, wedged=yes, recovery=digital-reset
+4,2026-09-13T19:15:02+02:00,162,0,1,5007,yes,digital-reset," white=MISMATCH(Y=ERROR x=ERROR y=ERROR) red=ok(262.007270) green=ok(707.595441) blue=ok(128.892726) black=ok(0.000000) white=ok(1099.017255)",FAIL
+19:15:02 
+19:15:02 !!! BLACK SCREEN on cycle 4: the panel did not follow the commanded patterns: white=MISMATCH(Y=ERROR x=ERROR y=ERROR) red=ok(262.007270) green=ok(707.595441) blue=ok(128.892726) black=ok(0.000000) white=ok(1099.017255)
+19:15:02 !!! not power-cycling again; the rig is left in the failed state
+19:15:02 !!! evidence -> /home/adav/extended-disk/git-repos/tmp12/15-6-0OD-black-screen-issue-fable/tmp-docs/fable-prompt-v1-data/power-cycle-validate-20260913-190328-FAIL-cycle4.txt
+=== power-cycle-validate failure, cycle 4, 2026-09-13T19:15:02+02:00
+reason: the panel did not follow the commanded patterns: white=MISMATCH(Y=ERROR x=ERROR y=ERROR) red=ok(262.007270) green=ok(707.595441) blue=ok(128.892726) black=ok(0.000000) white=ok(1099.017255)
+pass threshold: 800 nits
+
+=== measured sequence
+commanded: white red green blue black white\nmeasured: white=MISMATCH(Y=ERROR x=ERROR y=ERROR) red=ok(262.007270) green=ok(707.595441) blue=ok(128.892726) black=ok(0.000000) white=ok(1099.017255)
+
+=== dtg_wedge_count / module parameters
+/sys/module/hh983_serializer/parameters/config_mode:0
+/sys/module/hh983_serializer/parameters/dp_guard:1
+/sys/module/hh983_serializer/parameters/dtg_check:1
+/sys/module/hh983_serializer/parameters/dtg_recover:1
+/sys/module/hh983_serializer/parameters/dtg_tolerance:32
+/sys/module/hh983_serializer/parameters/dtg_wedge_count:0
+/sys/module/hh983_serializer/parameters/ots_touch:0
+/sys/module/hh983_serializer/parameters/poll_interval_ms:1000
+/sys/module/hh983_serializer/parameters/wedge_holdoff_s:30
+/sys/module/hh983_serializer/parameters/wedge_recovery:1
+
+=== uptime
+ 19:11:17 up 2 min,  0 user,  load average: 0.16, 0.14, 0.06
+164.02 616.74
+
+=== dmesg | grep hh983
+[    2.453249] hh983_serializer: loading out-of-tree module taints kernel.
+[    4.639607] hh983-serializer 1-0018: HH983 FPDLink serializer probe (config_mode=0)
+[    4.639630] hh983-serializer 1-0018: Initializing Mode 0: 983 + 984
+[    4.654071] hh983-serializer 1-0018: Configuring REM_INTB for Port 0 (GPIO4=0x88, INT_CTL=0x83)
+[    4.656200] hh983-serializer 1-0018: Writing GPIO4_CONFIG (0x1B) = 0x88
+[    4.658294] hh983-serializer 1-0018: GPIO4_CONFIG verified: 0x88
+[    4.661613] hh983-serializer 1-0018: Mode 0 (983+984) initialization complete
+[    4.661738] hh983-serializer 1-0018: SER GENERAL_STS=0x53 [RX_LOCK LINK_LOST LINK_DET]
+[    4.661976] hh983-serializer 1-0018: DES STS0=0x81 STS1=0xC1 [FPD4_LOCK PLL_LOCK LOCK]
+[    4.661983] hh983-serializer 1-0018: HH983 initialization successful (mode=0, poll=on, dp_guard, dtg_check)
+[    6.686322] hh983-serializer 1-0018: DP video back (VP_STS=0x01), restoring 984 video stream
+[    6.701278] hh983-serializer 1-0018: DP guard restore: 984 stream_en=0, DTG measured Htotal=5007, 983 Htotal=2816 (DTG wedged)
+[    6.704245] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=5007 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53, 984 stream_en=0 STS0=0x01 STS1=0xC1
+[    6.967444] hh983-serializer 1-0018: DP guard restore: 984 digital reset after 0 ms, DTG measured Htotal=2815, 983 Htotal=2816
+
+=== fpdlink-tool.sh --target=984 --diagnose

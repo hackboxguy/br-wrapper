@@ -1,0 +1,98 @@
+=== power-cycle-validate failure, cycle 4, 2026-09-13T19:15:02+02:00
+reason: the panel did not follow the commanded patterns: white=MISMATCH(Y=ERROR x=ERROR y=ERROR) red=ok(262.007270) green=ok(707.595441) blue=ok(128.892726) black=ok(0.000000) white=ok(1099.017255)
+pass threshold: 800 nits
+
+=== measured sequence
+commanded: white red green blue black white\nmeasured: white=MISMATCH(Y=ERROR x=ERROR y=ERROR) red=ok(262.007270) green=ok(707.595441) blue=ok(128.892726) black=ok(0.000000) white=ok(1099.017255)
+
+=== dtg_wedge_count / module parameters
+/sys/module/hh983_serializer/parameters/config_mode:0
+/sys/module/hh983_serializer/parameters/dp_guard:1
+/sys/module/hh983_serializer/parameters/dtg_check:1
+/sys/module/hh983_serializer/parameters/dtg_recover:1
+/sys/module/hh983_serializer/parameters/dtg_tolerance:32
+/sys/module/hh983_serializer/parameters/dtg_wedge_count:0
+/sys/module/hh983_serializer/parameters/ots_touch:0
+/sys/module/hh983_serializer/parameters/poll_interval_ms:1000
+/sys/module/hh983_serializer/parameters/wedge_holdoff_s:30
+/sys/module/hh983_serializer/parameters/wedge_recovery:1
+
+=== uptime
+ 19:11:17 up 2 min,  0 user,  load average: 0.16, 0.14, 0.06
+164.02 616.74
+
+=== dmesg | grep hh983
+[    2.453249] hh983_serializer: loading out-of-tree module taints kernel.
+[    4.639607] hh983-serializer 1-0018: HH983 FPDLink serializer probe (config_mode=0)
+[    4.639630] hh983-serializer 1-0018: Initializing Mode 0: 983 + 984
+[    4.654071] hh983-serializer 1-0018: Configuring REM_INTB for Port 0 (GPIO4=0x88, INT_CTL=0x83)
+[    4.656200] hh983-serializer 1-0018: Writing GPIO4_CONFIG (0x1B) = 0x88
+[    4.658294] hh983-serializer 1-0018: GPIO4_CONFIG verified: 0x88
+[    4.661613] hh983-serializer 1-0018: Mode 0 (983+984) initialization complete
+[    4.661738] hh983-serializer 1-0018: SER GENERAL_STS=0x53 [RX_LOCK LINK_LOST LINK_DET]
+[    4.661976] hh983-serializer 1-0018: DES STS0=0x81 STS1=0xC1 [FPD4_LOCK PLL_LOCK LOCK]
+[    4.661983] hh983-serializer 1-0018: HH983 initialization successful (mode=0, poll=on, dp_guard, dtg_check)
+[    6.686322] hh983-serializer 1-0018: DP video back (VP_STS=0x01), restoring 984 video stream
+[    6.701278] hh983-serializer 1-0018: DP guard restore: 984 stream_en=0, DTG measured Htotal=5007, 983 Htotal=2816 (DTG wedged)
+[    6.704245] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=5007 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53, 984 stream_en=0 STS0=0x01 STS1=0xC1
+[    6.967444] hh983-serializer 1-0018: DP guard restore: 984 digital reset after 0 ms, DTG measured Htotal=2815, 983 Htotal=2816
+
+=== fpdlink-tool.sh --target=984 --diagnose
+=== fpdlink-tool --diagnose ===
+I2C Bus: 1  Serializer: 0x18  Deserializer: 0x2c (DS90HH984, mode=0)
+Note: reading APB 0x194 and deser 0x45 clears latched events in those regs.
+
+VERDICT: [OK]   Pipeline healthy — Pi -> 983 -> FPDLink -> DS90HH984 -> panel
+
+Pipeline Map:
+  [Pi/DP src] --DP--> [983 DP RX OK] --FPDLink PHY OK--> [DS90HH984 OK] --eDP/OLDI--> [FPGA/panel ?]
+              src unprobed    RX_LOCK=1  video=2560x1440    FPD4=1 LOCK=1   stream=2560x1440    panel unprobed
+
+DS90UH983 Serializer (0x18) — DP RX / FPDLink TX
+  0x0C GENERAL_STS                   : 0x53              RX_LOCK=1 LINK_DET=1
+  0x02 GENERAL_CFG                   : 0x50              (bit7 set = stuck PHY reset)
+  0x01 RESET_CTL                     : 0x00      [OK]    (non-zero = reset in progress)
+  0x07 I2C_CONTROL                   : 0xd8      [OK]    passthrough
+  0x1B GPIO4_CONFIG                  : 0x88      [OK]    Port 0 REM_INT
+  0x51 INTERRUPT_CTL                 : 0x83      [OK]    
+  0xC6 INTERRUPT_CTRL                : 0x21      [OK]    IE_RX_REM_INT | INT_EN
+  APB 0x000 LINK_ENABLE              : 0x01              HPD=1
+  APB 0x194 SINK_0_INT_CAUSE         : 0x00              NO_VIDEO=0 VIDEO_DETECT=0 MODE_CHANGE=0 (cleared on read)
+  VP0 Timing                         : 2560x1440          @ 2816x1492 total, sync H/V=56/2
+
+FPDLink PHY
+  PHY status                         : LOCKED            FPD4_LOCK=1 LOCK=1 PLL_LOCK=1
+  0x53 GP_STATUS_0                   : 0x81              FPD4_LOCK=1
+  0x54 GP_STATUS_1                   : 0xc1              LOCK=1 PLL_LOCK=1
+  CRC errors (0x6C/0x6D)             : 0 / 0             no FPD4 CRC errors (counters read-to-clear)
+
+DS90HH984 Deserializer (0x2c) — FPDLink RX / video / output
+  0x04 GENERAL_CFG                   : 0xc1      [OK]    passthrough
+  0x01 RESET_CTL                     : 0x00      [OK]    (non-zero = reset in progress)
+  0x0C GENERAL_STS                   : 0x10              
+  0x44 INTB_CTL                      : 0x81      [OK]    IE_EN | IE_INTB_P0
+  0x45 LOCAL_INT_STS                 : 0x00              (cleared on read)
+  0x51 INTERRUPT_STS                 : 0x82              
+
+Video Pipeline (Page 0x50 / Page 0x48)
+  0x50:0x00 PGCTL                    : 0x08              PATGEN_EN=0 SEL=1 (default 0x08)
+  0x50:0x01 PGCFG                    : 0x08              (default 0x08)
+  0x50:0x20 DTG_CTL                  : 0x93              PG_DATA_SOURCE_SEL=3 (measured + main-link HACTIVE)
+  0x50:0x32 DTG_RESET_CTL            : 0x04              DTG_RESET_LOCK_EN=1 (auto-retrain on lock)
+  Measured Timing                    : 2560x1440          @ 2814x1492 total (from FPDLink stream)
+  0x48:0x69 stream-0 flags           : 0x03              HACTIVE_CHNG=1 VTOTAL_CHNG=1
+
+Summary:
+  VERDICT: [OK]   Pipeline healthy — Pi -> 983 -> FPDLink -> DS90HH984 -> panel
+
+=== 150-read MEAS_HTOTAL histogram
+     62 2815
+     50 2814
+     13 2813
+     10 2560
+      5 3071
+      3 3070
+      3 2561
+      2 2812
+      1 3069
+      1 2816
