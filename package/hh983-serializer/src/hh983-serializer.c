@@ -1046,6 +1046,19 @@ static void hh983_des988_check_dtg(struct hh983_data *data)
 		return;
 	}
 
+	/* Same confirmation mode 0 uses: one out-of-tolerance read is not
+	 * evidence.  The 988 path is exposed to the same tearing -- the 3x-qvue
+	 * profile programs an H total of 5628, four pixels below 0x1600 -- and
+	 * the shared hh983_read_meas15() cannot remove it on its own.
+	 * Code-reviewed, not bench-tested: no 988 rig was attached. */
+	if (!hh983_dtg_confirmed_bad(data, meas, prog)) {
+		dev_dbg(&client->dev,
+			"DTG guard (mode %d): out-of-tolerance %d (programmed %d) not confirmed, torn read\n",
+			data->mode, meas, prog);
+		data->guard_dtg_count = 0;
+		return;
+	}
+
 	data->guard_dtg_count++;
 	if (data->guard_dtg_count < DP_GUARD_WEDGE_POLLS)
 		return;			/* one odd measurement is not a wedge */
