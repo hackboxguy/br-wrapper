@@ -308,7 +308,11 @@ check_one() {
     y=$(echo  "$out" | awk '{print $1}')
     cx=$(echo "$out" | awk '{print $2}')
     cy=$(echo "$out" | awk '{print $3}')
-    if pattern_ok "$ref" "$y" "$cx" "$cy"; then
+    # A reading that is not a number is not a measurement, and it has to be
+    # rejected here rather than left to pattern_ok(): awk coerces "ERROR" to 0,
+    # and black's band includes 0, so a failed sensor read would otherwise be
+    # accepted as a perfect black.  Seen on 2026-09-13 as "black=ok(ERROR)".
+    if is_number "$y" && pattern_ok "$ref" "$y" "$cx" "$cy"; then
         SEQ_LOG="$SEQ_LOG ${label}=ok(${y})"
         return 0
     fi
@@ -319,7 +323,7 @@ check_one() {
         y=$(echo  "$out" | awk '{print $1}')
         cx=$(echo "$out" | awk '{print $2}')
         cy=$(echo "$out" | awk '{print $3}')
-        if pattern_ok "$ref" "$y" "$cx" "$cy"; then
+        if is_number "$y" && pattern_ok "$ref" "$y" "$cx" "$cy"; then
             SEQ_LOG="$SEQ_LOG ${label}=ok-after-${RETRY_SETTLE}s(${y})"
             return 0
         fi
