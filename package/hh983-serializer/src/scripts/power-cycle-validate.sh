@@ -44,6 +44,17 @@
 #                     colour, read it twice --hold-secs apart, then command
 #                     white.  See check_hold() for why the cheap one is sound.
 #   --hold-secs=S     gap between the two reads of the held colour (default 10)
+#   --warm            reboot over ssh ("sync; sudo reboot") instead of cutting
+#                     the Tasmota socket.  Cold cycles never wedge the 984 DTG
+#                     on this rig; warm reboots do, which is the only way to
+#                     exercise the wedge detection and recovery end to end.
+#   --retry-settle=S  on a pattern mismatch, wait S seconds and measure that
+#                     same pattern once more before failing (default 8).  A
+#                     panel that has just recovered from a wedge can still be
+#                     converging its local dimming -- 2026-09-13 saw red read
+#                     571 nits against a steady-state 268, with the chromaticity
+#                     already correct.  A BIST does not survive the re-measure:
+#                     it keeps stepping, so it has to coincide twice.
 #   --settle=S        seconds between setting a pattern and measuring (default 3)
 #   --xy-tol=T        chromaticity tolerance per axis (default 0.03; the sensor
 #                     repeated to +-0.0007 across a whole session)
@@ -82,6 +93,8 @@ LOG_DIR=$PWD/power-cycle-validate-logs
 PASS_NITS=800
 VERDICT_MODE=sequence
 HOLD_SECS=10
+WARM=0
+RETRY_SETTLE=8
 SETTLE=3
 XY_TOL=0.03
 SOAK_GAP=45
@@ -104,6 +117,8 @@ for arg in "$@"; do
         --pass-nits=*)    PASS_NITS="${arg#*=}" ;;
         --verdict=*)      VERDICT_MODE="${arg#*=}" ;;
         --hold-secs=*)    HOLD_SECS="${arg#*=}" ;;
+        --warm)           WARM=1 ;;
+        --retry-settle=*) RETRY_SETTLE="${arg#*=}" ;;
         --settle=*)       SETTLE="${arg#*=}" ;;
         --xy-tol=*)       XY_TOL="${arg#*=}" ;;
         --soak-gap=*)     SOAK_GAP="${arg#*=}" ;;
@@ -150,6 +165,28 @@ power_cycle() {
     say "  Tasmota OFF ($(tasmota Power%20OFF))"
     sleep "$OFF_SECS"
     say "  Tasmota ON ($(tasmota Power%20ON))"
+}
+
+# Warm reboot over ssh.
+#
+# "reboot" returns immediately and the host keeps answering ssh for a few
+# seconds afterwards, so polling for uptime straight away matches the *old*
+# uptime and sails past the shutdown entirely.  Wait for the host to actually go
+# away first, then let wait_for_ssh() find it again.
+warm_reboot() {
+    local waited=0
+    say "  sync + warm reboot over ssh"
+    rsh 60 'sync; (sudo reboot &) >/dev/null 2>&1' >/dev/null 2>&1
+    while [ "$waited" -lt 90 ]; do
+        sleep 3
+        waited=$((waited + 3))
+        if ! rsh 8 'true' >/dev/null 2>&1; then
+            say "  host went down after ${waited}s"
+            return 0
+        fi
+    done
+    say "  host never went down after the reboot request"
+    return 1
 }
 
 wait_for_ssh() {
@@ -268,6 +305,18 @@ check_one() {
         SEQ_LOG="$SEQ_LOG ${label}=ok(${y})"
         return 0
     fi
+    if [ "$RETRY_SETTLE" -gt 0 ]; then
+        SEQ_LOG="$SEQ_LOG ${label}=retry(Y=${y:-?} x=${cx:-?} y=${cy:-?})"
+        sleep "$RETRY_SETTLE"
+        out=$(measure_only)
+        y=$(echo  "$out" | awk '{print $1}')
+        cx=$(echo "$out" | awk '{print $2}')
+        cy=$(echo "$out" | awk '{print $3}')
+        if pattern_ok "$ref" "$y" "$cx" "$cy"; then
+            SEQ_LOG="$SEQ_LOG ${label}=ok-after-${RETRY_SETTLE}s(${y})"
+            return 0
+        fi
+    fi
     SEQ_LOG="$SEQ_LOG ${label}=MISMATCH(Y=${y:-?} x=${cx:-?} y=${cy:-?})"
     return 1
 }
@@ -317,6 +366,16 @@ check_sequence() {
 }
 
 wedge_count()  { rsh 30 'cat /sys/module/hh983_serializer/parameters/dtg_wedge_count 2>/dev/null || echo NA'; }
+
+# What the driver itself saw at boot, taken from dmesg so it costs no I2C and
+# cannot race the guard's own poll the way an i2cget loop does.
+boot_htotal()  { rsh 30 'dmesg | grep -m1 -o "DTG measured Htotal=-\?[0-9]*" | grep -o -- "-\?[0-9]*$" || echo NA'; }
+boot_wedged()  { rsh 30 'dmesg | grep -qE "\(DTG wedged\)|DTG wedge without video loss" && echo yes || echo no'; }
+recovery_ran() {
+    rsh 30 'if dmesg | grep -q "984 digital reset after"; then echo digital-reset;
+            elif dmesg | grep -qE "\(DTG wedged\)|DTG wedge without video loss"; then echo dtg-pulse;
+            else echo none; fi'
+}
 wedge_lines()  { rsh 30 'dmesg | grep -c "DTG wedge"'; }
 
 # Section 8 of the analysis: 150 raw MSB+LSB reads of MEAS_HTOTAL, counted.
@@ -380,7 +439,7 @@ fail_dump() {
 say "power-cycle-validate: $CYCLES cycles, soak ${SOAK_MIN} min, pi=$PI, tasmota=$TASMOTA"
 say "pass = verdict mode '$VERDICT_MODE' arrives on the glass (colorimeter only) and dtg_wedge_count == 0"
 say "log: $LOG"
-logf "# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,measured_sequence,,result"
+logf "# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,boot_htotal,wedged_at_boot,recovery,measured_sequence,result"
 
 if [ "$(tasmota Power)" = "" ]; then
     say "Tasmota at $TASMOTA does not answer - aborting before touching anything"
@@ -391,7 +450,14 @@ cycle=1
 while [ "$cycle" -le "$CYCLES" ]; do
     say ""
     say "=== cycle $cycle/$CYCLES"
-    power_cycle
+    if [ "$WARM" = "1" ]; then
+        if ! warm_reboot; then
+            fail_dump "$cycle" "" "warm reboot did not bring the host down"
+            exit 1
+        fi
+    else
+        power_cycle
+    fi
     if ! wait_for_ssh; then
         fail_dump "$cycle" "" "no ssh within ${BOOT_TIMEOUT}s after power on"
         exit 1
@@ -410,19 +476,23 @@ while [ "$cycle" -le "$CYCLES" ]; do
     wc_now=$(wedge_count)
     wl_now=$(wedge_lines)
     up_now=$(rsh 30 "cut -d. -f1 /proc/uptime")
+    bh=$(boot_htotal)
+    bw=$(boot_wedged)
+    rec=$(recovery_ran)
+    say "  boot: DTG measured $bh, wedged=$bw, recovery=$rec"
 
     if [ "$seq_rc" != "0" ]; then
-        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,\"$flat\",,FAIL"
+        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",FAIL"
         fail_dump "$cycle" "commanded: $seq_list${NL}measured:$flat" \
                   "the panel did not follow the commanded patterns:$flat"
         exit 1
     fi
     if [ "$wc_now" != "0" ]; then
-        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,\"$flat\",,FAIL-WEDGE"
+        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",FAIL-WEDGE"
         fail_dump "$cycle" "$flat" "panel followed every pattern but dtg_wedge_count=$wc_now (the guard still fired)"
         exit 1
     fi
-    say "  cycle $cycle verdict: PASS $flat  wedges=$wc_now"
+    say "  cycle $cycle verdict: PASS $flat  wedges=$wc_now recovery=$rec"
 
     # Soak: the false wedges were 30..120 s apart, so the five-sample verdict
     # alone can walk straight past one.  Same pass rule, once every --soak-gap.
@@ -457,7 +527,7 @@ while [ "$cycle" -le "$CYCLES" ]; do
         say "  MEAS_HTOTAL histogram: $(echo "$hist" | cut -c1-110)"
     fi
 
-    logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,\"$flat\",,PASS"
+    logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",PASS"
     stop_pattern
     cycle=$((cycle + 1))
 done
