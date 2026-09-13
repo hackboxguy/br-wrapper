@@ -211,6 +211,7 @@ MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984
 #define DP_GUARD_RESYNC_POLLS    2     /* consecutive synced polls before restoring the stream */
 #define DP_GUARD_WEDGE_POLLS     2     /* consecutive out-of-tolerance polls before calling it a wedge */
 #define DP_GUARD_MEAS_TRIES      3     /* attempts at an untorn read of a measured 15-bit counter */
+#define DP_GUARD_MEAS_SAMPLES    5     /* measurements that must all be wrong before a poll counts as bad */
 
 /* 984 configuration values */
 #define DES984_ENABLE_PASSTHROUGH 0xC9  /* GENERAL_CFG default 0xC1 | bit[3] I2C_PASS_THROUGH */
@@ -555,12 +556,16 @@ static void hh983_guard_cut_stream(struct hh983_data *data)
  * five (2026-09-13 analysis).  Every other profile on the bench is 12 px or
  * more from a boundary, which is why only this one ever showed it.
  *
- * Re-reading the MSB after the LSB is enough to catch it: if the counter did
- * not cross a byte boundary between the two MSB reads, the LSB fetched in
- * between belongs to the same high byte.  A crossing is a few-pixel event
- * rather than a steady state, so three attempts leave a residue of well under
- * 0.1 %, and the caller treats what is left as an unreadable measurement --
- * which is already "not evidence of a wedge" everywhere it is used.
+ * Re-reading the MSB after the LSB catches the plain case: if the counter
+ * crossed a byte boundary and stayed there, the two MSB reads disagree and the
+ * attempt is thrown away.  It does NOT catch a counter that crosses and comes
+ * straight back inside the ~3 ms the triple takes -- both MSB reads then see
+ * 0x0A while the LSB read sees the 0x00 of 0x0B00, which is self-consistent
+ * and wrong by exactly 256.  That is not a corner case on a value that
+ * straddles the boundary continuously: it still left about one read in twenty
+ * torn, enough to pulse the DTG twice in 83 s on 2026-09-13.  Nothing a single
+ * read can look at distinguishes that result from a genuine 2560, so the
+ * callers that act on it confirm with hh983_dtg_confirmed_bad() instead.
  *
  * Returns the 15-bit value, or negative on an I2C failure or on three torn
  * attempts.
@@ -636,6 +641,45 @@ static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog)
 	*meas = meas_htotal;
 	*prog = (prog_hi << 8) | prog_lo;
 	return 0;
+}
+
+/* Confirm that the DTG measurement is really wrong before a poll acts on it.
+ *
+ * One read is not enough even after hh983_read_meas15(), and the bench proved
+ * it on 2026-09-13: two polls read exactly 2560 against a programmed 2816, the
+ * guard pulsed the DTG twice inside 83 s, and that is what put the panel into
+ * its own BIST.  See hh983_read_meas15() for why a single read cannot tell a
+ * bounced boundary crossing from a genuine 2560.
+ *
+ * Another look can.  A tear is an accident of timing that most reads do not
+ * have, so further samples land back on the true value almost at once; a
+ * wedged DTG is out of tolerance on every one of them and on the same side,
+ * however much it wanders (4201..5110 against 2816 on this bench after a warm
+ * reboot, 4415..5313 against 3440 on the OTS-OLED, 3730..4456 against 2028 on
+ * the 988).  Requiring all DP_GUARD_MEAS_SAMPLES to be out of tolerance on one
+ * side raises the odds of a torn run to the fourth power of a single tear --
+ * out of reach -- while a real wedge is still declared on the poll it always
+ * was, which is what keeps the response inside the ~10 s the OTS-OLED takes to
+ * latch black.
+ *
+ * Only the suspicious path pays: a healthy pipeline returns on the first extra
+ * sample, and a first read inside tolerance never gets here at all.
+ */
+static bool hh983_dtg_confirmed_bad(struct hh983_data *data, int first, int prog)
+{
+	bool above = first > prog;
+	int i, meas = 0, meas_prog = 0;
+
+	for (i = 1; i < DP_GUARD_MEAS_SAMPLES; i++) {
+		if (hh983_read_htotals(data, &meas, &meas_prog) != 0)
+			return false;
+		if (abs(meas - meas_prog) <= dtg_tolerance)
+			return false;
+		if ((meas > meas_prog) != above)
+			return false;
+	}
+
+	return true;
 }
 
 /*
@@ -724,25 +768,16 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 
 	if (!force_wedged && !unreadable) {
 		wedged = abs(meas_htotal - prog_htotal) > dtg_tolerance;
-		if (wedged) {
-			/* This path decides on one measurement, and at boot it is
-			 * the path that usually runs: on 15.6-2k5 it pulsed 2 s
-			 * after every probe, on a torn 2560.  A pulse costs that
-			 * panel its picture four times out of five, so make it
-			 * earn a second, agreeing measurement first -- the same
-			 * agreement the periodic check demands of its two polls.
-			 */
-			int confirm = -1, confirm_prog = -1;
-
-			msleep(50);
-			if (hh983_read_htotals(data, &confirm, &confirm_prog) != 0 ||
-			    abs(confirm - confirm_prog) <= dtg_tolerance ||
-			    !hh983_wedge_consistent(confirm, meas_htotal, confirm_prog)) {
-				dev_info(&client->dev,
-					 "DP guard restore: DTG measured %d not confirmed by re-read %d (programmed %d), no pulse\n",
-					 meas_htotal, confirm, confirm_prog);
-				wedged = false;
-			}
+		/* This path decides on one measurement, and at boot it is the
+		 * path that usually runs: on 15.6-2k5 it pulsed 2 s after every
+		 * probe, on a torn 2560.  A pulse costs that panel its picture
+		 * four times out of five, so it has to pass the same
+		 * confirmation the periodic check applies. */
+		if (wedged && !hh983_dtg_confirmed_bad(data, meas_htotal, prog_htotal)) {
+			dev_info(&client->dev,
+				 "DP guard restore: DTG measured %d not confirmed by further reads (programmed %d), no pulse\n",
+				 meas_htotal, prog_htotal);
+			wedged = false;
 		}
 	}
 
@@ -827,6 +862,16 @@ static void hh983_guard_check_dtg(struct hh983_data *data)
 	if (abs(meas - prog) <= dtg_tolerance) {
 		data->guard_dtg_count = 0;
 		data->guard_wedged = false;
+		return;
+	}
+
+	/* One out-of-tolerance read is not evidence: confirm it with more samples
+	 * before this poll counts against the debounce at all. */
+	if (!hh983_dtg_confirmed_bad(data, meas, prog)) {
+		dev_dbg(&client->dev,
+			"DP guard: out-of-tolerance %d (programmed %d) not confirmed, torn read\n",
+			meas, prog);
+		data->guard_dtg_count = 0;
 		return;
 	}
 

@@ -172,27 +172,42 @@ ind_read16_le() {
 # MSB[6:0] at msb_offset, LSB[7:0] at lsb_offset -> (MSB[6:0] << 8) | LSB
 #
 # The measured-timing registers this reads are free-running counters with no
-# latch, so the MSB is read again after the LSB and the pair is only accepted
-# when both MSBs agree: without that, a value sitting on a 256 boundary tears.
-# On the 15.6" 2K5 profile (measured H total 2811..2817 across 0x0B00) about
-# 15 % of plain reads came back as 2560 or 3070, which is enough for --diagnose
-# to report "984 DTG stuck on corrupt H_TOTAL" on a perfectly healthy pipeline.
-# Three attempts, then take what the last one said rather than fail the caller.
+# latch, so a value sitting on a 256 boundary tears: on the 15.6" 2K5 profile
+# (measured H total 2811..2817 across 0x0B00) about 15 % of plain reads came
+# back as 2560 or 3070, which is enough for --diagnose to report "984 DTG stuck
+# on corrupt H_TOTAL" on a perfectly healthy pipeline.
+#
+# Two defences, because one is not enough.  Each sample re-reads the MSB after
+# the LSB and is retried while the two MSBs disagree, which throws away a
+# crossing that stayed; and three such samples are taken and the median
+# returned, which throws away a crossing that went and came straight back
+# inside one sample (both MSB reads see 0x0A, the LSB read sees the 0x00 of
+# 0x0B00 -- self-consistent and wrong by 256).  A torn sample is a minority of
+# reads, so it never wins a median of three.  Static registers read the same
+# three times and are unaffected.
+_ind_read15_sample() {
+    _s_dev=$1; _s_msb=$2; _s_lsb=$3
+    _s_try=1
+    while [ "$_s_try" -le 3 ]; do
+        i2c_write "$_s_dev" 0x41 "$_s_msb"
+        _m=$(i2c_read "$_s_dev" 0x42)
+        i2c_write "$_s_dev" 0x41 "$_s_lsb"
+        _l=$(i2c_read "$_s_dev" 0x42)
+        i2c_write "$_s_dev" 0x41 "$_s_msb"
+        _m2=$(i2c_read "$_s_dev" 0x42)
+        [ $(( _m & 0x7F )) -eq $(( _m2 & 0x7F )) ] && break
+        _s_try=$((_s_try + 1))
+    done
+    echo $(( ((_m & 0x7F) << 8) | _l ))
+}
+
 ind_read15_be() {
     _dev=$1; _page=$2; _msb_off=$3; _lsb_off=$4
     i2c_write "$_dev" 0x40 "$_page"
-    _try=1
-    while [ "$_try" -le 3 ]; do
-        i2c_write "$_dev" 0x41 "$_msb_off"
-        _msb=$(i2c_read "$_dev" 0x42)
-        i2c_write "$_dev" 0x41 "$_lsb_off"
-        _lsb=$(i2c_read "$_dev" 0x42)
-        i2c_write "$_dev" 0x41 "$_msb_off"
-        _msb2=$(i2c_read "$_dev" 0x42)
-        [ $(( _msb & 0x7F )) -eq $(( _msb2 & 0x7F )) ] && break
-        _try=$((_try + 1))
-    done
-    echo $(( ((_msb & 0x7F) << 8) | _lsb ))
+    _v1=$(_ind_read15_sample "$_dev" "$_msb_off" "$_lsb_off")
+    _v2=$(_ind_read15_sample "$_dev" "$_msb_off" "$_lsb_off")
+    _v3=$(_ind_read15_sample "$_dev" "$_msb_off" "$_lsb_off")
+    printf '%s\n%s\n%s\n' "$_v1" "$_v2" "$_v3" | sort -n | sed -n 2p
 }
 
 # Read 13-bit BE indirect register (for sync widths): ind_read13_be <dev_addr> <page> <msb_off> <lsb_off>
