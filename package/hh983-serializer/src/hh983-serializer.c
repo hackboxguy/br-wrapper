@@ -121,6 +121,30 @@ static int dtg_recover = 1;
 module_param(dtg_recover, int, 0644);
 MODULE_PARM_DESC(dtg_recover, "Modes 0, 1 and 2: 1=pulse the DTG to recover a detected wedge (default), 0=detect and log only");
 
+/*
+ * Mode 0: how a confirmed wedge is recovered.
+ *
+ * 0 (default) cuts the 984 main stream, pulses the DTG reset, settles and
+ * re-enables -- the order the OTS-OLED bring-up validated with a colorimeter,
+ * and the only one tried on that panel.
+ *
+ * 1 cuts the stream, issues a 984 digital reset (main page 0x01 = 0x01, the
+ * same action as the Stream Deck "Sync Video" button), waits for the FPD-Link
+ * to re-lock, re-enables, and falls back to a pulse once if the measurement is
+ * still wrong.  That is for panels where the pulse itself is the problem: on
+ * the 15.6" 2K5 a pulse on a healthy stream dropped the panel into its TDDI
+ * self test four times out of five, and pulsing a genuine mid-session wedge on
+ * 2026-09-13 left the measurement correct and the panel dark, while one digital
+ * reset fixed the measurement and the picture together.
+ *
+ * Stays 0 by default: the digital reset has never been tried on the OTS-OLED,
+ * which is the panel that black-latches, and that part is not on this bench.
+ * Set it per display type -- see /etc/modprobe.d/hh983.conf on the 15.6-2k5 rig.
+ */
+static int wedge_recovery;
+module_param(wedge_recovery, int, 0644);
+MODULE_PARM_DESC(wedge_recovery, "Mode 0: 0=cut stream, pulse the DTG, enable (default, OLED-validated); 1=cut stream, 984 digital reset, wait for lock, enable (panels that lose the eDP stream on a DTG pulse, e.g. 15.6-2k5)");
+
 /* Mode 0 (983+984) OLED-OTS touch controller routing.
  *
  * On the OLED-OTS 17.3 board the HX8530 TDDI touch controller is on the
@@ -191,6 +215,9 @@ MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984
 #define DES984_GP_STATUS_1       0x54  /* [0]=LOCK [6]=FPDRX_PLL_LOCK (no SIG_DET) */
 #define DES984_INTB_VALUE        0x81
 /* 984 local display timing generator and DP TX (same indirect/APB scheme as 983) */
+#define DES984_RESET_CTL         0x01  /* [0] digital reset, self-clearing, registers preserved */
+#define DES984_DIGITAL_RESET     0x01
+#define DES984_LOCK_WAIT_MS      1000  /* how long to wait for FPD-Link re-lock after one */
 #define DES984_IND_PAGE_DTG      0x14  /* DTG page (script byte 0x50) */
 #define DES984_DTG_P0_CTL        0x32  /* Port 0 DTG control */
 #define DES984_DTG_P1_CTL        0x62  /* Port 1 DTG control */
@@ -761,6 +788,52 @@ static void hh983_guard_wedge_snapshot(struct hh983_data *data, int meas, int pr
 		   meas, meas_vtotal, prog, vp_sts, ser_sts, stream_en, des_sts0, des_sts1);
 }
 
+/* Mode 0 wedge recovery by 984 digital reset (wedge_recovery=1).
+ *
+ * Main page 0x01 bit 0 is self-clearing and leaves the configuration registers
+ * alone -- the analysis session diffed the 984's main page either side of one
+ * and only the clear-on-read status bits moved -- so the driver's GPIO, INTB and
+ * pass-through setup survives and does not need reapplying.  What it does do is
+ * re-initialise the output pipeline and re-train the eDP link to the panel,
+ * which is why the Stream Deck "Sync Video" button (the same write) brings this
+ * panel's picture back.
+ *
+ * Called with the main stream already cut.  Waits for the FPD-Link lock rather
+ * than a fixed delay, then re-measures: returns true only if the DTG is back
+ * inside tolerance, so the caller can fall back to a pulse when it is not.
+ */
+static bool hh983_guard_digital_reset(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int waited, sts1, meas = -1, prog = -1;
+
+	if (hh983_write_deser_reg(client, data->deser_addr, DES984_RESET_CTL,
+				  DES984_DIGITAL_RESET) < 0)
+		return false;
+
+	for (waited = 0; waited < DES984_LOCK_WAIT_MS; waited += 50) {
+		msleep(50);
+		sts1 = hh983_read_deser_reg(client, data->deser_addr,
+					    DES984_GP_STATUS_1);
+		if (sts1 >= 0 && (sts1 & 0x01))
+			break;
+	}
+
+	/* The DTG reads 0 for a moment after the reset while it re-locks onto
+	 * the incoming stream; measuring straight away would report a failure
+	 * that fixes itself. */
+	msleep(200);
+
+	if (hh983_read_htotals(data, &meas, &prog, NULL) != 0)
+		return false;
+
+	dev_info(&client->dev,
+		 "DP guard restore: 984 digital reset after %d ms, DTG measured Htotal=%d, 983 Htotal=%d\n",
+		 waited, meas, prog);
+
+	return abs(meas - prog) <= dtg_tolerance;
+}
+
 /* Mode 0 DP guard: bring the 984 output back after the 983 VP has resynced.
  *
  * Order matters and follows the sequence verified with a colorimeter:
@@ -844,15 +917,26 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 					DES984_APB_MAIN_STREAM_EN, 0);
 
 	if (wedged) {
-		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
-				      DES984_DTG_P0_CTL, DES984_DTG_HOLD_RESET);
-		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
-				      DES984_DTG_P1_CTL, DES984_DTG_HOLD_RESET);
-		msleep(200);
-		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
-				      DES984_DTG_P0_CTL, DES984_DTG_RELEASE);
-		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
-				      DES984_DTG_P1_CTL, DES984_DTG_RELEASE);
+		bool fixed = false;
+
+		if (wedge_recovery == 1) {
+			fixed = hh983_guard_digital_reset(data);
+			if (!fixed)
+				dev_notice(&client->dev,
+					   "DP guard restore: 984 digital reset did not clear the wedge, falling back to a DTG pulse\n");
+		}
+
+		if (!fixed) {
+			hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+					      DES984_DTG_P0_CTL, DES984_DTG_HOLD_RESET);
+			hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+					      DES984_DTG_P1_CTL, DES984_DTG_HOLD_RESET);
+			msleep(200);
+			hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+					      DES984_DTG_P0_CTL, DES984_DTG_RELEASE);
+			hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+					      DES984_DTG_P1_CTL, DES984_DTG_RELEASE);
+		}
 	}
 	msleep(500);
 
