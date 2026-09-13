@@ -47,7 +47,22 @@
 #   --boot-timeout=S  seconds to wait for ssh after power on (default 180)
 #   --min-uptime=S    seconds of uptime before measuring, so the desktop and the
 #                     guard's boot-time restore have happened (default 120)
-#   --no-histogram    skip the 150-read H total histogram
+#   --hist-every=N    take the 150-read H total histogram every Nth cycle
+#                     (default 1).  It is diagnostic, not pass/fail, and it
+#                     costs ~40 s with the driver poll stopped.
+#   --no-histogram    skip the histogram entirely
+#
+# On soak length: the failure this was built for latches.  A false wedge pulses
+# the DTG, the panel drops into its BIST and stays there until a 984 digital
+# reset, so a wedge at t=36 s is still plainly visible at t=120 s -- the
+# observation does not have to be concurrent with the event.  dtg_wedge_count
+# is better still: the pulse only costs the picture about four times in five,
+# so the counter catches wedges the colorimeter cannot see, and it is
+# cumulative and instant.  And the variable that actually varies is per-boot,
+# not per-minute (whether the measured H total straddles a byte boundary
+# depends on the pixel-clock relationship established at each power-up), so
+# cycles buy more confidence per minute than soak does.  Prefer many cycles
+# with a short soak over few cycles with a long one.
 #
 # RIG_PASS is read from the environment so that no password reaches the repo.
 # With it unset the script uses plain ssh/scp (key auth).
@@ -67,6 +82,7 @@ OFF_SECS=12
 BOOT_TIMEOUT=180
 MIN_UPTIME=120
 HISTOGRAM=1
+HIST_EVERY=1
 FPDTOOL=/home/pi/micropanel/bin/fpdlink-tool.sh
 MICROBIN=/home/pi/micropanel/usr/bin
 MEASDIR=/home/pi/micropanel/share/disptool/display-test-framework
@@ -85,6 +101,7 @@ for arg in "$@"; do
         --off-secs=*)     OFF_SECS="${arg#*=}" ;;
         --boot-timeout=*) BOOT_TIMEOUT="${arg#*=}" ;;
         --min-uptime=*)   MIN_UPTIME="${arg#*=}" ;;
+        --hist-every=*)   HIST_EVERY="${arg#*=}" ;;
         --no-histogram)   HISTOGRAM=0 ;;
         --help|-h)        sed -n '/^# Usage:/,/^set -u/p' "$0"; exit 0 ;;
         *) echo "unknown option: $arg" >&2; exit 2 ;;
@@ -373,7 +390,7 @@ while [ "$cycle" -le "$CYCLES" ]; do
         say "  soak done, wedges=$wc_now"
     fi
 
-    if [ "$HISTOGRAM" = "1" ]; then
+    if [ "$HISTOGRAM" = "1" ] && [ $(( (cycle - 1) % HIST_EVERY )) -eq 0 ]; then
         hist=$(histogram | tr '\n' ';' | sed 's/  */ /g')
         logf "  hist $cycle: $hist"
         say "  MEAS_HTOTAL histogram: $(echo "$hist" | cut -c1-110)"
