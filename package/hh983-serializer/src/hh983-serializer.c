@@ -811,6 +811,10 @@ static bool hh983_guard_digital_reset(struct hh983_data *data)
 				  DES984_DIGITAL_RESET) < 0)
 		return false;
 
+	/* waited counts the sleeps already taken when the loop body starts, so
+	 * the elapsed time at the break is waited + 50, not waited -- which is
+	 * why this used to report a lock acquired on the first poll as
+	 * "after 0 ms". */
 	for (waited = 0; waited < DES984_LOCK_WAIT_MS; waited += 50) {
 		msleep(50);
 		sts1 = hh983_read_deser_reg(client, data->deser_addr,
@@ -829,7 +833,7 @@ static bool hh983_guard_digital_reset(struct hh983_data *data)
 
 	dev_info(&client->dev,
 		 "DP guard restore: 984 digital reset after %d ms, DTG measured Htotal=%d, 983 Htotal=%d\n",
-		 waited, meas, prog);
+		 waited + 50, meas, prog);
 
 	return abs(meas - prog) <= dtg_tolerance;
 }
