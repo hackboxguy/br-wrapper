@@ -1,9 +1,0 @@
-19:30:46 power-cycle-validate: 8 cycles, soak 0 min, pi=pi@192.168.1.243, tasmota=http://192.168.1.186
-19:30:46 pass = verdict mode 'sequence' arrives on the glass (colorimeter only) and dtg_wedge_count == 0
-19:30:46 log: /home/adav/extended-disk/git-repos/tmp12/15-6-0OD-black-screen-issue-fable/tmp-docs/fable-prompt-v1-data/power-cycle-validate-20260913-193046.log
-# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,boot_htotal,wedged_at_boot,recovery,measured_sequence,result
-19:30:47 
-19:30:47 === cycle 1/8
-19:30:47   sync + warm reboot over ssh
-19:30:58   host went down after 3s
-19:31:09   ssh answered after 5s
