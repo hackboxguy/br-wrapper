@@ -558,7 +558,7 @@ static void hh983_guard_cut_stream(struct hh983_data *data)
  *
  * Re-reading the MSB after the LSB catches the plain case: if the counter
  * crossed a byte boundary and stayed there, the two MSB reads disagree and the
- * attempt is thrown away.  It does NOT catch a counter that crosses and comes
+ * attempt is retried.  It does NOT catch a counter that crosses and comes
  * straight back inside the ~3 ms the triple takes -- both MSB reads then see
  * 0x0A while the LSB read sees the 0x00 of 0x0B00, which is self-consistent
  * and wrong by exactly 256.  That is not a corner case on a value that
@@ -567,13 +567,32 @@ static void hh983_guard_cut_stream(struct hh983_data *data)
  * read can look at distinguishes that result from a genuine 2560, so the
  * callers that act on it confirm with hh983_dtg_confirmed_bad() instead.
  *
- * Returns the 15-bit value, or negative on an I2C failure or on three torn
- * attempts.
+ * When all three attempts tear, this used to give up and return an error, and
+ * that was a bug with the failure mode exactly backwards.  A *wedged* DTG is
+ * precisely the case where the measurement moves hundreds of px between reads,
+ * so the MSB rarely holds still, so every attempt tore, so the guard decided it
+ * could not read the register and did nothing -- the more wedged the part, the
+ * blinder the guard.  On 2026-09-13 a genuine wedge measuring 4495 was declined
+ * at boot for that reason and was still wedged, unnoticed, 95 s later.
+ *
+ * A torn read is a measurement, not a failure.  Tearing can only move a value
+ * within its own 256-block or into the neighbouring one, so it can never make a
+ * wedged value look healthy and never makes a healthy value look more than
+ * ~256 px wrong.  The last raw pair is therefore returned as a value and the
+ * caller is told, through *torn, that it may be off by a multiple of 256;
+ * a negative return is now reserved for a real I2C failure.
+ *
+ * Returns the 15-bit value, or -EIO on an I2C failure.  *torn (optional) is set
+ * when no attempt produced two matching MSB reads.
  */
-static int hh983_read_meas15(struct hh983_data *data, u8 hi_off, u8 lo_off)
+static int hh983_read_meas15(struct hh983_data *data, u8 hi_off, u8 lo_off,
+			     bool *torn)
 {
 	struct i2c_client *client = data->client;
-	int attempt, hi, lo, hi_again;
+	int attempt, hi = 0, lo = 0, hi_again;
+
+	if (torn)
+		*torn = false;
 
 	for (attempt = 0; attempt < DP_GUARD_MEAS_TRIES; attempt++) {
 		hi = hh983_deser_ind_read(client, data->deser_addr,
@@ -588,7 +607,9 @@ static int hh983_read_meas15(struct hh983_data *data, u8 hi_off, u8 lo_off)
 			return ((hi & 0x7F) << 8) | lo;
 	}
 
-	return -EAGAIN;
+	if (torn)
+		*torn = true;
+	return ((hi & 0x7F) << 8) | lo;
 }
 
 /* Do two consecutive out-of-tolerance measurements describe the same fault?
@@ -620,19 +641,21 @@ static bool hh983_wedge_consistent(int meas, int prev, int prog)
 
 /* Read the 984's measured input line length and the 983's programmed output
  * line length, the pair the guard compares to decide whether the 984 DTG has
- * wedged.  Returns 0 with both filled in, or a negative value if the measured
- * value could not be read untorn or either programmed byte failed.
+ * wedged.  Returns 0 with both filled in, or a negative value only if an I2C
+ * transfer failed; a torn measurement is still a measurement and is reported
+ * through *torn (optional) rather than as an error.
  *
  * Only the measured value needs the tear-proof read: the programmed pair is
  * static configuration in the 983's VP, not a running counter.
  */
-static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog)
+static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog,
+			      bool *torn)
 {
 	struct i2c_client *client = data->client;
 	int meas_htotal, prog_hi, prog_lo;
 
 	meas_htotal = hh983_read_meas15(data, DES984_DTG_MEAS_HTOTAL_HI,
-					DES984_DTG_MEAS_HTOTAL_LO);
+					DES984_DTG_MEAS_HTOTAL_LO, torn);
 	prog_lo = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_LO);
 	prog_hi = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_HI);
 	if (meas_htotal < 0 || prog_lo < 0 || prog_hi < 0)
@@ -656,23 +679,37 @@ static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog)
  * wedged DTG is out of tolerance on every one of them and on the same side,
  * however much it wanders (4201..5110 against 2816 on this bench after a warm
  * reboot, 4415..5313 against 3440 on the OTS-OLED, 3730..4456 against 2028 on
- * the 988).  Requiring all DP_GUARD_MEAS_SAMPLES to be out of tolerance on one
- * side raises the odds of a torn run to the fourth power of a single tear --
- * out of reach -- while a real wedge is still declared on the poll it always
- * was, which is what keeps the response inside the ~10 s the OTS-OLED takes to
- * latch black.
+ * the 988).
+ *
+ * The samples are deliberately *raw*: a torn one counts like any other, and
+ * only a real I2C failure aborts.  That is the whole point, because tearing
+ * cannot cross the two cases.  With a healthy 2816 a torn sample is 2560
+ * (below) or 3070 (above), so five samples that are all out of tolerance AND
+ * all on the same side would need five tears of the same kind in a row: at the
+ * ~15 % tear rate measured on this rig that is under 1e-4 per poll, and the
+ * two-poll debounce squares it.  With a wedged 4500 every sample is far above
+ * 2816 whatever tearing does to it, because a tear only moves a value inside
+ * its own 256-block or the neighbouring one.  Demanding untorn samples here
+ * instead is what blinded the guard to real wedges before 2026-09-13.
+ *
+ * So a real wedge is still declared on the poll it always was, which is what
+ * keeps the response inside the ~10 s the OTS-OLED takes to latch black.
  *
  * Only the suspicious path pays: a healthy pipeline returns on the first extra
  * sample, and a first read inside tolerance never gets here at all.
  */
 static bool hh983_dtg_confirmed_bad(struct hh983_data *data, int first, int prog)
 {
+	struct i2c_client *client = data->client;
 	bool above = first > prog;
 	int i, meas = 0, meas_prog = 0;
 
 	for (i = 1; i < DP_GUARD_MEAS_SAMPLES; i++) {
-		if (hh983_read_htotals(data, &meas, &meas_prog) != 0)
+		if (hh983_read_htotals(data, &meas, &meas_prog, NULL) != 0) {
+			dev_warn_ratelimited(&client->dev,
+					     "DP guard: I2C failure while confirming a DTG measurement, not deciding\n");
 			return false;
+		}
 		if (abs(meas - meas_prog) <= dtg_tolerance)
 			return false;
 		if ((meas > meas_prog) != above)
@@ -707,7 +744,7 @@ static void hh983_guard_wedge_snapshot(struct hh983_data *data, int meas, int pr
 	/* Same counter, same tearing: V total is only logged, never decided on,
 	 * but a torn one here would misdirect whoever reads the snapshot. */
 	meas_vtotal = hh983_read_meas15(data, DES984_DTG_MEAS_VTOTAL_HI,
-					DES984_DTG_MEAS_VTOTAL_LO);
+					DES984_DTG_MEAS_VTOTAL_LO, NULL);
 	if (meas_vtotal < 0)
 		meas_vtotal = -1;
 
@@ -759,11 +796,11 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 	stream_en = hh983_deser_apb_read8(client, data->deser_addr,
 					  DES984_APB_MAIN_STREAM_EN);
 
-	if (hh983_read_htotals(data, &meas_htotal, &prog_htotal) != 0) {
+	if (hh983_read_htotals(data, &meas_htotal, &prog_htotal, NULL) != 0) {
 		/* One retry: a single failed transfer on a bus this busy is not
 		 * evidence of anything. */
 		msleep(20);
-		unreadable = hh983_read_htotals(data, &meas_htotal, &prog_htotal) != 0;
+		unreadable = hh983_read_htotals(data, &meas_htotal, &prog_htotal, NULL) != 0;
 	}
 
 	if (!force_wedged && !unreadable) {
@@ -852,9 +889,10 @@ static void hh983_guard_check_dtg(struct hh983_data *data)
 	if (!dtg_check || data->guard_stream_cut)
 		return;
 
-	if (hh983_read_htotals(data, &meas, &prog) < 0) {
-		/* A failed read is not evidence of a wedge -- a bus that has
-		 * gone away is the VP-sync guard's problem, not this one. */
+	if (hh983_read_htotals(data, &meas, &prog, NULL) < 0) {
+		/* Only a real I2C failure gets here now -- a bus that has gone
+		 * away is the VP-sync guard's problem, not this one.  A torn
+		 * measurement is no longer an error: see hh983_read_meas15(). */
 		data->guard_dtg_count = 0;
 		return;
 	}
@@ -982,8 +1020,9 @@ static void hh983_des988_check_dtg(struct hh983_data *data)
 		return;
 	}
 
-	if (hh983_read_htotals(data, &meas, &prog) < 0) {
-		/* A failed read is a bus problem, not evidence of a wedge. */
+	if (hh983_read_htotals(data, &meas, &prog, NULL) < 0) {
+		/* A real I2C failure is a bus problem, not evidence of a wedge.
+		 * A torn measurement is not a failure: see hh983_read_meas15(). */
 		data->guard_dtg_count = 0;
 		return;
 	}
@@ -1052,10 +1091,10 @@ static void hh983_des988_check_dtg(struct hh983_data *data)
 	 * "failed" recovery that in fact succeeded a moment later (seen on the
 	 * bench 2026-09-12 after an HPD drop). One retry, then report whatever it
 	 * says - including a genuine failure. */
-	if (hh983_read_htotals(data, &meas, &prog) == 0 &&
+	if (hh983_read_htotals(data, &meas, &prog, NULL) == 0 &&
 	    (meas <= 0 || abs(meas - prog) > dtg_tolerance)) {
 		msleep(700);
-		(void)hh983_read_htotals(data, &meas, &prog);
+		(void)hh983_read_htotals(data, &meas, &prog, NULL);
 	}
 
 	dev_notice(&client->dev,
