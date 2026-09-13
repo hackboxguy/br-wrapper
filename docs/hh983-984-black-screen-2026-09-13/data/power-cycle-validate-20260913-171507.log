@@ -1,0 +1,142 @@
+17:15:07 power-cycle-validate: 20 cycles, soak 2 min, pi=pi@192.168.1.243, tasmota=http://192.168.1.186
+17:15:07 pass = a randomised pattern sequence arrives on the glass (colorimeter only, white >= 800 nits)
+17:15:07 log: /home/adav/extended-disk/git-repos/tmp12/15-6-0OD-black-screen-issue-fable/tmp-docs/fable-prompt-v1-data/power-cycle-validate-20260913-171507.log
+# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,measured_sequence,,result
+17:15:07 
+17:15:07 === cycle 1/20
+17:15:07   sync on the Pi (a write seconds before the cut is still in page cache)
+17:15:08   Tasmota OFF ({"POWER":"OFF"})
+17:15:20   Tasmota ON ({"POWER":"ON"})
+17:15:46   ssh answered after 10s
+17:17:16   uptime 103s
+17:18:05   cycle 1 verdict: PASS  white=ok(1097.581707) blue=ok(128.562537) red=ok(260.628529) black=ok(0.000000) green=ok(708.474320) white=ok(1096.779489)  wedges=0
+17:18:05   soak 2 min, sampling every 45s
+  soak 1 17:19:12 white=ok(1093.113919) black=ok(0.000000) wedges=0
+  soak 1 17:20:08 white=ok(1097.010635) blue=ok(128.495903) wedges=0
+17:20:09   soak done, wedges=0
+  hist 1:  65 2814; 48 2815; 18 2560; 8 3070; 5 2813; 1 3069; 1 2817; 1 2816; 1 2812; 1 2810; 1 2561;
+17:20:12   MEAS_HTOTAL histogram:  65 2814; 48 2815; 18 2560; 8 3070; 5 2813; 1 3069; 1 2817; 1 2816; 1 2812; 1 2810; 1 2561;
+1,2026-09-13T17:20:12+02:00,152,0,0," white=ok(1097.581707) blue=ok(128.562537) red=ok(260.628529) black=ok(0.000000) green=ok(708.474320) white=ok(1096.779489)",,PASS
+17:20:12 
+17:20:12 === cycle 2/20
+17:20:12   sync on the Pi (a write seconds before the cut is still in page cache)
+17:20:15   Tasmota OFF ({"POWER":"OFF"})
+17:20:27   Tasmota ON ({"POWER":"ON"})
+17:20:53   ssh answered after 10s
+17:22:23   uptime 103s
+17:23:17   cycle 2 verdict: PASS  white=ok(1102.277909) green=ok(711.210246) black=ok(0.000000) blue=ok(129.211724) red=ok(261.354169) white=ok(1100.362633)  wedges=0
+17:23:17   soak 2 min, sampling every 45s
+  soak 2 17:24:24 white=ok(1095.147598) black=ok(0.000000) wedges=0
+  soak 2 17:25:32 white=ok(1100.904618) black=ok(0.000000) wedges=0
+17:25:33   soak done, wedges=0
+2,2026-09-13T17:25:33+02:00,157,0,0," white=ok(1102.277909) green=ok(711.210246) black=ok(0.000000) blue=ok(129.211724) red=ok(261.354169) white=ok(1100.362633)",,PASS
+17:25:33 
+17:25:33 === cycle 3/20
+17:25:33   sync on the Pi (a write seconds before the cut is still in page cache)
+17:25:34   Tasmota OFF ({"POWER":"OFF"})
+17:25:46   Tasmota ON ({"POWER":"ON"})
+17:26:07   ssh answered after 10s
+17:27:37   uptime 101s
+17:28:41   cycle 3 verdict: PASS  white=ok(1096.203985) green=ok(707.733834) blue=ok(128.497302) red=ok(259.542121) black=ok(0.000000) white=ok(1096.873171)  wedges=0
+17:28:41   soak 2 min, sampling every 45s
+  soak 3 17:29:37 white=ok(1092.685906) red=ok(257.943907) wedges=0
+  soak 3 17:30:39 white=ok(1089.828385) blue=ok(127.971175) wedges=0
+  soak 3 17:31:35 white=ok(1087.485565) red=ok(254.461635) wedges=0
+17:31:36   soak done, wedges=0
+3,2026-09-13T17:31:36+02:00,165,0,0," white=ok(1096.203985) green=ok(707.733834) blue=ok(128.497302) red=ok(259.542121) black=ok(0.000000) white=ok(1096.873171)",,PASS
+17:31:36 
+17:31:36 === cycle 4/20
+17:31:36   sync on the Pi (a write seconds before the cut is still in page cache)
+17:31:38   Tasmota OFF ({"POWER":"OFF"})
+17:31:50   Tasmota ON ({"POWER":"ON"})
+17:32:12   ssh answered after 10s
+17:33:42   uptime 102s
+17:34:47   cycle 4 verdict: PASS  white=ok(1092.555906) blue=ok(128.134288) red=ok(256.493238) black=ok(0.000000) green=ok(707.280865) white=ok(1090.864782)  wedges=0
+17:34:47   soak 2 min, sampling every 45s
+  soak 4 17:35:43 white=ok(1087.784743) blue=ok(127.757051) wedges=0
+  soak 4 17:36:40 white=ok(1085.074478) green=ok(704.976679) wedges=0
+  soak 4 17:37:42 white=ok(1082.584167) blue=ok(127.381212) wedges=0
+17:37:43   soak done, wedges=0
+4,2026-09-13T17:37:43+02:00,167,0,0," white=ok(1092.555906) blue=ok(128.134288) red=ok(256.493238) black=ok(0.000000) green=ok(707.280865) white=ok(1090.864782)",,PASS
+17:37:44 
+17:37:44 === cycle 5/20
+17:37:44   sync on the Pi (a write seconds before the cut is still in page cache)
+17:37:44   Tasmota OFF ({"POWER":"OFF"})
+17:38:01   Tasmota ON ({"POWER":"ON"})
+17:38:21   ssh answered after 10s
+17:39:52   uptime 101s
+17:41:03   cycle 5 verdict: PASS  white=ok(1090.640696) red=ok(254.169918) green=ok(708.007586) blue=ok(128.166698) black=ok(0.000000) white=ok(1092.049899)  wedges=0
+17:41:03   soak 2 min, sampling every 45s
+  soak 5 17:42:03 white=ok(1086.090651) green=ok(706.376090) wedges=0
+  soak 5 17:43:00 white=ok(1081.910615) red=ok(249.309121) wedges=0
+  soak 5 17:43:56 white=ok(1079.054493) green=ok(704.442148) wedges=0
+17:43:57   soak done, wedges=0
+  hist 5:  70 2814; 51 2815; 10 2560; 7 2813; 4 3070; 2 3071; 2 2816; 2 2812; 1 3069; 1 2810;
+17:43:59   MEAS_HTOTAL histogram:  70 2814; 51 2815; 10 2560; 7 2813; 4 3070; 2 3071; 2 2816; 2 2812; 1 3069; 1 2810;
+5,2026-09-13T17:43:59+02:00,172,0,0," white=ok(1090.640696) red=ok(254.169918) green=ok(708.007586) blue=ok(128.166698) black=ok(0.000000) white=ok(1092.049899)",,PASS
+17:44:00 
+17:44:00 === cycle 6/20
+17:44:00   sync on the Pi (a write seconds before the cut is still in page cache)
+17:44:00   Tasmota OFF ({"POWER":"OFF"})
+17:44:12   Tasmota ON ({"POWER":"ON"})
+17:44:34   ssh answered after 10s
+17:46:04   uptime 102s
+17:46:53   cycle 6 verdict: PASS  white=ok(1081.366761) red=ok(250.109707) green=ok(704.007375) black=ok(0.000000) blue=ok(127.484686) white=ok(1081.147041)  wedges=0
+17:46:53   soak 2 min, sampling every 45s
+  soak 6 17:47:49 white=ok(1078.506207) green=ok(702.970508) wedges=0
+  soak 6 17:48:51 white=ok(1076.303414) red=ok(247.425003) wedges=0
+  soak 6 17:49:47 white=ok(1074.694780) red=ok(246.482966) wedges=0
+17:49:48   soak done, wedges=0
+6,2026-09-13T17:49:48+02:00,150,0,0," white=ok(1081.366761) red=ok(250.109707) green=ok(704.007375) black=ok(0.000000) blue=ok(127.484686) white=ok(1081.147041)",,PASS
+17:49:49 
+17:49:49 === cycle 7/20
+17:49:49   sync on the Pi (a write seconds before the cut is still in page cache)
+17:49:51   Tasmota OFF ({"POWER":"OFF"})
+17:50:06   Tasmota ON ({"POWER":"ON"})
+17:50:27   ssh answered after 10s
+17:51:57   uptime 101s
+17:52:46   cycle 7 verdict: PASS  white=ok(1080.857655) red=ok(250.037519) blue=ok(127.410824) black=ok(0.000000) green=ok(704.528142) white=ok(1081.675731)  wedges=0
+17:52:46   soak 2 min, sampling every 45s
+  soak 7 17:53:41 white=ok(1078.883210) green=ok(703.190228) wedges=0
+  soak 7 17:54:42 white=ok(1076.901535) green=ok(702.819984) wedges=0
+  soak 7 17:55:38 white=ok(1075.733740) red=ok(246.844186) wedges=0
+17:55:39   soak done, wedges=0
+7,2026-09-13T17:55:39+02:00,150,0,0," white=ok(1080.857655) red=ok(250.037519) blue=ok(127.410824) black=ok(0.000000) green=ok(704.528142) white=ok(1081.675731)",,PASS
+17:55:40 
+17:55:40 === cycle 8/20
+17:55:40   sync on the Pi (a write seconds before the cut is still in page cache)
+17:55:40   Tasmota OFF ({"POWER":"OFF"})
+17:55:52   Tasmota ON ({"POWER":"ON"})
+17:56:14   ssh answered after 10s
+17:57:44   uptime 102s
+17:58:38   cycle 8 verdict: PASS  white=ok(1081.382384) green=ok(703.643197) red=ok(249.965316) blue=ok(127.485850) black=ok(0.000000) white=ok(1081.677130)  wedges=0
+17:58:38   soak 2 min, sampling every 45s
+  soak 8 17:59:34 white=ok(1078.735719) blue=ok(127.334163) wedges=0
+  soak 8 18:00:35 white=ok(1076.610985) red=ok(247.641784) wedges=0
+  soak 8 18:01:42 white=ok(1074.925691) black=ok(0.000000) wedges=0
+18:01:43   soak done, wedges=0
+8,2026-09-13T18:01:43+02:00,155,0,0," white=ok(1081.382384) green=ok(703.643197) red=ok(249.965316) blue=ok(127.485850) black=ok(0.000000) white=ok(1081.677130)",,PASS
+18:01:44 
+18:01:44 === cycle 9/20
+18:01:44   sync on the Pi (a write seconds before the cut is still in page cache)
+18:01:44   Tasmota OFF ({"POWER":"OFF"})
+18:01:57   Tasmota ON ({"POWER":"ON"})
+18:02:17   ssh answered after 10s
+18:03:47   uptime 101s
+18:04:42   cycle 9 verdict: PASS  white=ok(1081.600470) blue=ok(127.565309) red=ok(250.109794) green=ok(703.640164) black=ok(0.000000) white=ok(1081.898249)  wedges=0
+18:04:42   soak 2 min, sampling every 45s
+  soak 9 18:05:43 white=ok(1078.886008) red=ok(248.803552) wedges=0
+  soak 9 18:06:50 white=ok(1076.535724) red=ok(247.497312) wedges=0
+18:06:51   soak done, wedges=0
+  hist 9:  76 2814; 49 2815; 8 2560; 6 2813; 4 3071; 3 3070; 2 2812; 1 2816; 1 2811;
+18:06:53   MEAS_HTOTAL histogram:  76 2814; 49 2815; 8 2560; 6 2813; 4 3071; 3 3070; 2 2812; 1 2816; 1 2811;
+9,2026-09-13T18:06:53+02:00,155,0,0," white=ok(1081.600470) blue=ok(127.565309) red=ok(250.109794) green=ok(703.640164) black=ok(0.000000) white=ok(1081.898249)",,PASS
+18:06:54 
+18:06:54 === cycle 10/20
+18:06:54   sync on the Pi (a write seconds before the cut is still in page cache)
+18:06:54   Tasmota OFF ({"POWER":"OFF"})
+18:07:07   Tasmota ON ({"POWER":"ON"})
+18:07:29   ssh answered after 10s
+18:08:59   uptime 102s
+18:09:52   cycle 10 verdict: PASS  white=ok(1087.389205) green=ok(707.264067) black=ok(0.000000) red=ok(251.777447) blue=ok(128.123846) white=ok(1085.104155)  wedges=0
+18:09:52   soak 2 min, sampling every 45s

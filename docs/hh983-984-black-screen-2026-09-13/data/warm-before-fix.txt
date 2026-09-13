@@ -1,0 +1,34 @@
+sh: 1: cannot create /sys/kernel/debug/dynamic_debug/control: Directory nonexistent
+uptime=22 wedges=0
+--- boot log ---
+[    4.557544] hh983-serializer 1-0018: DES STS0=0x01 STS1=0xC1 [FPD4_LOCK PLL_LOCK LOCK]
+[    4.557553] hh983-serializer 1-0018: HH983 initialization successful (mode=0, poll=on, dp_guard, dtg_check)
+[    6.590037] hh983-serializer 1-0018: DP video back (VP_STS=0x01), restoring 984 video stream
+[    6.602312] hh983-serializer 1-0018: DP guard restore: 984 stream_en=0, DTG measured Htotal=4751, 983 Htotal=2816 (DTG wedged)
+[    6.605465] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=4751 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53, 984 stream_en=0 STS0=0x01 STS1=0xC1
+--- measured H total (median-of-3) ---
+  H Total:       2814
+--- 12 raw triples ---
+  2814  msb=0x0a/0x0a stable=yes
+  2814  msb=0x0a/0x0a stable=yes
+  2814  msb=0x0a/0x0a stable=yes
+  2814  msb=0x0a/0x0a stable=yes
+  2815  msb=0x0a/0x0a stable=yes
+  2814  msb=0x0a/0x0a stable=yes
+  2815  msb=0x0a/0x0a stable=yes
+  2814  msb=0x0a/0x0a stable=yes
+  2815  msb=0x0a/0x0b stable=NO
+  2815  msb=0x0a/0x0a stable=yes
+  2815  msb=0x0a/0x0a stable=yes
+  2814  msb=0x0a/0x0a stable=yes
+--- guard debug lines ---
+[    6.602312] hh983-serializer 1-0018: DP guard restore: 984 stream_en=0, DTG measured Htotal=4751, 983 Htotal=2816 (DTG wedged)
+[    6.605465] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=4751 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53, 984 stream_en=0 STS0=0x01 STS1=0xC1
+wedges=0 uptime=42
+=== after the boot-time DTG pulse: does the Pi picture arrive? ===
+  cmd=white    Y= 1103.773 x=0.3035 y=0.3291
+  cmd=red      Y=  265.128 x=0.6853 y=0.3132
+  cmd=green    Y=  708.933 x=0.2242 y=0.7164
+  cmd=blue     Y=  129.341 x=0.1428 y=0.0851
+  cmd=white    Y= 1100.831 x=0.3032 y=0.3290
+wedges=0 uptime=88

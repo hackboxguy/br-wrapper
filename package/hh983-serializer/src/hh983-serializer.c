@@ -13,6 +13,11 @@
  * Mode 0 has done this since the OTS-OLED bring-up; modes 1 and 2 gained it
  * after the failure was reproduced on a 988 (see hh983_des988_check_dtg).
  *
+ * The measurement all three act on is a free-running counter in two registers,
+ * so it is read tear-proof (hh983_read_meas15) and a wedge is only declared on
+ * measurements that agree with each other (hh983_wedge_consistent): a torn read
+ * of it cost the 15.6" 2K5 panel its picture every 40 s until 2026-09-13.
+ *
  * Author: Albert David
  */
 
@@ -116,6 +121,30 @@ static int dtg_recover = 1;
 module_param(dtg_recover, int, 0644);
 MODULE_PARM_DESC(dtg_recover, "Modes 0, 1 and 2: 1=pulse the DTG to recover a detected wedge (default), 0=detect and log only");
 
+/*
+ * Mode 0: how a confirmed wedge is recovered.
+ *
+ * 0 (default) cuts the 984 main stream, pulses the DTG reset, settles and
+ * re-enables -- the order the OTS-OLED bring-up validated with a colorimeter,
+ * and the only one tried on that panel.
+ *
+ * 1 cuts the stream, issues a 984 digital reset (main page 0x01 = 0x01, the
+ * same action as the Stream Deck "Sync Video" button), waits for the FPD-Link
+ * to re-lock, re-enables, and falls back to a pulse once if the measurement is
+ * still wrong.  That is for panels where the pulse itself is the problem: on
+ * the 15.6" 2K5 a pulse on a healthy stream dropped the panel into its TDDI
+ * self test four times out of five, and pulsing a genuine mid-session wedge on
+ * 2026-09-13 left the measurement correct and the panel dark, while one digital
+ * reset fixed the measurement and the picture together.
+ *
+ * Stays 0 by default: the digital reset has never been tried on the OTS-OLED,
+ * which is the panel that black-latches, and that part is not on this bench.
+ * Set it per display type -- see /etc/modprobe.d/hh983.conf on the 15.6-2k5 rig.
+ */
+static int wedge_recovery;
+module_param(wedge_recovery, int, 0644);
+MODULE_PARM_DESC(wedge_recovery, "Mode 0: 0=cut stream, pulse the DTG, enable (default, OLED-validated); 1=cut stream, 984 digital reset, wait for lock, enable (panels that lose the eDP stream on a DTG pulse, e.g. 15.6-2k5)");
+
 /* Mode 0 (983+984) OLED-OTS touch controller routing.
  *
  * On the OLED-OTS 17.3 board the HX8530 TDDI touch controller is on the
@@ -186,6 +215,9 @@ MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984
 #define DES984_GP_STATUS_1       0x54  /* [0]=LOCK [6]=FPDRX_PLL_LOCK (no SIG_DET) */
 #define DES984_INTB_VALUE        0x81
 /* 984 local display timing generator and DP TX (same indirect/APB scheme as 983) */
+#define DES984_RESET_CTL         0x01  /* [0] digital reset, self-clearing, registers preserved */
+#define DES984_DIGITAL_RESET     0x01
+#define DES984_LOCK_WAIT_MS      1000  /* how long to wait for FPD-Link re-lock after one */
 #define DES984_IND_PAGE_DTG      0x14  /* DTG page (script byte 0x50) */
 #define DES984_DTG_P0_CTL        0x32  /* Port 0 DTG control */
 #define DES984_DTG_P1_CTL        0x62  /* Port 1 DTG control */
@@ -205,6 +237,8 @@ MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984
 #define DP_GUARD_LOSS_POLLS      2     /* consecutive unsynced polls before cutting the stream */
 #define DP_GUARD_RESYNC_POLLS    2     /* consecutive synced polls before restoring the stream */
 #define DP_GUARD_WEDGE_POLLS     2     /* consecutive out-of-tolerance polls before calling it a wedge */
+#define DP_GUARD_MEAS_TRIES      3     /* attempts at an untorn read of a measured 15-bit counter */
+#define DP_GUARD_MEAS_SAMPLES    5     /* measurements that must all be wrong before a poll counts as bad */
 
 /* 984 configuration values */
 #define DES984_ENABLE_PASSTHROUGH 0xC9  /* GENERAL_CFG default 0xC1 | bit[3] I2C_PASS_THROUGH */
@@ -260,6 +294,7 @@ struct hh983_data {
 	/* Mode 0 DTG-wedge check (video up, DTG measurement wrong) */
 	bool guard_wedged;           /* currently in the wedged state */
 	int guard_dtg_count;         /* consecutive out-of-tolerance polls */
+	int guard_dtg_first;         /* first measurement of that run, for the plausibility check */
 	unsigned long guard_wedge_at;/* jiffies of the last wedge restore */
 	bool guard_wedge_armed;      /* guard_wedge_at holds a real timestamp */
 };
@@ -533,28 +568,182 @@ static void hh983_guard_cut_stream(struct hh983_data *data)
 		data->guard_stream_cut = true;
 }
 
-/* Read the 984's measured input line length and the 983's programmed output
- * line length, the pair the guard compares to decide whether the 984 DTG has
- * wedged.  Returns 0 with both filled in, or a negative value if any of the
- * four register reads failed.
+/* Read one of the deserializer's measured 15-bit DTG counters without tearing.
+ *
+ * MEAS_HTOTAL and MEAS_VTOTAL are two plain read-only bytes each (SNLS726
+ * 7.6.2.16.29/30): no latch, no shadow register, and the counter keeps
+ * updating between the two I2C transactions it takes to fetch them.  When the
+ * live value happens to sit on a 256 boundary that is a real problem: on the
+ * 15.6" 2K5 profile the programmed H total is 2816 = 0x0B00 and the measured
+ * one jitters 2811..2817, so it crosses the boundary many times a second and
+ * about 15 % of plain MSB+LSB reads came back as 2560 (fresh MSB, stale LSB)
+ * or 3070 (stale MSB, fresh LSB).  Two of those in a row looked exactly like a
+ * wedged DTG, and the guard spent a DTG reset pulse on a healthy pipeline
+ * every 40 s -- which throws that panel into its own BIST four times out of
+ * five (2026-09-13 analysis).  Every other profile on the bench is 12 px or
+ * more from a boundary, which is why only this one ever showed it.
+ *
+ * Re-reading the MSB after the LSB catches the plain case: if the counter
+ * crossed a byte boundary and stayed there, the two MSB reads disagree and the
+ * attempt is retried.  It does NOT catch a counter that crosses and comes
+ * straight back inside the ~3 ms the triple takes -- both MSB reads then see
+ * 0x0A while the LSB read sees the 0x00 of 0x0B00, which is self-consistent
+ * and wrong by exactly 256.  That is not a corner case on a value that
+ * straddles the boundary continuously: it still left about one read in twenty
+ * torn, enough to pulse the DTG twice in 83 s on 2026-09-13.  Nothing a single
+ * read can look at distinguishes that result from a genuine 2560, so the
+ * callers that act on it confirm with hh983_dtg_confirmed_bad() instead.
+ *
+ * When all three attempts tear, this used to give up and return an error, and
+ * that was a bug with the failure mode exactly backwards.  A *wedged* DTG is
+ * precisely the case where the measurement moves hundreds of px between reads,
+ * so the MSB rarely holds still, so every attempt tore, so the guard decided it
+ * could not read the register and did nothing -- the more wedged the part, the
+ * blinder the guard.  On 2026-09-13 a genuine wedge measuring 4495 was declined
+ * at boot for that reason and was still wedged, unnoticed, 95 s later.
+ *
+ * A torn read is a measurement, not a failure.  Tearing can only move a value
+ * within its own 256-block or into the neighbouring one, so it can never make a
+ * wedged value look healthy and never makes a healthy value look more than
+ * ~256 px wrong.  The last raw pair is therefore returned as a value and the
+ * caller is told, through *torn, that it may be off by a multiple of 256;
+ * a negative return is now reserved for a real I2C failure.
+ *
+ * Returns the 15-bit value, or -EIO on an I2C failure.  *torn (optional) is set
+ * when no attempt produced two matching MSB reads.
  */
-static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog)
+static int hh983_read_meas15(struct hh983_data *data, u8 hi_off, u8 lo_off,
+			     bool *torn)
 {
 	struct i2c_client *client = data->client;
-	int meas_hi, meas_lo, prog_hi, prog_lo;
+	int attempt, hi = 0, lo = 0, hi_again;
 
-	meas_hi = hh983_deser_ind_read(client, data->deser_addr,
-				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_HI);
-	meas_lo = hh983_deser_ind_read(client, data->deser_addr,
-				       DES984_IND_PAGE_DTG, DES984_DTG_MEAS_HTOTAL_LO);
+	if (torn)
+		*torn = false;
+
+	for (attempt = 0; attempt < DP_GUARD_MEAS_TRIES; attempt++) {
+		hi = hh983_deser_ind_read(client, data->deser_addr,
+					  DES984_IND_PAGE_DTG, hi_off);
+		lo = hh983_deser_ind_read(client, data->deser_addr,
+					  DES984_IND_PAGE_DTG, lo_off);
+		hi_again = hh983_deser_ind_read(client, data->deser_addr,
+						DES984_IND_PAGE_DTG, hi_off);
+		if (hi < 0 || lo < 0 || hi_again < 0)
+			return -EIO;
+		if ((hi & 0x7F) == (hi_again & 0x7F))
+			return ((hi & 0x7F) << 8) | lo;
+	}
+
+	if (torn)
+		*torn = true;
+	return ((hi & 0x7F) << 8) | lo;
+}
+
+/* Do two consecutive out-of-tolerance measurements describe the same fault?
+ *
+ * A wedged DTG holds a wrong value on one side of the programmed one: the
+ * OTS-OLED sat above a programmed 3440 at 4415..5313, the 988 above 2028 at
+ * 3730..4456, and this bench's own 984 above 2816 at 4201..5110 after a warm
+ * reboot on 2026-09-13.  A torn read lands instead on whichever side the stale
+ * byte came from -- 2560 below 2816, 3070 above it -- so it alternates, and
+ * requiring the pair to fall on the same side rejects it without the code
+ * having to know anything about byte boundaries.
+ *
+ * Deliberately no "and the two agree within N pixels" on top of that.  The
+ * measurement of a real wedge is not steady: the 150 reads taken during the
+ * 2026-09-13 one were spread over 909 px with consecutive samples hundreds of
+ * px apart, so a 64 px agreement rule stretched detection from two polls to
+ * roughly ten -- past the ~10 s at which the OTS-OLED latches black, which is
+ * the deadline this check exists to meet.  Torn reads are kept out by
+ * hh983_read_meas15(), where the problem actually is; this is only here to
+ * stop an alternating artefact from pairing up with itself.
+ *
+ * Both arguments are known to be outside dtg_tolerance, so neither equals
+ * prog and the side test is unambiguous.
+ */
+static bool hh983_wedge_consistent(int meas, int prev, int prog)
+{
+	return (meas > prog) == (prev > prog);
+}
+
+/* Read the 984's measured input line length and the 983's programmed output
+ * line length, the pair the guard compares to decide whether the 984 DTG has
+ * wedged.  Returns 0 with both filled in, or a negative value only if an I2C
+ * transfer failed; a torn measurement is still a measurement and is reported
+ * through *torn (optional) rather than as an error.
+ *
+ * Only the measured value needs the tear-proof read: the programmed pair is
+ * static configuration in the 983's VP, not a running counter.
+ */
+static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog,
+			      bool *torn)
+{
+	struct i2c_client *client = data->client;
+	int meas_htotal, prog_hi, prog_lo;
+
+	meas_htotal = hh983_read_meas15(data, DES984_DTG_MEAS_HTOTAL_HI,
+					DES984_DTG_MEAS_HTOTAL_LO, torn);
 	prog_lo = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_LO);
 	prog_hi = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_H_TOTAL_HI);
-	if (meas_hi < 0 || meas_lo < 0 || prog_lo < 0 || prog_hi < 0)
+	if (meas_htotal < 0 || prog_lo < 0 || prog_hi < 0)
 		return -EIO;
 
-	*meas = ((meas_hi & 0x7F) << 8) | meas_lo;
+	*meas = meas_htotal;
 	*prog = (prog_hi << 8) | prog_lo;
 	return 0;
+}
+
+/* Confirm that the DTG measurement is really wrong before a poll acts on it.
+ *
+ * One read is not enough even after hh983_read_meas15(), and the bench proved
+ * it on 2026-09-13: two polls read exactly 2560 against a programmed 2816, the
+ * guard pulsed the DTG twice inside 83 s, and that is what put the panel into
+ * its own BIST.  See hh983_read_meas15() for why a single read cannot tell a
+ * bounced boundary crossing from a genuine 2560.
+ *
+ * Another look can.  A tear is an accident of timing that most reads do not
+ * have, so further samples land back on the true value almost at once; a
+ * wedged DTG is out of tolerance on every one of them and on the same side,
+ * however much it wanders (4201..5110 against 2816 on this bench after a warm
+ * reboot, 4415..5313 against 3440 on the OTS-OLED, 3730..4456 against 2028 on
+ * the 988).
+ *
+ * The samples are deliberately *raw*: a torn one counts like any other, and
+ * only a real I2C failure aborts.  That is the whole point, because tearing
+ * cannot cross the two cases.  With a healthy 2816 a torn sample is 2560
+ * (below) or 3070 (above), so five samples that are all out of tolerance AND
+ * all on the same side would need five tears of the same kind in a row: at the
+ * ~15 % tear rate measured on this rig that is under 1e-4 per poll, and the
+ * two-poll debounce squares it.  With a wedged 4500 every sample is far above
+ * 2816 whatever tearing does to it, because a tear only moves a value inside
+ * its own 256-block or the neighbouring one.  Demanding untorn samples here
+ * instead is what blinded the guard to real wedges before 2026-09-13.
+ *
+ * So a real wedge is still declared on the poll it always was, which is what
+ * keeps the response inside the ~10 s the OTS-OLED takes to latch black.
+ *
+ * Only the suspicious path pays: a healthy pipeline returns on the first extra
+ * sample, and a first read inside tolerance never gets here at all.
+ */
+static bool hh983_dtg_confirmed_bad(struct hh983_data *data, int first, int prog)
+{
+	struct i2c_client *client = data->client;
+	bool above = first > prog;
+	int i, meas = 0, meas_prog = 0;
+
+	for (i = 1; i < DP_GUARD_MEAS_SAMPLES; i++) {
+		if (hh983_read_htotals(data, &meas, &meas_prog, NULL) != 0) {
+			dev_warn_ratelimited(&client->dev,
+					     "DP guard: I2C failure while confirming a DTG measurement, not deciding\n");
+			return false;
+		}
+		if (abs(meas - meas_prog) <= dtg_tolerance)
+			return false;
+		if ((meas > meas_prog) != above)
+			return false;
+	}
+
+	return true;
 }
 
 /*
@@ -576,15 +765,15 @@ static int hh983_read_htotals(struct hh983_data *data, int *meas, int *prog)
 static void hh983_guard_wedge_snapshot(struct hh983_data *data, int meas, int prog)
 {
 	struct i2c_client *client = data->client;
-	int mv_hi, mv_lo, meas_vtotal = -1;
+	int meas_vtotal;
 	int vp_sts, ser_sts, stream_en, des_sts0, des_sts1;
 
-	mv_hi = hh983_deser_ind_read(client, data->deser_addr,
-				     DES984_IND_PAGE_DTG, DES984_DTG_MEAS_VTOTAL_HI);
-	mv_lo = hh983_deser_ind_read(client, data->deser_addr,
-				     DES984_IND_PAGE_DTG, DES984_DTG_MEAS_VTOTAL_LO);
-	if (mv_hi >= 0 && mv_lo >= 0)
-		meas_vtotal = ((mv_hi & 0x7F) << 8) | mv_lo;
+	/* Same counter, same tearing: V total is only logged, never decided on,
+	 * but a torn one here would misdirect whoever reads the snapshot. */
+	meas_vtotal = hh983_read_meas15(data, DES984_DTG_MEAS_VTOTAL_HI,
+					DES984_DTG_MEAS_VTOTAL_LO, NULL);
+	if (meas_vtotal < 0)
+		meas_vtotal = -1;
 
 	vp_sts    = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_STS);
 	ser_sts   = hh983_read_reg(client, SER_GENERAL_STS);
@@ -597,6 +786,56 @@ static void hh983_guard_wedge_snapshot(struct hh983_data *data, int meas, int pr
 		   "DP guard wedge snapshot: 984 measured Htot=%d Vtot=%d, 983 programmed Htot=%d, "
 		   "983 VP_STS=0x%02X GENERAL_STS=0x%02X, 984 stream_en=%d STS0=0x%02X STS1=0x%02X\n",
 		   meas, meas_vtotal, prog, vp_sts, ser_sts, stream_en, des_sts0, des_sts1);
+}
+
+/* Mode 0 wedge recovery by 984 digital reset (wedge_recovery=1).
+ *
+ * Main page 0x01 bit 0 is self-clearing and leaves the configuration registers
+ * alone -- the analysis session diffed the 984's main page either side of one
+ * and only the clear-on-read status bits moved -- so the driver's GPIO, INTB and
+ * pass-through setup survives and does not need reapplying.  What it does do is
+ * re-initialise the output pipeline and re-train the eDP link to the panel,
+ * which is why the Stream Deck "Sync Video" button (the same write) brings this
+ * panel's picture back.
+ *
+ * Called with the main stream already cut.  Waits for the FPD-Link lock rather
+ * than a fixed delay, then re-measures: returns true only if the DTG is back
+ * inside tolerance, so the caller can fall back to a pulse when it is not.
+ */
+static bool hh983_guard_digital_reset(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int waited, sts1, meas = -1, prog = -1;
+
+	if (hh983_write_deser_reg(client, data->deser_addr, DES984_RESET_CTL,
+				  DES984_DIGITAL_RESET) < 0)
+		return false;
+
+	/* waited counts the sleeps already taken when the loop body starts, so
+	 * the elapsed time at the break is waited + 50, not waited -- which is
+	 * why this used to report a lock acquired on the first poll as
+	 * "after 0 ms". */
+	for (waited = 0; waited < DES984_LOCK_WAIT_MS; waited += 50) {
+		msleep(50);
+		sts1 = hh983_read_deser_reg(client, data->deser_addr,
+					    DES984_GP_STATUS_1);
+		if (sts1 >= 0 && (sts1 & 0x01))
+			break;
+	}
+
+	/* The DTG reads 0 for a moment after the reset while it re-locks onto
+	 * the incoming stream; measuring straight away would report a failure
+	 * that fixes itself. */
+	msleep(200);
+
+	if (hh983_read_htotals(data, &meas, &prog, NULL) != 0)
+		return false;
+
+	dev_info(&client->dev,
+		 "DP guard restore: 984 digital reset after %d ms, DTG measured Htotal=%d, 983 Htotal=%d\n",
+		 waited + 50, meas, prog);
+
+	return abs(meas - prog) <= dtg_tolerance;
 }
 
 /* Mode 0 DP guard: bring the 984 output back after the 983 VP has resynced.
@@ -634,15 +873,27 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 	stream_en = hh983_deser_apb_read8(client, data->deser_addr,
 					  DES984_APB_MAIN_STREAM_EN);
 
-	if (hh983_read_htotals(data, &meas_htotal, &prog_htotal) != 0) {
+	if (hh983_read_htotals(data, &meas_htotal, &prog_htotal, NULL) != 0) {
 		/* One retry: a single failed transfer on a bus this busy is not
 		 * evidence of anything. */
 		msleep(20);
-		unreadable = hh983_read_htotals(data, &meas_htotal, &prog_htotal) != 0;
+		unreadable = hh983_read_htotals(data, &meas_htotal, &prog_htotal, NULL) != 0;
 	}
 
-	if (!force_wedged && !unreadable)
+	if (!force_wedged && !unreadable) {
 		wedged = abs(meas_htotal - prog_htotal) > dtg_tolerance;
+		/* This path decides on one measurement, and at boot it is the
+		 * path that usually runs: on 15.6-2k5 it pulsed 2 s after every
+		 * probe, on a torn 2560.  A pulse costs that panel its picture
+		 * four times out of five, so it has to pass the same
+		 * confirmation the periodic check applies. */
+		if (wedged && !hh983_dtg_confirmed_bad(data, meas_htotal, prog_htotal)) {
+			dev_info(&client->dev,
+				 "DP guard restore: DTG measured %d not confirmed by further reads (programmed %d), no pulse\n",
+				 meas_htotal, prog_htotal);
+			wedged = false;
+		}
+	}
 
 	if (unreadable && !force_wedged) {
 		dev_info(&client->dev,
@@ -670,15 +921,26 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 					DES984_APB_MAIN_STREAM_EN, 0);
 
 	if (wedged) {
-		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
-				      DES984_DTG_P0_CTL, DES984_DTG_HOLD_RESET);
-		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
-				      DES984_DTG_P1_CTL, DES984_DTG_HOLD_RESET);
-		msleep(200);
-		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
-				      DES984_DTG_P0_CTL, DES984_DTG_RELEASE);
-		hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
-				      DES984_DTG_P1_CTL, DES984_DTG_RELEASE);
+		bool fixed = false;
+
+		if (wedge_recovery == 1) {
+			fixed = hh983_guard_digital_reset(data);
+			if (!fixed)
+				dev_notice(&client->dev,
+					   "DP guard restore: 984 digital reset did not clear the wedge, falling back to a DTG pulse\n");
+		}
+
+		if (!fixed) {
+			hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+					      DES984_DTG_P0_CTL, DES984_DTG_HOLD_RESET);
+			hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+					      DES984_DTG_P1_CTL, DES984_DTG_HOLD_RESET);
+			msleep(200);
+			hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+					      DES984_DTG_P0_CTL, DES984_DTG_RELEASE);
+			hh983_deser_ind_write(client, data->deser_addr, DES984_IND_PAGE_DTG,
+					      DES984_DTG_P1_CTL, DES984_DTG_RELEASE);
+		}
 	}
 	msleep(500);
 
@@ -715,9 +977,10 @@ static void hh983_guard_check_dtg(struct hh983_data *data)
 	if (!dtg_check || data->guard_stream_cut)
 		return;
 
-	if (hh983_read_htotals(data, &meas, &prog) < 0) {
-		/* A failed read is not evidence of a wedge -- a bus that has
-		 * gone away is the VP-sync guard's problem, not this one. */
+	if (hh983_read_htotals(data, &meas, &prog, NULL) < 0) {
+		/* Only a real I2C failure gets here now -- a bus that has gone
+		 * away is the VP-sync guard's problem, not this one.  A torn
+		 * measurement is no longer an error: see hh983_read_meas15(). */
 		data->guard_dtg_count = 0;
 		return;
 	}
@@ -727,6 +990,35 @@ static void hh983_guard_check_dtg(struct hh983_data *data)
 		data->guard_wedged = false;
 		return;
 	}
+
+	/* One out-of-tolerance read is not evidence: confirm it with more samples
+	 * before this poll counts against the debounce at all. */
+	if (!hh983_dtg_confirmed_bad(data, meas, prog)) {
+		dev_dbg(&client->dev,
+			"DP guard: out-of-tolerance %d (programmed %d) not confirmed, torn read\n",
+			meas, prog);
+		data->guard_dtg_count = 0;
+		return;
+	}
+
+	/* Out of tolerance.  A run of bad polls only counts as a wedge while the
+	 * polls stay on the same side of the programmed value
+	 * (hh983_wedge_consistent): one that does not starts a new run instead of
+	 * completing the old one, so an artefact that alternates sides never
+	 * reaches DP_GUARD_WEDGE_POLLS, while a real wedge -- which sits on one
+	 * side however much it wanders -- still fires on the second poll.
+	 */
+	if (data->guard_dtg_count > 0 &&
+	    !hh983_wedge_consistent(meas, data->guard_dtg_first, prog)) {
+		dev_dbg(&client->dev,
+			"DP guard: out-of-tolerance %d does not agree with %d (programmed %d), not a wedge\n",
+			meas, data->guard_dtg_first, prog);
+		data->guard_dtg_first = meas;
+		data->guard_dtg_count = 1;
+		return;
+	}
+	if (data->guard_dtg_count == 0)
+		data->guard_dtg_first = meas;
 
 	data->guard_dtg_count++;
 	if (data->guard_dtg_count < DP_GUARD_WEDGE_POLLS)
@@ -816,8 +1108,9 @@ static void hh983_des988_check_dtg(struct hh983_data *data)
 		return;
 	}
 
-	if (hh983_read_htotals(data, &meas, &prog) < 0) {
-		/* A failed read is a bus problem, not evidence of a wedge. */
+	if (hh983_read_htotals(data, &meas, &prog, NULL) < 0) {
+		/* A real I2C failure is a bus problem, not evidence of a wedge.
+		 * A torn measurement is not a failure: see hh983_read_meas15(). */
 		data->guard_dtg_count = 0;
 		return;
 	}
@@ -838,6 +1131,19 @@ static void hh983_des988_check_dtg(struct hh983_data *data)
 	if (abs(meas - prog) <= dtg_tolerance) {
 		data->guard_dtg_count = 0;
 		data->guard_wedged = false;
+		return;
+	}
+
+	/* Same confirmation mode 0 uses: one out-of-tolerance read is not
+	 * evidence.  The 988 path is exposed to the same tearing -- the 3x-qvue
+	 * profile programs an H total of 5628, four pixels below 0x1600 -- and
+	 * the shared hh983_read_meas15() cannot remove it on its own.
+	 * Code-reviewed, not bench-tested: no 988 rig was attached. */
+	if (!hh983_dtg_confirmed_bad(data, meas, prog)) {
+		dev_dbg(&client->dev,
+			"DTG guard (mode %d): out-of-tolerance %d (programmed %d) not confirmed, torn read\n",
+			data->mode, meas, prog);
+		data->guard_dtg_count = 0;
 		return;
 	}
 
@@ -886,10 +1192,10 @@ static void hh983_des988_check_dtg(struct hh983_data *data)
 	 * "failed" recovery that in fact succeeded a moment later (seen on the
 	 * bench 2026-09-12 after an HPD drop). One retry, then report whatever it
 	 * says - including a genuine failure. */
-	if (hh983_read_htotals(data, &meas, &prog) == 0 &&
+	if (hh983_read_htotals(data, &meas, &prog, NULL) == 0 &&
 	    (meas <= 0 || abs(meas - prog) > dtg_tolerance)) {
 		msleep(700);
-		(void)hh983_read_htotals(data, &meas, &prog);
+		(void)hh983_read_htotals(data, &meas, &prog, NULL);
 	}
 
 	dev_notice(&client->dev,

@@ -1,0 +1,30 @@
+=== injected wedge, wedge_recovery=0, 20:19:26
+poll_interval_ms=0 (expect 0)
+wedge_recovery=1
+wedge_recovery now=0
+--- DTG with the guard asleep ---
+  H total = 4207
+  H total = 4852
+  H total = 4464
+--- boot log (guard should have done nothing) ---
+[    4.569032] hh983-serializer 1-0018: Mode 0 (983+984) initialization complete
+[    4.569144] hh983-serializer 1-0018: SER GENERAL_STS=0x53 [RX_LOCK LINK_LOST LINK_DET]
+[    4.569380] hh983-serializer 1-0018: DES STS0=0x01 STS1=0xC1 [FPD4_LOCK PLL_LOCK LOCK]
+[    4.569386] hh983-serializer 1-0018: HH983 initialization successful (mode=0, poll=off, dp_guard, dtg_check)
+--- panel before the guard runs ---
+  before:white         Y=    0.000 x=0.3333 y=0.3333
+  before:red           Y=    0.000 x=0.3333 y=0.3333
+--- releasing the guard: poll_interval_ms=1000 at 20:20:04 ---
+--- what the guard did (first 6 s) ---
+[  104.284693] hh983-serializer 1-0018: DP video back (VP_STS=0x01), restoring 984 video stream
+[  104.303454] hh983-serializer 1-0018: DP guard restore: 984 stream_en=0, DTG measured Htotal=4341, 983 Htotal=2816 (DTG wedged)
+[  104.306623] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=4341 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53, 984 stream_en=0 STS0=0x01 STS1=0xC1
+  wedges=0
+  H total after = 2814
+--- panel after the guard ran ---
+  after:white          Y= 1100.197 x=0.3027 y=0.3289
+  after:red            Y=  262.444 x=0.6853 y=0.3131
+  after:green          Y=  708.405 x=0.2250 y=0.7159
+  after:blue           Y=  128.897 x=0.1427 y=0.0849
+  after:white          Y= 1097.553 x=0.3024 y=0.3287
+=== end 20:20:41

@@ -1,0 +1,30 @@
+=== does anything write module options per display type? ===
+/home/pi/micropanel/usr/bin/hh983-config.sh
+/home/pi/micropanel/usr/bin/pi-config-txt.sh
+--- hh983.conf writers ---
+/home/pi/micropanel/usr/bin/hh983-config.sh:2:# Read or set hh983-serializer config_mode via /etc/modprobe.d/hh983.conf
+/home/pi/micropanel/usr/bin/hh983-config.sh:5:#   hh983-config.sh                    # Output current deserializer type
+/home/pi/micropanel/usr/bin/hh983-config.sh:6:#   hh983-config.sh --type=988         # Set config_mode=1 (983+988)
+/home/pi/micropanel/usr/bin/hh983-config.sh:7:#   hh983-config.sh --type=984         # Set config_mode=0 (983+984)
+/home/pi/micropanel/usr/bin/hh983-config.sh:8:#   hh983-config.sh --type=988-video   # Set config_mode=2 (983+988, video only)
+/home/pi/micropanel/usr/bin/hh983-config.sh:10:HH983_CONF="/etc/modprobe.d/hh983.conf"
+/home/pi/micropanel/usr/bin/hh983-config.sh:35:# Write mode: update hh983.conf and reboot
+/home/pi/micropanel/usr/bin/hh983-reinit.sh:4:# Reads current config_mode from /etc/modprobe.d/hh983.conf and calls
+/home/pi/micropanel/usr/bin/hh983-reinit.sh:14:HH983_CONF="/etc/modprobe.d/hh983.conf"
+/home/pi/micropanel/usr/bin/hh983-reinit.sh:40:# Determine current mode from hh983.conf
+--- what hh983-config.sh does with options ---
+2:# Read or set hh983-serializer config_mode via /etc/modprobe.d/hh983.conf
+10:HH983_CONF="/etc/modprobe.d/hh983.conf"
+38:        echo "options hh983-serializer config_mode=1" > "$HH983_CONF"
+41:        echo "options hh983-serializer config_mode=0" > "$HH983_CONF"
+46:        echo "options hh983-serializer config_mode=2" > "$HH983_CONF"
+
+=== 984 main page 0x00..0x5F, before and after a digital reset (poll paused) ===
+--- registers that changed ---
+< 09:0x40
+> 09:0x00
+< 53:0x01
+< 54:0xc1
+> 53:0x81
+> 54:0xc5
+poll restored

@@ -1,0 +1,80 @@
+=== EXP2 start 16:06:46  wedges=25 tol=32
+pre: 16:06:46 Y=1029.059899 nits
+poll re-enabled at 16:06:48
+[1] 16:06:48 Y=1028.992916 nits wedges=25
+[2] 16:06:51 Y=1028.663475 nits wedges=25
+[3] 16:06:54 Y=1028.205390 nits wedges=25
+[4] 16:06:57 Y=1027.875949 nits wedges=25
+[5] 16:07:00 Y=1027.333289 nits wedges=25
+[6] 16:07:08 Y=1026.942186 nits wedges=25
+[7] 16:07:11 Y=1026.612745 nits wedges=25
+[8] 16:07:13 Y=1026.258609 nits wedges=25
+[9] 16:07:16 Y=1025.941440 nits wedges=25
+[10] 16:07:19 Y=593.460207 nits wedges=26
+[11] 16:07:28 Y=309.391321 nits wedges=26
+[12] 16:07:36 Y=194.032598 nits wedges=26
+[13] 16:07:39 Y=1023.908455 nits wedges=26
+[14] 16:07:42 Y=0.791968 nits wedges=26
+[15] 16:07:46 Y=1022.736776 nits wedges=26
+[16]  Y= nits wedges=26
+[17] 16:08:02 Y=193.923327 nits wedges=26
+[18] 16:08:05 Y=0.790167 nits wedges=26
+[19] 16:08:14 Y=223.857183 nits wedges=26
+[20] 16:08:22 Y=458.249917 nits wedges=26
+[21] 16:08:25 Y=222.583546 nits wedges=26
+[22] 16:08:28 Y=0.790124 nits wedges=26
+[23] 16:08:37 Y=1018.593029 nits wedges=27
+[24] 16:08:40 Y=584.709265 nits wedges=27
+[25] 16:08:43 Y=215.193902 nits wedges=27
+[26] 16:08:46 Y=233.624933 nits wedges=27
+[27] 16:08:49 Y=301.584004 nits wedges=27
+[28] 16:08:52 Y=193.808737 nits wedges=27
+[29] 16:08:54 Y=1017.713977 nits wedges=27
+[30] 16:08:57 Y=0.790257 nits wedges=27
+[31] 16:09:01 Y=1016.725503 nits wedges=27
+[32] 16:09:04 Y=581.432468 nits wedges=27
+[33] 16:09:08 Y=457.597834 nits wedges=27
+[34] 16:09:15 Y=1015.834180 nits wedges=27
+[35] 16:09:23 Y=1014.741756 nits wedges=27
+[36] 16:09:30 Y=579.678366 nits wedges=27
+[37] 16:09:33 Y=215.096903 nits wedges=27
+[38] 16:09:36 Y=233.327138 nits wedges=27
+[39] 16:09:39 Y=236.367802 nits wedges=27
+[40] 16:09:42 Y=0.788895 nits wedges=27
+[41] 16:09:52 Y=1013.344586 nits wedges=27
+[42] 16:09:55 Y=577.566086 nits wedges=27
+[43] 16:09:58 Y=214.950666 nits wedges=27
+[44] 16:10:01 Y=233.150885 nits wedges=27
+[45] 16:10:04 Y=456.750276 nits wedges=27
+=== dmesg since re-enable:
+[Sun Sep 13 15:53:42 2026] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2815, 983 Htotal=2816 (DTG wedged)
+[Sun Sep 13 15:55:18 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=2560 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[Sun Sep 13 15:55:18 2026] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 2560, programmed 2816), restoring
+[Sun Sep 13 15:55:18 2026] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2815, 983 Htotal=2816 (DTG wedged)
+[Sun Sep 13 15:57:08 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=2560 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[Sun Sep 13 15:57:08 2026] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 2560, programmed 2816), restoring
+[Sun Sep 13 15:57:08 2026] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2814, 983 Htotal=2816 (DTG wedged)
+[Sun Sep 13 15:58:13 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=2560 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[Sun Sep 13 15:58:13 2026] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 2560, programmed 2816), restoring
+[Sun Sep 13 15:58:13 2026] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2815, 983 Htotal=2816 (DTG wedged)
+[Sun Sep 13 15:58:23 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=3070 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[Sun Sep 13 15:59:03 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=3071 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[Sun Sep 13 15:59:03 2026] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 3071, programmed 2816), restoring
+[Sun Sep 13 15:59:03 2026] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2814, 983 Htotal=2816 (DTG wedged)
+[Sun Sep 13 16:00:23 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=3071 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[Sun Sep 13 16:00:23 2026] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 3071, programmed 2816), restoring
+[Sun Sep 13 16:00:23 2026] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=3070, 983 Htotal=2816 (DTG wedged)
+[Sun Sep 13 16:00:44 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=3070 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[Sun Sep 13 16:07:19 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=2560 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[Sun Sep 13 16:07:19 2026] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 2560, programmed 2816), restoring
+[Sun Sep 13 16:07:19 2026] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2815, 983 Htotal=2816 (DTG wedged)
+[Sun Sep 13 16:08:38 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=3071 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53, 984 stream_en=1 STS0=0x01 STS1=0xC1
+[Sun Sep 13 16:08:38 2026] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 3071, programmed 2816), restoring
+[Sun Sep 13 16:08:38 2026] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2814, 983 Htotal=2816 (DTG wedged)
+[Sun Sep 13 16:09:00 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=3070 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53, 984 stream_en=1 STS0=0x01 STS1=0xC1
+final: Y=193.547909  wedges=27
+=== mitigation: dtg_tolerance=600 (runtime only)
+600
+=== EXP2 end 16:10:08
+
+[exited with code 0]

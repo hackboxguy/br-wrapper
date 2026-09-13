@@ -1,0 +1,22 @@
+=== EXP3 start 16:10:59 poll=1000 tol=600 wedges=27 app=pattern-generator
+pre-reset      :  | 16:11:00 Y=1008.8 | 16:11:02 Y=223.3 | 16:11:14 Y=214.9 | 16:11:16 Y=233.0 | 16:11:18 Y=455.4 -> NOT-STEADY(BIST?)
+after 984 reset:  | 16:11:24 Y=1006.9 | 16:11:26 Y=1006.9 | 16:11:27 Y=1007.0 | 16:11:29 Y=1006.5 | 16:11:31 Y=1006.8 -> STEADY-WHITE
+A#1 cut/enable  :  | 16:11:35 Y=1006.3 | 16:11:36 Y=1006.1 | 16:11:38 Y=1006.0 | 16:11:40 Y=1005.5 | 16:11:47 Y=1005.5 -> STEADY-WHITE
+A#2 cut/enable  :  | 16:11:51 Y=1005.5 | 16:11:53 Y=1005.1 | 16:11:55 Y=1005.1 | 16:11:56 Y=1004.3 | 16:12:04 Y=1004.2 -> STEADY-WHITE
+A#3 cut/enable  :  | 16:12:08 Y=1004.4 | 16:12:10 Y=1004.1 | 16:12:11 Y=1003.9 | 16:12:13 Y=1004.0 | 16:12:15 Y=1004.0 -> STEADY-WHITE
+B#1 full restore:  | 16:12:19 Y=1003.7 | 16:12:21 Y=1003.4 | 16:12:22 Y=1003.4 | 16:12:24 Y=1003.4 | 16:12:26 Y=1003.3 -> STEADY-WHITE
+B#2 full restore:  | 16:12:30 Y=214.7 | 16:12:37 Y=227.9 | 16:12:39 Y=232.9 | 16:12:41 Y=1002.1 | 16:12:48 Y=2.0 -> NOT-STEADY(BIST?)
+   re-reset     :  | 16:13:00 Y=1001.3 | 16:13:02 Y=1001.4 | 16:13:03 Y=1000.9 | 16:13:05 Y=1001.0 | 16:13:07 Y=1001.0 -> STEADY-WHITE
+B#3 full restore:  | 16:13:11 Y=1000.9 | 16:13:12 Y=232.6 | 16:13:21 Y=453.1 | 16:13:22 Y=999.7 | 16:13:30 Y=999.4 -> NOT-STEADY(BIST?)
+   re-reset     :  | 16:13:41 Y=999.1 | 16:13:43 Y=999.1 | 16:13:45 Y=998.9 | 16:13:47 Y=998.5 | 16:13:48 Y=998.5 -> STEADY-WHITE
+B#4 full restore:  | 16:13:52 Y=998.4 | 16:13:54 Y=561.2 | 16:13:56 Y=224.3 | 16:13:58 Y=214.4 | 16:14:00 Y=232.9 -> NOT-STEADY(BIST?)
+   re-reset     :  | 16:14:06 Y=998.0 | 16:14:08 Y=997.8 | 16:14:09 Y=998.0 | 16:14:11 Y=997.7 | 16:14:13 Y=997.2 -> STEADY-WHITE
+B#5 full restore:  | 16:14:23 Y=997.0 | 16:14:25 Y=559.5 | 16:14:27 Y=452.4 | 16:14:35 Y=3.2 | 16:14:49 Y=995.3 -> NOT-STEADY(BIST?)
+   re-reset     :  | 16:14:54 Y=995.4 | 16:14:56 Y=995.3 | 16:14:58 Y=994.7 | 16:15:00 Y=994.9 | 16:15:02 Y=994.9 -> STEADY-WHITE
+--- final: stop pattern app, back to desktop
+OK
+app=none desktop: 16:15:07 Y=6.4
+=== EXP3 end 16:15:09 wedges=27 tol=600
+[Sun Sep 13 16:08:38 2026] hh983-serializer 1-0018: DP guard: DTG wedge without video loss (measured 3071, programmed 2816), restoring
+[Sun Sep 13 16:08:38 2026] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2814, 983 Htotal=2816 (DTG wedged)
+[Sun Sep 13 16:09:00 2026] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=3070 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53, 984 stream_en=1 STS0=0x01 STS1=0xC1

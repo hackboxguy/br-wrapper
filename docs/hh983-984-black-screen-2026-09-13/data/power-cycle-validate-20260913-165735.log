@@ -1,0 +1,56 @@
+16:57:35 power-cycle-validate: 10 cycles, soak 10 min, pi=pi@192.168.1.243, tasmota=http://192.168.1.186
+16:57:35 pass = 5 samples >= 800 nits on a white pattern, colorimeter only
+16:57:35 log: /home/adav/extended-disk/git-repos/tmp12/15-6-0OD-black-screen-issue-fable/tmp-docs/fable-prompt-v1-data/power-cycle-validate-20260913-165735.log
+# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,samples_nits,min/max,result
+16:57:35 
+16:57:35 === cycle 1/10
+16:57:35   sync on the Pi (a write seconds before the cut is still in page cache)
+16:57:35   Tasmota OFF ({"POWER":"OFF"})
+16:57:48   Tasmota ON ({"POWER":"ON"})
+16:58:09   ssh answered after 10s
+17:00:00   uptime 122s
+1,2026-09-13T17:00:43+02:00,165,2,4,"610.637707 149.347369 131.384439 510.555499 0.616153",0.6/610.6,FAIL
+17:00:43 
+17:00:43 !!! BLACK SCREEN on cycle 1: samples below 800 nits: 610.637707 149.347369 131.384439 510.555499 0.616153
+17:00:43 !!! not power-cycling again; the rig is left in the failed state
+17:00:43 !!! evidence -> /home/adav/extended-disk/git-repos/tmp12/15-6-0OD-black-screen-issue-fable/tmp-docs/fable-prompt-v1-data/power-cycle-validate-20260913-165735-FAIL-cycle1.txt
+=== power-cycle-validate failure, cycle 1, 2026-09-13T17:00:43+02:00
+reason: samples below 800 nits: 610.637707 149.347369 131.384439 510.555499 0.616153
+pass threshold: 800 nits
+
+=== luminance samples (nits)
+610.637707
+149.347369
+131.384439
+510.555499
+0.616153
+
+=== dtg_wedge_count / module parameters
+/sys/module/hh983_serializer/parameters/config_mode:0
+/sys/module/hh983_serializer/parameters/dp_guard:1
+/sys/module/hh983_serializer/parameters/dtg_check:1
+/sys/module/hh983_serializer/parameters/dtg_recover:1
+/sys/module/hh983_serializer/parameters/dtg_tolerance:32
+/sys/module/hh983_serializer/parameters/dtg_wedge_count:2
+/sys/module/hh983_serializer/parameters/ots_touch:0
+/sys/module/hh983_serializer/parameters/poll_interval_ms:1000
+/sys/module/hh983_serializer/parameters/wedge_holdoff_s:30
+
+=== uptime
+ 16:56:57 up 2 min,  0 user,  load average: 0.50, 0.36, 0.15
+166.39 625.25
+
+=== dmesg | grep hh983
+[    2.770038] hh983_serializer: loading out-of-tree module taints kernel.
+[    3.742007] hh983-serializer 1-0018: HH983 FPDLink serializer probe (config_mode=0)
+[    3.742026] hh983-serializer 1-0018: Initializing Mode 0: 983 + 984
+[    3.757747] hh983-serializer 1-0018: Configuring REM_INTB for Port 0 (GPIO4=0x88, INT_CTL=0x83)
+[    3.759882] hh983-serializer 1-0018: Writing GPIO4_CONFIG (0x1B) = 0x88
+[    3.762310] hh983-serializer 1-0018: GPIO4_CONFIG verified: 0x88
+[    3.776614] hh983-serializer 1-0018: Mode 0 (983+984) initialization complete
+[    3.781164] hh983-serializer 1-0018: SER GENERAL_STS=0x41 [RX_LOCK LINK_DET]
+[    3.782600] hh983-serializer 1-0018: DES STS0=0x81 STS1=0xC5 [FPD4_LOCK PLL_LOCK LOCK]
+[    3.782639] hh983-serializer 1-0018: HH983 initialization successful (mode=0, poll=on, dp_guard, dtg_check)
+[    5.822069] hh983-serializer 1-0018: DP video back (VP_STS=0x01), restoring 984 video stream
+[    5.824945] hh983-serializer 1-0018: DP guard restore: 984 stream_en=1, DTG measured Htotal=2814, 983 Htotal=2816
+[   36.552076] hh983-serializer 1-0018: DP guard wedge snapshot: 984 measured Htot=2560 Vtot=1492, 983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x41, 984 stream_en=1 STS0=0x01 STS1=0xC1

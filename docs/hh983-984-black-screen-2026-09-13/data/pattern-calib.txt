@@ -1,0 +1,10 @@
+running=none
+OK
+running=pattern-generator
+OK
+MEASURE pattern=white  Y=1034.089802 nits at 16:05:56
+OK
+MEASURE pattern=black  Y=0.000000 nits at 16:06:00
+OK
+MEASURE pattern=white  Y=1032.801902 nits at 16:06:15
+poll=0 wedges=25

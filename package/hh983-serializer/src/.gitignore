@@ -1,0 +1,13 @@
+# Out-of-tree kernel module build products.
+#
+# The module is cross-built straight into this directory:
+#   make -C <kernel-tree> ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- M=$PWD modules
+# which leaves fifteen or so generated files here.  "make ... clean" removes them,
+# but a build left uncleaned should not be able to reach a commit.
+*.ko
+*.o
+*.mod
+*.mod.c
+*.cmd
+Module.symvers
+modules.order
