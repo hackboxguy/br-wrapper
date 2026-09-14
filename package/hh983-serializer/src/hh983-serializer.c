@@ -924,10 +924,30 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 		bool fixed = false;
 
 		if (wedge_recovery == 1) {
+			/* Two digital resets before the pulse, not one.
+			 *
+			 * The pulse is the last thing to try on a panel running
+			 * wedge_recovery=1, because that setting exists for
+			 * panels the pulse hurts: on the OTS-OLED a pulse has
+			 * black-latched a healthy streaming pipeline by itself
+			 * (bring-up event C), and on 2026-09-14 a wedge that was
+			 * pulsed left the 984 healthy and the panel latched with
+			 * TCON_INT asserted.  Falling back to it after a single
+			 * failed reset would spend the one action known to do
+			 * harm while a second, harmless one was still available:
+			 * five digital resets on a healthy streaming OLED that
+			 * same day left TCON_INT clear every time and the
+			 * picture arriving.
+			 */
 			fixed = hh983_guard_digital_reset(data);
-			if (!fixed)
+			if (!fixed) {
 				dev_notice(&client->dev,
-					   "DP guard restore: 984 digital reset did not clear the wedge, falling back to a DTG pulse\n");
+					   "DP guard restore: 984 digital reset did not clear the wedge, trying a second one\n");
+				fixed = hh983_guard_digital_reset(data);
+			}
+			if (!fixed)
+				dev_warn(&client->dev,
+					 "DP guard restore: two 984 digital resets did not clear the wedge, falling back to a DTG pulse as the third attempt\n");
 		}
 
 		if (!fixed) {
