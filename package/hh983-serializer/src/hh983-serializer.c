@@ -29,6 +29,7 @@
 #include <linux/delay.h>
 #include <linux/workqueue.h>
 #include <linux/jiffies.h>
+#include <linux/timekeeping.h>
 
 /* Configuration mode: 0=983+984, 1=983+988, 2=983+988 video only */
 static int config_mode = 0;
@@ -836,7 +837,9 @@ static void hh983_guard_wedge_snapshot(struct hh983_data *data, int meas, int pr
 	dtg_rst = hh983_deser_ind_read(client, data->deser_addr,
 				       DES984_IND_PAGE_DTG, DES984_DTG_P0_CTL);
 
-	since_boot_s = jiffies_to_msecs(get_jiffies_64()) / 1000;
+	/* jiffies start at INITIAL_JIFFIES (about -5 min, wrapped), so they are
+	 * only good for differences; the boottime clock is what "since boot" means. */
+	since_boot_s = (unsigned int)ktime_get_boottime_seconds();
 	if (data->guard_wedge_armed)
 		since_last_s = jiffies_to_msecs(jiffies - data->guard_wedge_at) / 1000;
 
