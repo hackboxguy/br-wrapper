@@ -591,9 +591,17 @@ ioc_1008() {
         ioc_valid "$v" && { echo "$v"; return 0; }
         try=$((try + 1))
     done
-    echo "${v:-n/a}"
+    # Nothing valid after four tries. Say so rather than printing the raw bus
+    # reading: a rig with no IOC at 0x66 answers 0xff to every read, and a log
+    # column full of 0xff invites someone to read a float as a status value --
+    # which is the mistake that stopped a 20-cycle run on 2026-09-14.
+    echo "n/a"
 }
-ioc_1009() { rsh 30 'sudo i2ctransfer -y -f 1 w2@0x66 0x10 0x09 r1@0x66 2>/dev/null || echo n/a'; }
+ioc_1009() {
+    local v
+    v=$(rsh 30 'sudo i2ctransfer -y -f 1 w2@0x66 0x10 0x09 r1@0x66 2>/dev/null || echo n/a')
+    case "$v" in 0xff|0xFF|""|n/a) echo "n/a" ;; *) echo "$v" ;; esac
+}
 
 # A latch is only a latch if a valid reading says so twice.
 #
