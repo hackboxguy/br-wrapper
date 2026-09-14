@@ -37,8 +37,12 @@
 #                     (default http://192.168.1.186)
 #   --log-dir=DIR     per-cycle log and failure dumps (default ./power-cycle-validate-logs;
 #                     the 2026-09-13 runs used tmp-docs/fable-prompt-v1-data/)
-#   --pass-nits=N     luminance the white step must reach (default 800; this
-#                     panel measures 1102..1110 healthy)
+#   --pass-nits=N     floor the white reference must clear for the panel to
+#                     count as lit at all (default 50).  It is NOT a health
+#                     threshold: everything else is judged as a ratio to that
+#                     reference, because the image ships als-dimmer enabled and
+#                     the backlight can sit anywhere.  15.6-2k5 white measures
+#                     ~1110 nits at full brightness and ~613 at 55 %.
 #   --verdict=MODE    "sequence" (default): walk white + the four others in a
 #                     random order + white.  "hold": show one randomly chosen
 #                     colour, read it twice --hold-secs apart, then command
@@ -90,7 +94,7 @@ SOAK_MIN=0
 PI=pi@192.168.1.243
 TASMOTA=http://192.168.1.186
 LOG_DIR=$PWD/power-cycle-validate-logs
-PASS_NITS=800
+PASS_NITS=50
 VERDICT_MODE=sequence
 HOLD_SECS=10
 WARM=0
@@ -239,20 +243,76 @@ stop_pattern() { rsh 60 "$MICROBIN/launcher-client --command=stop-app" >/dev/nul
 # BIST cannot do is follow the Pi: commanded red and green while it was running
 # it answered 0.93/186/1103 and 129/251/251.
 #
-# Y bands are +-30 % of nominal, which is far wider than the panel drifts and
-# far narrower than the gaps between these colours.  Black is checked on
-# luminance alone (its chromaticity is meaningless at zero) and separates
-# cleanly anyway: the Pi's black reads 0.000 where the BIST's darkest steps
-# read 0.93 and 1.70.
+# Luminance is checked as a RATIO to a white reference measured at the start of
+# the same verdict, not as an absolute number of nits.  The image ships
+# als-dimmer enabled, so the backlight is wherever ambient light and the user
+# have left it -- on 2026-09-14 image 01.27 booted at manual_brightness 55 and
+# every reading came in at 0.55 of the 2026-09-13 reference, which failed an
+# absolute band while the panel was displaying perfectly.  The dimmer also
+# restarts on every boot, so a power-cycle test cannot simply turn it off.
+#
+# Ratios are immune to that, because the backlight scales everything equally.
+# Measured at two very different brightnesses: blue/white = 129.4/1110.4 =
+# 0.1166 at full brightness, 71.52/612.68 = 0.1167 at 55 %.  Bands are +-20 %
+# of nominal, far wider than the panel drifts and far narrower than the gaps
+# between the colours (blue 0.117, red 0.243, green 0.640).
+#
+# Chromaticity stays absolute: it does not move with the backlight at all.
+# Black stays absolute too -- the Pi's black reads 0.000 at any brightness,
+# where the BIST's darkest steps read 0.93 and 1.70 -- and its chromaticity is
+# meaningless at zero, so only the level is checked.
+#
+# Fields: <kind> <lo> <hi> <x> <y>, kind = abs (nits) or ratio (of white).
 pat_ref() {
     case "$1" in
-        white) echo "$PASS_NITS 1400 0.3050 0.3301" ;;
-        red)   echo "188 348 0.6852 0.3134" ;;
-        green) echo "496 922 0.2229 0.7175" ;;
-        blue)  echo "90 168 0.1428 0.0856" ;;
-        black) echo "0 0.3 - -" ;;
+        white) echo "abs $PASS_NITS 100000 0.3050 0.3301" ;;
+        red)   echo "ratio 0.194 0.292 0.6852 0.3134" ;;
+        green) echo "ratio 0.512 0.768 0.2229 0.7175" ;;
+        blue)  echo "ratio 0.094 0.140 0.1428 0.0856" ;;
+        black) echo "abs 0 0.3 - -" ;;
         *)     echo "" ;;
     esac
+}
+
+# White luminance of the current verdict, the denominator for every ratio.
+WHITE_REF=""
+
+# Command white, measure it, and keep it as this verdict's reference.
+#
+# Doubles as the first real check: a panel that is black, or showing something
+# that is not the Pi's white, fails here before any ratio is computed.
+establish_white_ref() {
+    local out y cx cy
+    WHITE_REF=""
+    out=$(measure_pattern white)
+    y=$(echo  "$out" | awk '{print $1}')
+    cx=$(echo "$out" | awk '{print $2}')
+    cy=$(echo "$out" | awk '{print $3}')
+    if is_number "$y" && pattern_ok white "$y" "$cx" "$cy"; then
+        WHITE_REF=$y
+        SEQ_LOG="$SEQ_LOG white-ref=ok(${y})"
+        return 0
+    fi
+    if [ "$RETRY_SETTLE" -gt 0 ]; then
+        SEQ_LOG="$SEQ_LOG white-ref=retry(Y=${y:-?} x=${cx:-?} y=${cy:-?})"
+        sleep "$RETRY_SETTLE"
+        out=$(measure_only)
+        y=$(echo  "$out" | awk '{print $1}')
+        cx=$(echo "$out" | awk '{print $2}')
+        cy=$(echo "$out" | awk '{print $3}')
+        if is_number "$y" && pattern_ok white "$y" "$cx" "$cy"; then
+            WHITE_REF=$y
+            SEQ_LOG="$SEQ_LOG white-ref=ok-after-${RETRY_SETTLE}s(${y})"
+            return 0
+        fi
+    fi
+    if ! is_number "$y"; then
+        SEQ_LOG="$SEQ_LOG white-ref=SENSOR-ERROR(${y:-empty})"
+        SEQ_SENSOR_ERR=1
+    else
+        SEQ_LOG="$SEQ_LOG white-ref=MISMATCH(Y=${y:-?} x=${cx:-?} y=${cy:-?})"
+    fi
+    return 1
 }
 
 # Measure whatever is on the glass right now.  Echoes "<Y> <x> <y>".
@@ -271,12 +331,21 @@ measure_pattern() {
 }
 
 pattern_ok() {
-    local name=$1 y=$2 cx=$3 cy=$4 ref ymin ymax rx ry
+    local name=$1 y=$2 cx=$3 cy=$4 ref kind ymin ymax rx ry
     ref=$(pat_ref "$name")
     [ -z "$ref" ] && return 1
-    ymin=$(echo "$ref" | cut -d\  -f1); ymax=$(echo "$ref" | cut -d\  -f2)
-    rx=$(echo "$ref" | cut -d\  -f3);   ry=$(echo "$ref" | cut -d\  -f4)
-    awk -v v="$y" -v a="$ymin" -v b="$ymax" 'BEGIN{exit !(v+0>=a+0 && v+0<=b+0)}' || return 1
+    kind=$(echo "$ref" | cut -d\  -f1)
+    ymin=$(echo "$ref" | cut -d\  -f2); ymax=$(echo "$ref" | cut -d\  -f3)
+    rx=$(echo "$ref" | cut -d\  -f4);   ry=$(echo "$ref" | cut -d\  -f5)
+    if [ "$kind" = "ratio" ]; then
+        # No white reference yet means the verdict has nothing to compare
+        # against; treat that as a failure rather than silently passing.
+        [ -z "$WHITE_REF" ] && return 1
+        awk -v v="$y" -v w="$WHITE_REF" -v a="$ymin" -v b="$ymax" \
+            'BEGIN{if (w+0 <= 0) exit 1; r=(v+0)/(w+0); exit !(r>=a+0 && r<=b+0)}' || return 1
+    else
+        awk -v v="$y" -v a="$ymin" -v b="$ymax" 'BEGIN{exit !(v+0>=a+0 && v+0<=b+0)}' || return 1
+    fi
     [ "$rx" = "-" ] && return 0
     awk -v v="$cx" -v r="$rx" -v t="$XY_TOL" 'BEGIN{d=v-r; if(d<0)d=-d; exit !(d<=t+0)}' || return 1
     awk -v v="$cy" -v r="$ry" -v t="$XY_TOL" 'BEGIN{d=v-r; if(d<0)d=-d; exit !(d<=t+0)}' || return 1
@@ -287,8 +356,10 @@ pattern_ok() {
 # rest shuffled in between.  The BIST cycle runs white -> red -> green -> blue,
 # which is exactly the fixed order it could imitate by accident, so the order
 # is drawn fresh every time.
-verdict_sequence() { echo "white $(printf '%s\n' black red green blue | shuf | tr '\n' ' ')white"; }
-soak_sequence()    { echo "white $(printf '%s\n' black red green blue | shuf -n 1)"; }
+# The leading white is establish_white_ref()'s measurement, so the sequence
+# itself is the four others in a fresh order plus a closing white.
+verdict_sequence() { echo "$(printf '%s\n' black red green blue | shuf | tr '\n' ' ')white"; }
+soak_sequence()    { echo "$(printf '%s\n' black red green blue | shuf -n 1)"; }
 
 # Walk a sequence, measuring every step.  Sets SEQ_LOG to a one-line record of
 # what each pattern actually measured and returns non-zero if any of them did
@@ -356,6 +427,7 @@ check_hold() {
     colour=$(printf '%s\n' red green blue | shuf -n 1)
     SEQ_LOG=""
     SEQ_SENSOR_ERR=0
+    establish_white_ref || return 1
     check_one "$colour" "$colour" "$(measure_pattern "$colour")" || rc=1
     sleep "$HOLD_SECS"
     check_one "${colour}+${HOLD_SECS}s" "$colour" "$(measure_only)" || rc=1
@@ -368,6 +440,7 @@ check_sequence() {
     local p rc=0
     SEQ_LOG=""
     SEQ_SENSOR_ERR=0
+    establish_white_ref || return 1
     for p in $1; do
         check_one "$p" "$p" "$(measure_pattern "$p")" || rc=1
     done
