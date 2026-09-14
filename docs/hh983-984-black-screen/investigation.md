@@ -192,14 +192,84 @@ action known to harm this panel only when two harmless ones have failed.
 cycles, a 45-minute soak aimed at catching a spontaneous wedge, and an injected
 wedge) waits on that image being flashed.
 
-## 6. Open items
+## 6. Image 01.28 on both rigs, 2026-09-14
+
+`br-wrapper` `f785685`+, `micropanel` `791c73b`. `ots-oled-17` gets
+`wedge_recovery=1`; `15.6-2k5` keeps it; `12.3-nq1` stays on the pulse.
+
+### 6.1 OTS-OLED — fixed
+
+| | |
+|---|---|
+| boots observed | 28 (8 warm, 20 cold) |
+| spontaneous wedges while video was up | 3 (measured 4647, 5256, and one in cold cycle 2) |
+| recoveries, all by one 984 digital reset | 15 |
+| second digital resets needed | 0 |
+| fall-backs to a DTG pulse | **0** |
+| panel latches (`TCON_INT` stuck) | **0** |
+| black screens | **0** |
+| 45-minute soak | clean, 47 checks |
+
+The spontaneous wedges are the fault that blacked this panel on 01.27, where the
+pulse recovery left the 984 healthy at 3442 and the panel dark with `TCON_INT`
+asserted. On 01.28 each was cleared in about 260 ms with the picture never lost.
+Full numbers in `tmp-docs/opus-report-v5.md` (not committed).
+
+### 6.2 A boot-time wedge is a transient on one panel and real on the other
+
+Worth stating carefully, because the two rigs disagree and the wrong generalisation
+would undo the fix.
+
+**On the OLED it heals unaided.** One boot instrumented with `dtg_tolerance=99999`,
+so the guard measured and logged but could not act: `DTG measured Htotal=5106` at
+6.19 s against a programmed 3440, back to 3441 by 12 s with nothing done about it,
+and the panel never latched. Four further boots with the guard disabled were healthy
+from 12 s onward. So the 984 DTG is still locking when the boot restore reads it —
+the same "no measurement yet" condition modes 1 and 2 already refuse to act on.
+
+**On the 15.6 it does not.** 2026-09-13 18:48, v1 build: the boot restore read 4495
+at 6.8 s, declined to act, and the DTG was still wedged at 4751 ninety-five seconds
+later with the panel not showing the Pi's picture
+(`data/warm-reboot-final-build.txt`).
+
+So a boot wedge can be a startup transient or a persistent fault depending on the
+panel, and **the boot path must keep acting on it**. Any refinement has to be "wait
+until the measurement is stable, or N seconds have passed, then decide" — never
+"assume it heals". Since the digital reset costs ~260 ms and has never done harm in
+20 observed applications, the recommendation is to leave the boot path as it is and
+keep this on record. **No driver change was made for it.**
+
+One consequence for reading the numbers: the boot-wedge counts above and in section
+6.3 mix both kinds and should not be read as 12 faults.
+
+### 6.3 Diagnostics for the root cause
+
+Still unexplained: why the 984 DTG wanders mid-session. `hh983_guard_wedge_snapshot()`
+now records, once per confirmed wedge, the 984's measured H/V active and H start, its
+general status, its read-to-clear CRC counter, DTG_CTL and DTG_RESET_CTL, the 983's
+CRC_ERROR0 and read-clear SINK_0_INT_CAUSE, and the time since boot and since the last
+recovery; probe logs the DTG configuration once. Diagnostic only.
+
+Grep the rigs with `dmesg | grep "wedge snapshot"`. Two stories to tell apart: a brief
+FPD-Link lock loss or decode error that reset-on-lock then mishandles (non-zero CRC,
+`LOCK_STS_CHG` or `FPD_DECODE_ERROR` beside the bad H total), or the DTG's PPM
+compensation drifting with no link event at all (every link flag clean, only the H
+total moved).
+
+## 7. Open items
 
 - 988 rigs have not run the new driver. Detection changes reach them; untested.
 - `3x-qvue` (988) sits 4 px below a 256 boundary; the same confirmation now guards it, untested.
 - `12.3-nq1` is the last mode-0 panel still on the DTG pulse; tested with neither the
   tear problem nor the digital reset.
-- The root cause of the OLED's spontaneous wedge is still upstream and still open: the
-  driver recovers it, nothing explains why the 984 DTG wanders in the first place.
+- The root cause of the spontaneous wedge is still upstream and still open: the driver
+  recovers it, nothing explains why the 984 DTG wanders. Section 6.3 is the data
+  gathering for it.
+- The two-digital-reset fallback has never fired on either rig, so it is a safety net
+  rather than a validated path.
+- How long the OLED tolerates a wedged timing before latching is still unmeasured: every
+  wedge has been cleared far too quickly for the panel to be at risk. Three attempts to
+  produce the conditions failed.
 - Boot-path wedges now have their own counter, `dtg_boot_wedge_count`; `dtg_wedge_count`
   keeps its old meaning (the periodic check only), so a cold-cycle run can still use
   `dtg_wedge_count == 0` as a pass criterion.
