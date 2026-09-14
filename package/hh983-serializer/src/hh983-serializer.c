@@ -97,7 +97,24 @@ MODULE_PARM_DESC(wedge_holdoff_s, "Modes 0, 1 and 2: minimum seconds between two
 
 static int dtg_wedge_count;
 module_param(dtg_wedge_count, int, 0444);
-MODULE_PARM_DESC(dtg_wedge_count, "Modes 0, 1 and 2: DTG wedges detected since load (read-only)");
+MODULE_PARM_DESC(dtg_wedge_count, "Modes 0, 1 and 2: DTG wedges detected by the periodic check since load (read-only)");
+
+/*
+ * Wedges found by the boot/resync restore path rather than by the periodic
+ * check.  These are the common ones in practice -- every one of the 18 warm
+ * reboots recorded on the 15.6" 2K5 rig wedged the DTG at boot, and all 18 were
+ * found here -- but they never touched dtg_wedge_count, so anything watching
+ * that alone (the power-cycle validation harness included) could not see them.
+ *
+ * Kept as a second counter rather than folded into dtg_wedge_count, because
+ * that one has a settled meaning: "the guard fired while video was up", which
+ * is what makes dtg_wedge_count == 0 a useful pass criterion for a cold-cycle
+ * run.  A boot wedge is expected on a warm reboot and would turn that criterion
+ * into noise.  Two numbers, each answering its own question.
+ */
+static int dtg_boot_wedge_count;
+module_param(dtg_boot_wedge_count, int, 0444);
+MODULE_PARM_DESC(dtg_boot_wedge_count, "Mode 0: DTG wedges found by the boot/resync restore path since load (read-only)");
 
 /*
  * Whether a detected wedge is acted on.
@@ -910,6 +927,10 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 	 * force_wedged it has already snapshotted and set the flag. */
 	if (wedged && !data->guard_wedged) {
 		data->guard_wedged = true;
+		/* Counted separately from dtg_wedge_count: see that parameter.
+		 * The periodic check sets guard_wedged before it calls us, so a
+		 * wedge it found is never counted twice here. */
+		dtg_boot_wedge_count++;
 		hh983_guard_wedge_snapshot(data, meas_htotal, prog_htotal);
 	}
 
@@ -924,10 +945,30 @@ static void hh983_guard_restore_stream(struct hh983_data *data, bool force_wedge
 		bool fixed = false;
 
 		if (wedge_recovery == 1) {
+			/* Two digital resets before the pulse, not one.
+			 *
+			 * The pulse is the last thing to try on a panel running
+			 * wedge_recovery=1, because that setting exists for
+			 * panels the pulse hurts: on the OTS-OLED a pulse has
+			 * black-latched a healthy streaming pipeline by itself
+			 * (bring-up event C), and on 2026-09-14 a wedge that was
+			 * pulsed left the 984 healthy and the panel latched with
+			 * TCON_INT asserted.  Falling back to it after a single
+			 * failed reset would spend the one action known to do
+			 * harm while a second, harmless one was still available:
+			 * five digital resets on a healthy streaming OLED that
+			 * same day left TCON_INT clear every time and the
+			 * picture arriving.
+			 */
 			fixed = hh983_guard_digital_reset(data);
-			if (!fixed)
+			if (!fixed) {
 				dev_notice(&client->dev,
-					   "DP guard restore: 984 digital reset did not clear the wedge, falling back to a DTG pulse\n");
+					   "DP guard restore: 984 digital reset did not clear the wedge, trying a second one\n");
+				fixed = hh983_guard_digital_reset(data);
+			}
+			if (!fixed)
+				dev_warn(&client->dev,
+					 "DP guard restore: two 984 digital resets did not clear the wedge, falling back to a DTG pulse as the third attempt\n");
 		}
 
 		if (!fixed) {

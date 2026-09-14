@@ -43,6 +43,9 @@
 #                     reference, because the image ships als-dimmer enabled and
 #                     the backlight can sit anywhere.  15.6-2k5 white measures
 #                     ~1110 nits at full brightness and ~613 at 55 %.
+#   --panel=NAME      display type whose colour references to use (e.g.
+#                     ots-oled-17, 15.6-2k5).  Detected from the Pi when not
+#                     given; see pat_ref() for why it matters.
 #   --verdict=MODE    "sequence" (default): walk white + the four others in a
 #                     random order + white.  "hold": show one randomly chosen
 #                     colour, read it twice --hold-secs apart, then command
@@ -96,6 +99,7 @@ TASMOTA=http://192.168.1.186
 LOG_DIR=$PWD/power-cycle-validate-logs
 PASS_NITS=50
 VERDICT_MODE=sequence
+PANEL=""
 HOLD_SECS=10
 WARM=0
 RETRY_SETTLE=8
@@ -110,6 +114,7 @@ HIST_EVERY=1
 FPDTOOL=/home/pi/micropanel/bin/fpdlink-tool.sh
 MICROBIN=/home/pi/micropanel/usr/bin
 MEASDIR=/home/pi/micropanel/share/disptool/display-test-framework
+MICROSHARE=/home/pi/micropanel/usr/share/micropanel
 
 for arg in "$@"; do
     case "$arg" in
@@ -120,6 +125,7 @@ for arg in "$@"; do
         --log-dir=*)      LOG_DIR="${arg#*=}" ;;
         --pass-nits=*)    PASS_NITS="${arg#*=}" ;;
         --verdict=*)      VERDICT_MODE="${arg#*=}" ;;
+        --panel=*)        PANEL="${arg#*=}" ;;
         --hold-secs=*)    HOLD_SECS="${arg#*=}" ;;
         --warm)           WARM=1 ;;
         --retry-settle=*) RETRY_SETTLE="${arg#*=}" ;;
@@ -217,9 +223,28 @@ wait_for_uptime() {
     done
 }
 
+# Start the pattern generator, stopping whatever the launcher already has up.
+#
+# start-app answers "ERROR: app-already-running" and changes nothing if another
+# app is running -- disp-settings is up by default on the OLED rig -- and the
+# harness then measured the desktop while believing it was measuring patterns.
+# Every reading came back around 5 nits and looked exactly like a black panel.
+# Stop first, then start, and confirm what is actually running.
 start_pattern_app() {
-    rsh 90 "$MICROBIN/launcher-client --command=start-app --command-arg=pattern-generator" >/dev/null
-    sleep 4
+    local running
+    running=$(rsh 60 "$MICROBIN/launcher-client --command=get-running-app" 2>/dev/null)
+    if [ "$running" != "pattern-generator" ]; then
+        rsh 60 "$MICROBIN/launcher-client --command=stop-app" >/dev/null 2>&1
+        sleep 5
+        rsh 90 "$MICROBIN/launcher-client --command=start-app --command-arg=pattern-generator" >/dev/null 2>&1
+        sleep 7
+        running=$(rsh 60 "$MICROBIN/launcher-client --command=get-running-app" 2>/dev/null)
+    fi
+    if [ "$running" != "pattern-generator" ]; then
+        say "  WARNING: pattern generator is not running (launcher says '${running:-nothing}')"
+        return 1
+    fi
+    return 0
 }
 
 stop_pattern() { rsh 60 "$MICROBIN/launcher-client --command=stop-app" >/dev/null; }
@@ -262,15 +287,55 @@ stop_pattern() { rsh 60 "$MICROBIN/launcher-client --command=stop-app" >/dev/nul
 # where the BIST's darkest steps read 0.93 and 1.70 -- and its chromaticity is
 # meaningless at zero, so only the level is checked.
 #
+# Both the chromaticities and the colour/white ratios are properties of the
+# PANEL, so they are per-profile.  Measured 2026-09-14 on the OLED rig, the
+# 15.6" LCD's numbers would have failed a perfectly healthy OTS-OLED on three of
+# the four colours: green is 0.3014/0.6675 there against the LCD's 0.2229/0.7175
+# (0.079 out in x, against a 0.03 tolerance), and the red and blue ratios are
+# 0.169 and 0.062 against the LCD's 0.243 and 0.117.  An OLED's primaries are
+# simply not an LCD's.
+#
+# $PANEL is the display type, detected once at startup from pi-config-txt.sh the
+# way sync-video.sh does it, or forced with --panel=.  An unknown panel is a hard
+# error rather than a silent fall-through to the wrong numbers.
+#
 # Fields: <kind> <lo> <hi> <x> <y>, kind = abs (nits) or ratio (of white).
 pat_ref() {
-    case "$1" in
-        white) echo "abs $PASS_NITS 100000 0.3050 0.3301" ;;
-        red)   echo "ratio 0.194 0.292 0.6852 0.3134" ;;
-        green) echo "ratio 0.512 0.768 0.2229 0.7175" ;;
-        blue)  echo "ratio 0.094 0.140 0.1428 0.0856" ;;
-        black) echo "abs 0 0.3 - -" ;;
-        *)     echo "" ;;
+    case "$PANEL" in
+    ots-oled-17)
+        # OTS-OLED 17", white 219.5 nits at the dimmer setting of 2026-09-14.
+        case "$1" in
+            white) echo "abs $PASS_NITS 100000 0.3004 0.3241" ;;
+            red)   echo "ratio 0.135 0.202 0.6788 0.3212" ;;
+            green) echo "ratio 0.596 0.895 0.3014 0.6675" ;;
+            blue)  echo "ratio 0.050 0.074 0.1362 0.0509" ;;
+            black) echo "abs 0 0.3 - -" ;;
+            *)     echo "" ;;
+        esac ;;
+    *)
+        # 15.6" 2K5 and anything else that measures like it.
+        case "$1" in
+            white) echo "abs $PASS_NITS 100000 0.3050 0.3301" ;;
+            red)   echo "ratio 0.194 0.292 0.6852 0.3134" ;;
+            green) echo "ratio 0.512 0.768 0.2229 0.7175" ;;
+            blue)  echo "ratio 0.094 0.140 0.1428 0.0856" ;;
+            black) echo "abs 0 0.3 - -" ;;
+            *)     echo "" ;;
+        esac ;;
+    esac
+}
+
+# Ask the Pi which display it is configured for, the same call sync-video.sh
+# makes.  Falls back to the 15.6 set with a warning rather than guessing.
+detect_panel() {
+    local t
+    t=$(rsh 40 "$MICROBIN/pi-config-txt.sh --configspath=$MICROSHARE/configs/ --input=/boot/firmware/config.txt 2>/dev/null | tr -d '[:space:]'")
+    case "$t" in
+        ots-oled-17|15.6-2k5|12.3-nq1|14.6-2k5|17.3-3k|27|12.3|14.6-fhd|3x-qvue)
+            PANEL=$t ;;
+        *)
+            say "  WARNING: could not read the display type (got '${t:-empty}'), using the 15.6-2k5 reference set"
+            PANEL=15.6-2k5 ;;
     esac
 }
 
@@ -449,6 +514,26 @@ check_sequence() {
 
 wedge_count()  { rsh 30 'cat /sys/module/hh983_serializer/parameters/dtg_wedge_count 2>/dev/null || echo NA'; }
 
+# Wedges the boot/resync restore path found -- the ones dtg_wedge_count never
+# counted.  "NA" on a module that predates the counter.
+boot_wedge_count() { rsh 30 'cat /sys/module/hh983_serializer/parameters/dtg_boot_wedge_count 2>/dev/null || echo NA'; }
+
+# OTS-OLED IOC status at 0x66.  0x1008 bit 5 is TCON_INT: set and staying set is
+# the panel's latched-black signature, the thing a healthy recovery must leave
+# clear.  0x1009 counts TCON_INT rising edges since the MCU booted and is
+# informational only -- a 984 digital reset produces an edge that self-clears
+# well inside a second (measured 2026-09-14: five resets, four edges, bit 5
+# never observed set), so this number climbing is normal after a recovery.
+# Both print n/a on a rig with no IOC there, which is every non-OLED rig.
+ioc_1008() { rsh 30 'sudo i2ctransfer -y -f 1 w2@0x66 0x10 0x08 r1@0x66 2>/dev/null || echo n/a'; }
+ioc_1009() { rsh 30 'sudo i2ctransfer -y -f 1 w2@0x66 0x10 0x09 r1@0x66 2>/dev/null || echo n/a'; }
+tcon_latched() {
+    case "$1" in
+        n/a|"") return 1 ;;
+        *) [ $(( $1 & 0x20 )) -ne 0 ] ;;
+    esac
+}
+
 # What the driver itself saw at boot, taken from dmesg so it costs no I2C and
 # cannot race the guard's own poll the way an i2cget loop does.
 boot_htotal()  { rsh 30 'dmesg | grep -m1 -o "DTG measured Htotal=-\?[0-9]*" | grep -o -- "-\?[0-9]*$" || echo NA'; }
@@ -504,8 +589,14 @@ fail_dump() {
         echo "=== dtg_wedge_count"
         rsh 30 'cat /sys/module/hh983_serializer/parameters/dtg_wedge_count 2>/dev/null'
         echo ""
+        echo "=== dtg_boot_wedge_count"
+        boot_wedge_count
+        echo ""
         echo "=== wedge_recovery"
         rsh 30 'cat /sys/module/hh983_serializer/parameters/wedge_recovery 2>/dev/null'
+        echo ""
+        echo "=== IOC 0x1008 (bit 5 TCON_INT = latched black) and 0x1009 (rising edges)"
+        echo "0x1008=$(ioc_1008)  0x1009=$(ioc_1009)"
         echo ""
         echo "=== last 30 hh983 dmesg lines"
         rsh 60 'dmesg | grep -i hh983 | tail -30'
@@ -539,7 +630,12 @@ fail_dump() {
 say "power-cycle-validate: $CYCLES cycles, soak ${SOAK_MIN} min, pi=$PI, tasmota=$TASMOTA"
 say "pass = verdict mode '$VERDICT_MODE' arrives on the glass (colorimeter only) and dtg_wedge_count == 0"
 say "log: $LOG"
-logf "# cycle,timestamp,uptime_s,wedge_count,dmesg_wedge_lines,boot_htotal,wedged_at_boot,recovery,measured_sequence,result"
+logf "# cycle,timestamp,uptime_s,wedge_count,boot_wedge_count,dmesg_wedge_lines,boot_htotal,wedged_at_boot,recovery,ioc_1008,ioc_1009,measured_sequence,result"
+
+if [ -z "$PANEL" ]; then
+    detect_panel
+fi
+say "panel reference set: $PANEL"
 
 if [ "$(tasmota Power)" = "" ]; then
     say "Tasmota at $TASMOTA does not answer - aborting before touching anything"
@@ -579,7 +675,16 @@ while [ "$cycle" -le "$CYCLES" ]; do
     bh=$(boot_htotal)
     bw=$(boot_wedged)
     rec=$(recovery_ran)
-    say "  boot: DTG measured $bh, wedged=$bw, recovery=$rec"
+    bwc=$(boot_wedge_count)
+    i8=$(ioc_1008)
+    i9=$(ioc_1009)
+    say "  boot: DTG measured $bh, wedged=$bw, recovery=$rec, boot-wedges=$bwc, IOC 0x1008=$i8 0x1009=$i9"
+    if tcon_latched "$i8"; then
+        logf "$cycle,$(date -Is),$up_now,$wc_now,$bwc,$wl_now,$bh,$bw,$rec,$i8,$i9,\"$flat\",FAIL-TCON"
+        fail_dump "$cycle" "commanded: $seq_list${NL}measured:$flat" \
+                  "IOC 0x1008=$i8 -- TCON_INT is set, the OLED latched-black signature"
+        exit 1
+    fi
 
     if [ "$seq_rc" != "0" ] && [ "$SEQ_SENSOR_ERR" = "1" ]; then
         say "  colorimeter did not answer; re-running the verdict once"
@@ -589,22 +694,22 @@ while [ "$cycle" -le "$CYCLES" ]; do
     fi
     if [ "$seq_rc" != "0" ]; then
         if [ "$SEQ_SENSOR_ERR" = "1" ]; then
-            logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",FAIL-SENSOR"
+            logf "$cycle,$(date -Is),$up_now,$wc_now,$bwc,$wl_now,$bh,$bw,$rec,$i8,$i9,\"$flat\",FAIL-SENSOR"
             fail_dump "$cycle" "commanded: $seq_list${NL}measured:$flat" \
                       "the colorimeter would not return a reading - this says nothing about the panel, re-run"
         else
-            logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",FAIL"
+            logf "$cycle,$(date -Is),$up_now,$wc_now,$bwc,$wl_now,$bh,$bw,$rec,$i8,$i9,\"$flat\",FAIL"
             fail_dump "$cycle" "commanded: $seq_list${NL}measured:$flat" \
                       "the panel did not follow the commanded patterns:$flat"
         fi
         exit 1
     fi
     if [ "$wc_now" != "0" ]; then
-        logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",FAIL-WEDGE"
+        logf "$cycle,$(date -Is),$up_now,$wc_now,$bwc,$wl_now,$bh,$bw,$rec,$i8,$i9,\"$flat\",FAIL-WEDGE"
         fail_dump "$cycle" "$flat" "panel followed every pattern but dtg_wedge_count=$wc_now (the guard still fired)"
         exit 1
     fi
-    say "  cycle $cycle verdict: PASS $flat  wedges=$wc_now recovery=$rec"
+    say "  cycle $cycle verdict: PASS $flat  wedges=$wc_now boot-wedges=$bwc recovery=$rec IOC=$i8"
 
     # Soak: the false wedges were 30..120 s apart, so the five-sample verdict
     # alone can walk straight past one.  Same pass rule, once every --soak-gap.
@@ -621,7 +726,13 @@ while [ "$cycle" -le "$CYCLES" ]; do
                           "soak: the panel did not follow the commanded patterns:$SEQ_LOG"
                 exit 1
             fi
-            logf "  soak $cycle $(date +%H:%M:%S)$SEQ_LOG wedges=$(wedge_count)"
+            s_i8=$(ioc_1008)
+            logf "  soak $cycle $(date +%H:%M:%S)$SEQ_LOG wedges=$(wedge_count) boot-wedges=$(boot_wedge_count) IOC 0x1008=$s_i8 0x1009=$(ioc_1009)"
+            if tcon_latched "$s_i8"; then
+                fail_dump "$cycle" "soak${NL}measured:$SEQ_LOG" \
+                          "soak: IOC 0x1008=$s_i8 -- TCON_INT is set, the OLED latched-black signature"
+                exit 1
+            fi
         done
         wc_now=$(wedge_count)
         wl_now=$(wedge_lines)
@@ -639,7 +750,7 @@ while [ "$cycle" -le "$CYCLES" ]; do
         say "  MEAS_HTOTAL histogram: $(echo "$hist" | cut -c1-110)"
     fi
 
-    logf "$cycle,$(date -Is),$up_now,$wc_now,$wl_now,$bh,$bw,$rec,\"$flat\",PASS"
+    logf "$cycle,$(date -Is),$up_now,$wc_now,$bwc,$wl_now,$bh,$bw,$rec,$i8,$i9,\"$flat\",PASS"
     stop_pattern
     cycle=$((cycle + 1))
 done
