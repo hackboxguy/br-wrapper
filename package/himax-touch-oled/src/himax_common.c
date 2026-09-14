@@ -2506,6 +2506,34 @@ static void himax_parse_report_data(struct himax_ts_data *ts, int ts_path,
  * 180-degree rotation measured on the bench (a touch at the display's
  * top-left is reported by the controller at 2879,1619).
  */
+#if defined(CONFIG_TOUCHSCREEN_HIMAX_IC_HX8530)
+/* Nominal contact diameter, in panel coordinates, for a present finger.
+ *
+ * The OTS firmware reports no contact area.  The per-finger byte the in-cell
+ * layout uses for width is in the right place - the raw report confirms it -
+ * but it ramps 1,2,3,4 as a finger settles and then saturates at 5, identically
+ * for a feather-light drag and a hard two-thumb press.  It is a touch-confidence
+ * counter, not a measurement.
+ *
+ * ABS_MT_TOUCH_MAJOR is a contact *diameter* in device units, not a normalised
+ * strength: Qt sets QTouchEvent::TouchPoint::rect() straight from it, so a
+ * reported 5 became a 5-pixel blob and strokes drew as thin dots that never
+ * touched each other.  Report a plausible fingertip instead - this panel is
+ * 2880 px over ~383 mm, so ~7.5 px/mm and 64 px is roughly 8.5 mm.
+ */
+#define HX8530_OTS_CONTACT_MAJOR 64U
+
+static uint32_t himax_contact_major(uint32_t w)
+{
+	return (w > 0U) ? HX8530_OTS_CONTACT_MAJOR : 0U;
+}
+#else
+static uint32_t himax_contact_major(uint32_t w)
+{
+	return w;
+}
+#endif
+
 static uint32_t himax_invert_x(struct himax_ts_data *ts, uint32_t x)
 {
 	if (!ts->pdata->inverted_x || (x >= ts->pdata->abs_x_max)) {
@@ -2645,12 +2673,15 @@ static void himax_finger_report(struct himax_ts_data *ts)
 			input_report_key(ts->input_dev, BTN_TOUCH, 1);
 #endif
 			input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR,
-					 g_target_report_data->w[i]);
+					 himax_contact_major(
+						g_target_report_data->w[i]));
 #if (HX_PROTOCOL_A == 0x00)
 			input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR,
-					 g_target_report_data->w[i]);
+					 himax_contact_major(
+						g_target_report_data->w[i]));
 			input_report_abs(ts->input_dev, ABS_MT_PRESSURE,
-					 g_target_report_data->w[i]);
+					 himax_contact_major(
+						g_target_report_data->w[i]));
 #else
 			input_report_abs(ts->input_dev, ABS_MT_TRACKING_ID, i);
 #endif
