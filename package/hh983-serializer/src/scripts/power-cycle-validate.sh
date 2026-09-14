@@ -559,13 +559,41 @@ boot_wedge_count() { rsh 30 'cat /sys/module/hh983_serializer/parameters/dtg_boo
 # well inside a second (measured 2026-09-14: five resets, four edges, bit 5
 # never observed set), so this number climbing is normal after a recovery.
 # Both print n/a on a rig with no IOC there, which is every non-OLED rig.
-ioc_1008() { rsh 30 'sudo i2ctransfer -y -f 1 w2@0x66 0x10 0x08 r1@0x66 2>/dev/null || echo n/a'; }
-ioc_1009() { rsh 30 'sudo i2ctransfer -y -f 1 w2@0x66 0x10 0x09 r1@0x66 2>/dev/null || echo n/a'; }
-tcon_latched() {
+# 0xff and 0x00 are not status values, they are a bus float or a NAK: every
+# documented state of this register has TCON_RDY (bit 7) set and bit 6 clear,
+# i.e. 0x8f/0x9f healthy and 0xaf/0xbf latched. Read until one of those comes
+# back rather than reporting whatever the bus said.
+ioc_valid() {
     case "$1" in
-        n/a|"") return 1 ;;
-        *) [ $(( $1 & 0x20 )) -ne 0 ] ;;
+        n/a|""|0xff|0xFF|0x00) return 1 ;;
+        *) [ $(( $1 & 0x80 )) -ne 0 ] && [ $(( $1 & 0x40 )) -eq 0 ] ;;
     esac
+}
+ioc_1008() {
+    local v try=1
+    while [ "$try" -le 4 ]; do
+        v=$(rsh 30 'sudo i2ctransfer -y -f 1 w2@0x66 0x10 0x08 r1@0x66 2>/dev/null || echo n/a')
+        ioc_valid "$v" && { echo "$v"; return 0; }
+        try=$((try + 1))
+    done
+    echo "${v:-n/a}"
+}
+ioc_1009() { rsh 30 'sudo i2ctransfer -y -f 1 w2@0x66 0x10 0x09 r1@0x66 2>/dev/null || echo n/a'; }
+
+# A latch is only a latch if a valid reading says so twice.
+#
+# On 2026-09-14 a single 0x1008 = 0xff -- all bits set, taken moments after boot
+# -- stopped a 20-cycle run on cycle 5 with "TCON_INT is set". Six re-reads
+# straight afterwards all said 0x8f/0x9f, the IOC answered normally, and the
+# panel was lit at 226 nits showing the Pi's white. One unconfirmed read is not
+# evidence; that is the lesson this whole investigation is built on.
+tcon_latched() {
+    local first=$1 second
+    ioc_valid "$first" || return 1
+    [ $(( first & 0x20 )) -ne 0 ] || return 1
+    second=$(ioc_1008)
+    ioc_valid "$second" || return 1
+    [ $(( second & 0x20 )) -ne 0 ]
 }
 
 # What the driver itself saw at boot, taken from dmesg so it costs no I2C and
