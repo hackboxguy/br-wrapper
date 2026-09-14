@@ -228,6 +228,17 @@ MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984
 #define DES984_GPIO4_PIN_CTL     0x19  /* GPIO4 pin control (RX Lock indicator) */
 #define DES984_GPIO6_PIN_CTL     0x1B  /* GPIO6 pin control (Combined Lock indicator) */
 #define DES984_INTB_ENABLE       0x44
+#define DES984_GENERAL_STS       0x0C  /* Deserializer general status */
+#define DES984_CRC_ERR_LO        0x6C  /* FPD4 CRC error count, read-to-clear */
+#define DES984_CRC_ERR_HI        0x6D
+#define DES984_DTG_CTL           0x20  /* DTG page: PG_DATA_SOURCE_SEL */
+#define DES984_DTG_MEAS_HACTIVE_HI 0x44 /* DTG page: measured H active, 15-bit BE */
+#define DES984_DTG_MEAS_HACTIVE_LO 0x45
+#define DES984_DTG_MEAS_VACTIVE_HI 0x46
+#define DES984_DTG_MEAS_VACTIVE_LO 0x47
+#define DES984_DTG_MEAS_HSTART_HI  0x48
+#define DES984_DTG_MEAS_HSTART_LO  0x49
+#define SER_CRC_ERROR0           0x0A  /* 983 CRC error count */
 #define DES984_GP_STATUS_0       0x53  /* [0]=FPD4RX_LOCK [1]=FPD3RX_LOCK [2]=FPDTX_PLL_LOCK */
 #define DES984_GP_STATUS_1       0x54  /* [0]=LOCK [6]=FPDRX_PLL_LOCK (no SIG_DET) */
 #define DES984_INTB_VALUE        0x81
@@ -782,27 +793,64 @@ static bool hh983_dtg_confirmed_bad(struct hh983_data *data, int first, int prog
 static void hh983_guard_wedge_snapshot(struct hh983_data *data, int meas, int prog)
 {
 	struct i2c_client *client = data->client;
-	int meas_vtotal;
+	int meas_vtotal, meas_hact, meas_vact, meas_hstart;
 	int vp_sts, ser_sts, stream_en, des_sts0, des_sts1;
+	int des_gen_sts, des_crc_lo, des_crc_hi, ser_crc, sink_cause;
+	int dtg_ctl, dtg_rst;
+	unsigned int since_boot_s, since_last_s = 0;
 
-	/* Same counter, same tearing: V total is only logged, never decided on,
-	 * but a torn one here would misdirect whoever reads the snapshot. */
+	/* Same counter, same tearing: the measured values are only logged, never
+	 * decided on, but a torn one here would misdirect whoever reads the
+	 * snapshot. */
 	meas_vtotal = hh983_read_meas15(data, DES984_DTG_MEAS_VTOTAL_HI,
 					DES984_DTG_MEAS_VTOTAL_LO, NULL);
-	if (meas_vtotal < 0)
-		meas_vtotal = -1;
+	meas_hact   = hh983_read_meas15(data, DES984_DTG_MEAS_HACTIVE_HI,
+					DES984_DTG_MEAS_HACTIVE_LO, NULL);
+	meas_vact   = hh983_read_meas15(data, DES984_DTG_MEAS_VACTIVE_HI,
+					DES984_DTG_MEAS_VACTIVE_LO, NULL);
+	meas_hstart = hh983_read_meas15(data, DES984_DTG_MEAS_HSTART_HI,
+					DES984_DTG_MEAS_HSTART_LO, NULL);
 
 	vp_sts    = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_STS);
 	ser_sts   = hh983_read_reg(client, SER_GENERAL_STS);
+	ser_crc   = hh983_read_reg(client, SER_CRC_ERROR0);
 	stream_en = hh983_deser_apb_read8(client, data->deser_addr,
 					  DES984_APB_MAIN_STREAM_EN);
-	des_sts0  = hh983_read_deser_reg(client, data->deser_addr, DES984_GP_STATUS_0);
-	des_sts1  = hh983_read_deser_reg(client, data->deser_addr, DES984_GP_STATUS_1);
+
+	/* These four are clear-on-read or read-to-clear, so this is the only
+	 * place they are read: whatever they hold is consumed here and will not
+	 * be seen again by anything else, which is the point -- they describe the
+	 * link right at the moment the wedge was confirmed.  Note that reading
+	 * the 983's SINK_0_INT_CAUSE consumes the NO_VIDEO / VIDEO_DETECT /
+	 * MODE_CHANGE flags that the mode-1 SINK monitor would otherwise see; on
+	 * mode 0 nothing else looks at them. */
+	des_sts0   = hh983_read_deser_reg(client, data->deser_addr, DES984_GP_STATUS_0);
+	des_sts1   = hh983_read_deser_reg(client, data->deser_addr, DES984_GP_STATUS_1);
+	des_gen_sts = hh983_read_deser_reg(client, data->deser_addr, DES984_GENERAL_STS);
+	des_crc_lo = hh983_read_deser_reg(client, data->deser_addr, DES984_CRC_ERR_LO);
+	des_crc_hi = hh983_read_deser_reg(client, data->deser_addr, DES984_CRC_ERR_HI);
+	sink_cause = hh983_apb_read(client, APB_SINK_0_INT_CAUSE);
+
+	dtg_ctl = hh983_deser_ind_read(client, data->deser_addr,
+				       DES984_IND_PAGE_DTG, DES984_DTG_CTL);
+	dtg_rst = hh983_deser_ind_read(client, data->deser_addr,
+				       DES984_IND_PAGE_DTG, DES984_DTG_P0_CTL);
+
+	since_boot_s = jiffies_to_msecs(get_jiffies_64()) / 1000;
+	if (data->guard_wedge_armed)
+		since_last_s = jiffies_to_msecs(jiffies - data->guard_wedge_at) / 1000;
 
 	dev_notice(&client->dev,
-		   "DP guard wedge snapshot: 984 measured Htot=%d Vtot=%d, 983 programmed Htot=%d, "
-		   "983 VP_STS=0x%02X GENERAL_STS=0x%02X, 984 stream_en=%d STS0=0x%02X STS1=0x%02X\n",
-		   meas, meas_vtotal, prog, vp_sts, ser_sts, stream_en, des_sts0, des_sts1);
+		   "DP guard wedge snapshot: 984 measured Htot=%d Vtot=%d Hact=%d Vact=%d Hstart=%d, "
+		   "983 programmed Htot=%d, 983 VP_STS=0x%02X GENERAL_STS=0x%02X CRC0=0x%02X SINK_CAUSE=0x%02X, "
+		   "984 stream_en=%d STS0=0x%02X STS1=0x%02X GEN_STS=0x%02X CRC=%d DTG_CTL=0x%02X DTG_RST=0x%02X, "
+		   "t=%us since boot, %us since last recovery\n",
+		   meas, meas_vtotal, meas_hact, meas_vact, meas_hstart,
+		   prog, vp_sts, ser_sts, ser_crc, sink_cause,
+		   stream_en, des_sts0, des_sts1, des_gen_sts,
+		   (des_crc_hi >= 0 && des_crc_lo >= 0) ? ((des_crc_hi << 8) | des_crc_lo) : -1,
+		   dtg_ctl, dtg_rst,
+		   since_boot_s, since_last_s);
 }
 
 /* Mode 0 wedge recovery by 984 digital reset (wedge_recovery=1).
@@ -1646,6 +1694,23 @@ static int hh983_init_mode_984(struct hh983_data *data)
 		dev_info(&client->dev,
 			 "OTS touch routed: host 0x%02x -> 984 Port 1 phys 0x%02x\n",
 			 OTS_TOUCH_HOST_ADDR, OTS_TOUCH_PHYS_ADDR);
+	}
+
+	/* Put the DTG's configuration on record once, so the snapshots of any
+	 * later wedge can be read against the setup it happened under.
+	 * DTG_CTL bit[1:0] selects where the timing generator gets its numbers
+	 * (3 = measured input plus main-link HACTIVE, the default here), and
+	 * DTG_RESET_CTL bit 2 is reset-on-lock, which is one of the two suspects
+	 * for the spontaneous wedge. */
+	{
+		int dtg_ctl = hh983_deser_ind_read(client, data->deser_addr,
+						   DES984_IND_PAGE_DTG, DES984_DTG_CTL);
+		int dtg_rst = hh983_deser_ind_read(client, data->deser_addr,
+						   DES984_IND_PAGE_DTG, DES984_DTG_P0_CTL);
+
+		dev_info(&client->dev,
+			 "984 DTG config at probe: DTG_CTL=0x%02X DTG_RESET_CTL=0x%02X\n",
+			 dtg_ctl, dtg_rst);
 	}
 
 	dev_info(&client->dev, "Mode 0 (983+984) initialization complete\n");
