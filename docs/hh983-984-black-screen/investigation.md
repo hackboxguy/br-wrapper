@@ -152,10 +152,57 @@ both use the 984's indirect-access registers.
 | injected wedge, poll stopped at boot, both recovery values | final | detected 0.02 s after the poll was released, both recovered (stream was already cut) |
 | forced recovery on a live stream (`dtg_tolerance=0`) | final | `wedge_recovery=1` kept the picture; `0` (pulse) lost it, needed a manual digital reset |
 
-## 5. Open items
+## 5. The OTS-OLED, 2026-09-14
 
-- OTS-OLED and 988 rigs have not run the new driver. Detection changes reach them; the OLED
-  recovery path is unchanged (`wedge_recovery=0`).
+A different fault with the same cure, which is why it belongs here.
+
+On image 01.27 the OLED rig ran `wedge_recovery=0`, the order its own bring-up
+validated. 17 minutes after boot the 984 DTG **genuinely wedged** — measured 4971,
+then 4892, against a programmed 3440. Not a torn read: this profile's H total is
+0x0D70, nowhere near a byte boundary, and the new confirmation declared it on the
+first poll, correctly. The guard did what it was told: cut the stream, pulse the
+DTG, settle, enable. The 984 came back (measured 3442, `--diagnose` healthy). **The
+panel did not** — the IOC at 0x66 showed `0x1008 = 0xAF`, `TCON_INT` asserted, the
+bring-up doc's sticky-black signature, and the Himax touch controller began
+resetting its TDDI 80 s later.
+
+**One 984 digital reset cleared it.** `TCON_INT` fell within 4 s of the write and
+the picture returned. The bring-up doc lists that state as recoverable only by a
+power cycle; its list of things that did not work is long, and the 984 soft digital
+reset was never on it.
+
+Checked before changing anything (`tmp-docs/opus-report-v5.md` has the numbers):
+
+- **Five digital resets on a healthy, streaming OLED, 60 s apart: no latch.**
+  `0x1008` stayed `0x8f`/`0x9f` at +1, +2, +5 and +10 s every time, the commanded
+  patterns arrived every time, measured H total held 3442..3444. This mattered
+  because a DTG *pulse* on a healthy streaming OLED has black-latched it by itself
+  (bring-up event C) — the same question had never been asked of the reset.
+- `0x1009`, the `TCON_INT` rising-edge counter, went 0x03 → 0x07 across those five
+  resets. So the reset does make the TCON register an edge; it just self-clears
+  faster than a one-second sample and never latches. A climbing `0x1009` after a
+  recovery is expected and is not a fault.
+
+What changed as a result: `ots-oled-17` gets `wedge_recovery=1` in
+`micropanel/scripts/pi-config-txt.sh`, and under `wedge_recovery=1` the driver now
+tries a **second digital reset** before falling back to the pulse — spending the one
+action known to harm this panel only when two harmless ones have failed.
+
+**Validated on image 01.28: pending.** The multi-cycle run (warm reboots, cold
+cycles, a 45-minute soak aimed at catching a spontaneous wedge, and an injected
+wedge) waits on that image being flashed.
+
+## 6. Open items
+
+- 988 rigs have not run the new driver. Detection changes reach them; untested.
 - `3x-qvue` (988) sits 4 px below a 256 boundary; the same confirmation now guards it, untested.
-- `dtg_wedge_count` does not count boot-time wedges (see 3.3 notes).
+- `12.3-nq1` is the last mode-0 panel still on the DTG pulse; tested with neither the
+  tear problem nor the digital reset.
+- The root cause of the OLED's spontaneous wedge is still upstream and still open: the
+  driver recovers it, nothing explains why the 984 DTG wanders in the first place.
+- Boot-path wedges now have their own counter, `dtg_boot_wedge_count`; `dtg_wedge_count`
+  keeps its old meaning (the periodic check only), so a cold-cycle run can still use
+  `dtg_wedge_count == 0` as a pass criterion.
 - The i1Display Pro returns `ERROR` for roughly one read in a hundred; the script re-measures.
+- Colour references in `power-cycle-validate.sh` are per-panel: an OLED's primaries are
+  not an LCD's, and the 15.6" numbers fail a healthy OLED on three colours of four.
