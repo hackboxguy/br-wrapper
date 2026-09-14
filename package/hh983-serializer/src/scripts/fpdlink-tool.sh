@@ -210,6 +210,57 @@ ind_read15_be() {
     printf '%s\n%s\n%s\n' "$_v1" "$_v2" "$_v3" | sort -n | sed -n 2p
 }
 
+# Confirm an H_TOTAL mismatch before calling it one, the way the driver does.
+#   confirm_htot_mismatch <deser_addr> <programmed_htotal>
+#
+# One read is not evidence.  The measured H total is a free-running counter in
+# two registers with no latch, so a value sitting on a 256 boundary tears: on
+# the 15.6" 2K5 profile (programmed 2816 = 0x0B00) roughly one raw read in six
+# comes back as 2560 or 3070, and a single torn read was enough for --diagnose
+# to announce "984 DTG stuck on corrupt H_TOTAL" on a perfectly healthy
+# pipeline -- observed on 2026-09-14, once in three runs, even with the driver
+# poll stopped and the median-of-3 sampler in place.
+#
+# A tear can only move a value inside its own 256-block or into the
+# neighbouring one, so it can never make a wedged DTG look healthy.  Requiring
+# five raw reads to be out of tolerance AND all on the same side of the
+# programmed value therefore keeps the real failure -- a stuck DTG sits 1400 px
+# or more away and stays there -- while rejecting the artefact.  Same rule as
+# hh983_dtg_confirmed_bad() in the driver.
+#
+# Sets HTOT_CONFIRMED (1 = a real mismatch), HTOT_MAJORITY (median of the five,
+# the value worth printing) and HTOT_TORN (how many of the five were out).
+confirm_htot_mismatch() {
+    _cm_dev=$1; _cm_prog=$2
+    _cm_above=0; _cm_below=0; _cm_torn=0; _cm_vals=""
+    i2c_write "$_cm_dev" 0x40 0x50
+    _cm_i=1
+    while [ "$_cm_i" -le 5 ]; do
+        _cm_v=$(_ind_read15_sample "$_cm_dev" 0x40 0x41)
+        _cm_vals="$_cm_vals $_cm_v"
+        _cm_d=$((_cm_v - _cm_prog))
+        [ "$_cm_d" -lt 0 ] && _cm_d=$((-_cm_d))
+        if [ "$_cm_d" -gt 100 ]; then
+            _cm_torn=$((_cm_torn + 1))
+            if [ "$_cm_v" -gt "$_cm_prog" ]; then
+                _cm_above=$((_cm_above + 1))
+            else
+                _cm_below=$((_cm_below + 1))
+            fi
+        fi
+        _cm_i=$((_cm_i + 1))
+        # Spaced so the five are not one burst against the same counter state.
+        [ "$_cm_i" -le 5 ] && sleep 0.05
+    done
+    HTOT_TORN=$_cm_torn
+    HTOT_MAJORITY=$(printf '%s\n' $_cm_vals | sort -n | sed -n 3p)
+    if [ "$_cm_above" -eq 5 ] || [ "$_cm_below" -eq 5 ]; then
+        HTOT_CONFIRMED=1
+    else
+        HTOT_CONFIRMED=0
+    fi
+}
+
 # Read 13-bit BE indirect register (for sync widths): ind_read13_be <dev_addr> <page> <msb_off> <lsb_off>
 # MSB[5:0] at msb_offset, LSB[7:0] at lsb_offset -> (MSB[5:0] << 8) | LSB
 ind_read13_be() {
@@ -962,10 +1013,20 @@ diag_print() {
     # different value (seen after HDMI unplug/replug) means the DTG is stuck
     # on a corrupt measurement even though HACT/VACT happen to look right.
     _htot_mismatch=0
+    _htot_torn=0
     if [ "$_dp_has_video" -eq 1 ] && [ "$_stream_has_video" -eq 1 ]; then
         _delta=$((DV_DES_HTOT - DV_983_HTOT))
         [ "$_delta" -lt 0 ] && _delta=$((-_delta))
-        [ "$_delta" -gt 100 ] && _htot_mismatch=1
+        if [ "$_delta" -gt 100 ]; then
+            # One suspicious read buys a confirmation, not a verdict.
+            confirm_htot_mismatch "$_deser_addr" "$DV_983_HTOT"
+            DV_DES_HTOT=$HTOT_MAJORITY
+            if [ "$HTOT_CONFIRMED" -eq 1 ]; then
+                _htot_mismatch=1
+            else
+                _htot_torn=$HTOT_TORN
+            fi
+        fi
     fi
 
     # ---- Verdict computation ----
@@ -1080,7 +1141,10 @@ diag_print() {
         info_line "Measured Timing" "$C_RED" "no video" "stream carries no video even though PHY is up"
     elif [ "$_htot_mismatch" -eq 1 ]; then
         _res="${DV_DES_HACT}x${DV_DES_VACT}"
-        info_line "Measured Timing" "$C_RED" "$_res" "@ ${DV_DES_HTOT}x${DV_DES_VTOT} total — H_TOTAL mismatch vs 983 (${DV_983_HTOT})"
+        info_line "Measured Timing" "$C_RED" "$_res" "@ ${DV_DES_HTOT}x${DV_DES_VTOT} total — H_TOTAL mismatch vs 983 (${DV_983_HTOT}), confirmed over 5 reads"
+    elif [ "$_htot_torn" -gt 0 ]; then
+        _res="${DV_DES_HACT}x${DV_DES_VACT}"
+        info_line "Measured Timing" "$C_YEL" "$_res" "@ ${DV_DES_HTOT}x${DV_DES_VTOT} total — measurement tears on this profile: ${_htot_torn} of 5 reads torn, DTG is fine"
     else
         _res="${DV_DES_HACT}x${DV_DES_VACT}"
         info_line "Measured Timing" "$C_GRN" "$_res" "@ ${DV_DES_HTOT}x${DV_DES_VTOT} total (from FPDLink stream)"
