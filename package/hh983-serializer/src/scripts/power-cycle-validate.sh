@@ -169,12 +169,46 @@ tasmota() { timeout 15 curl -s "$TASMOTA/cm?cmnd=$1"; }
 
 # ---------------------------------------------------------------- rig control
 
+# Switch the socket and insist the switch actually answered.
+#
+# curl returns an empty body when the Tasmota does not reply, and this used to
+# print that as "Tasmota ON ()" and carry on into a 180 s ssh wait that could
+# only fail. On 2026-09-14 the OLED rig's socket dropped off WiFi between the
+# OFF and the ON: the rig was switched off and never switched back on, sat
+# unpowered, and the run reported a black screen -- which was true and
+# completely misleading. An unpowered rig is not a display fault.
+#
+# Retries a few times, and the caller stops the run if the switch never answers,
+# so the failure is named for what it is.
+tasmota_set() {
+    local want=$1 try=1 out=""
+    while [ "$try" -le 5 ]; do
+        out=$(tasmota "Power%20$want")
+        case "$out" in
+            *"\"POWER\":\"$want\""*) echo "$out"; return 0 ;;
+        esac
+        sleep 3
+        try=$((try + 1))
+    done
+    echo "${out:-no answer}"
+    return 1
+}
+
 power_cycle() {
     say "  sync on the Pi (a write seconds before the cut is still in page cache)"
     rsh 60 'sync' >/dev/null
-    say "  Tasmota OFF ($(tasmota Power%20OFF))"
+    if ! out=$(tasmota_set OFF); then
+        say "  Tasmota did not confirm OFF ($out)"
+        return 1
+    fi
+    say "  Tasmota OFF ($out)"
     sleep "$OFF_SECS"
-    say "  Tasmota ON ($(tasmota Power%20ON))"
+    if ! out=$(tasmota_set ON); then
+        say "  Tasmota did not confirm ON ($out) -- the rig may be sitting unpowered"
+        return 1
+    fi
+    say "  Tasmota ON ($out)"
+    return 0
 }
 
 # Warm reboot over ssh.
@@ -651,8 +685,9 @@ while [ "$cycle" -le "$CYCLES" ]; do
             fail_dump "$cycle" "" "warm reboot did not bring the host down"
             exit 1
         fi
-    else
-        power_cycle
+    elif ! power_cycle; then
+        fail_dump "$cycle" "" "the Tasmota switch at $TASMOTA did not answer -- the rig is probably unpowered, this says nothing about the display"
+        exit 1
     fi
     if ! wait_for_ssh; then
         fail_dump "$cycle" "" "no ssh within ${BOOT_TIMEOUT}s after power on"
