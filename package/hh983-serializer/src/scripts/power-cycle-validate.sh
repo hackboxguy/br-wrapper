@@ -425,17 +425,35 @@ fail_dump() {
         echo "=== measured sequence"
         echo "$samples"
         echo ""
-        echo "=== dtg_wedge_count / module parameters"
+        # Trustworthy facts first: these are sysfs and dmesg reads, which cannot
+        # be corrupted by anything else touching the I2C bus.  The tool output
+        # further down can be, so it comes last and with the poll stopped.
+        echo "=== dtg_wedge_count"
+        rsh 30 'cat /sys/module/hh983_serializer/parameters/dtg_wedge_count 2>/dev/null'
+        echo ""
+        echo "=== wedge_recovery"
+        rsh 30 'cat /sys/module/hh983_serializer/parameters/wedge_recovery 2>/dev/null'
+        echo ""
+        echo "=== last 30 hh983 dmesg lines"
+        rsh 60 'dmesg | grep -i hh983 | tail -30'
+        echo ""
+        echo "=== all module parameters"
         rsh 30 'grep -H . /sys/module/hh983_serializer/parameters/* 2>/dev/null'
         echo ""
         echo "=== uptime"
         rsh 30 'uptime; head -1 /proc/uptime'
         echo ""
-        echo "=== dmesg | grep hh983"
-        rsh 60 'dmesg | grep -i hh983'
-        echo ""
-        echo "=== fpdlink-tool.sh --target=984 --diagnose"
+        # --diagnose walks the 983/984 indirect-access registers (page, offset,
+        # data) one at a time, and so does the driver's poll.  Run together they
+        # interleave and the tool reports whatever the driver left in the address
+        # register: on 2026-09-14 a live-poll --diagnose called the 983's static
+        # V total 1463 when it is 1492, and read a measured H total of 2560.  A
+        # failure dump full of invented register values is worse than no dump, so
+        # stop the poll around it exactly as histogram() does.
+        echo "=== fpdlink-tool.sh --target=984 --diagnose (driver poll stopped for this)"
+        rsh 30 'echo 0 | sudo tee /sys/module/hh983_serializer/parameters/poll_interval_ms >/dev/null; sleep 1'
         rsh 120 "NO_COLOR=1 $FPDTOOL --target=984 --diagnose"
+        rsh 30 'echo 1000 | sudo tee /sys/module/hh983_serializer/parameters/poll_interval_ms >/dev/null'
         echo ""
         echo "=== 150-read MEAS_HTOTAL histogram"
         histogram
