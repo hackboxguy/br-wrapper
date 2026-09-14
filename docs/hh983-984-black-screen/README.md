@@ -13,8 +13,16 @@ that once blinded the guard entirely. `fpdlink-tool.sh`'s `ind_read15_be()` take
 
 **Recovery.** `wedge_recovery=1` recovers by 984 digital reset (main page `0x01=0x01`, the
 Stream Deck "Sync Video" write) instead of the DTG pulse, which costs this panel its picture when
-it interrupts a live stream. **The `15.6-2k5` profile needs `wedge_recovery=1`**; `micropanel`'s
-`pi-config-txt.sh` writes it. Default is 0 — the digital reset has never been tried on the OTS-OLED.
+it interrupts a live stream. **`15.6-2k5` and `ots-oled-17` both need `wedge_recovery=1`**;
+`micropanel`'s `pi-config-txt.sh` writes it for each. The driver default stays 0, and `12.3-nq1`
+— the last mode-0 panel tested with neither problem — keeps the pulse.
+
+**Status, 2026-09-14: fixed and released on Pi image 01.28 for both mode-0 panels.** The 15.6" 2K5
+passed 30 cold cycles and 10 warm reboots on 01.27 and was re-validated on 01.28. The OTS-OLED —
+whose fault is a genuine wedge, not a torn read — ran 28 boots on 01.28 with 3 spontaneous wedges,
+15 recoveries, **zero DTG pulses, zero panel latches, zero black screens**, and a clean 45-minute
+soak. Section 6 of `investigation.md` has the numbers and the one behaviour that differs between
+the two panels; section 7 lists what is still open, the root cause of the wedge included.
 
 **Validation.** `../../package/hh983-serializer/src/scripts/power-cycle-validate.sh` (host-side):
 8 warm reboots, all of which wedged, all detected and recovered; 10 cold cycles, no false wedges.
