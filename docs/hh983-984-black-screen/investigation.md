@@ -291,7 +291,84 @@ apart *both* reading `STS0=0x81`, so a new decode error occurred between them. T
 boots, same pairing. The diagnostics of section 6.3 add the CRC counters beside these
 flags and will settle it.
 
-## 7. Open items
+## 7. Image 01.29
+
+Module md5 `41b42c7078bce73e1cc879eb23e97aab`. Differs from the validated 01.28 only in
+the wedge-snapshot diagnostics and a boot-clock fix for their "since boot" field; no
+behaviour change.
+
+Confirmation, 2026-09-14, one rig at a time:
+
+| Rig | Cold (`--verdict=hold`) | Warm (`--verdict=sequence`) | Boot wedges | Fall-backs | `TCON_INT` |
+|---|---|---|---|---|---|
+| 15.6-2k5 | 5/5 PASS | 3/3 PASS | 3 of 3 warm (5034, 4253, 5032) | 0 | n/a (no IOC) |
+| ots-oled-17 | 5/5 PASS | 3/3 PASS | 1 of 5 cold, 2 of 3 warm (4638, 5104) | 0 | clear on every cycle |
+
+Every boot wedge was cleared by a single 984 digital reset. The two-reset fallback still
+has never fired on either rig.
+
+### 7.1 The snapshot line
+
+```
+DP guard wedge snapshot: 984 measured Htot=5032 Vtot=1492 Hact=2560 Vact=1440 Hstart=156,
+983 programmed Htot=2816, 983 VP_STS=0x01 GENERAL_STS=0x53 CRC0=0x18 SINK_CAUSE=0x00,
+984 stream_en=0 STS0=0x01 STS1=0xC1 GEN_STS=0x10 CRC=0 DTG_CTL=0x93 DTG_RST=0x04,
+t=6s since boot, 0s since last recovery                                      <- 15.6-2k5
+
+DP guard wedge snapshot: 984 measured Htot=5104 Vtot=1648 Hact=2880 Vact=1620 Hstart=512,
+983 programmed Htot=3440, 983 VP_STS=0x01 GENERAL_STS=0x53 CRC0=0x48 SINK_CAUSE=0x00,
+984 stream_en=0 STS0=0x01 STS1=0xD1 GEN_STS=0x14 CRC=0 DTG_CTL=0x93 DTG_RST=0x04,
+t=6s since boot, 0s since last recovery                                      <- ots-oled-17
+```
+
+All fields sane on both rigs: `Hact`/`Vact` are each panel's real active size, `Vtot`
+correct, `t=6s` (the boot-clock fix — it read about 17 million before), nothing printed
+as `-1`. `DTG_CTL`/`DTG_RST` match the `984 DTG config at probe: DTG_CTL=0x93
+DTG_RESET_CTL=0x04` line both rigs log once.
+
+On hypothesis (a) of section 6.3: **boot wedges carry clean link flags** (`STS0=0x01`,
+`STS1=0xC1`/`0xD1` — no `FPD_DECODE_ERROR`, no `LOCK_STS_CHG`), where the OLED's
+*mid-session* wedges showed `STS0=0x81 STS1=0xD5`. That fits section 6.2's split: a boot
+wedge is the DTG still locking, a mid-session one follows a link event. Boot snapshots
+are the first read of clear-on-read bits since power-on, so "clean" there is meaningful
+while "dirty" on a later one is confounded by accumulation.
+
+## 8. A second path to a black OLED, not covered by this fix
+
+Found 2026-09-14 on the OLED rig, 54 minutes into an image-01.29 boot, before any test
+was run:
+
+| | |
+|---|---|
+| IOC `0x1008` | `0xaf`/`0xbf` over 8 reads — `TCON_INT` set, panel latched |
+| measured H total | 3441..3443 against a programmed 3440 — **healthy** |
+| `dtg_wedge_count` / `dtg_boot_wedge_count` | **0 / 0 — no wedge ever detected** |
+| `fpdlink-tool.sh --diagnose` | **[OK] Pipeline healthy** |
+| APB `0x084` | `0x01` — main stream enabled |
+| commanded white | 0.000 nits |
+| latched flags | `STS0=0x81` `STS1=0xd5`, `0x48:0x69 = 0x03` (**HACTIVE_CHNG and VTOTAL_CHNG both set**) |
+| recovery | one 984 digital reset — `TCON_INT` cleared, picture back at 219.6 nits |
+
+So the panel latched while the link, the timing and the stream were all correct. The
+only evidence is latched event flags: something disturbed the timing briefly, the TCON
+objected, and everything settled back before anything sampled it.
+
+**The DP guard cannot see this.** It decides on the measured H total, which was right at
+every poll. A transient shorter than the 1 s poll interval is invisible to it.
+
+This is consistent with the oddity in section 6.4: there, the panel latched at the moment
+the wedged measurement snapped *back* to normal, not while it was wrong. Both point at
+the TCON objecting to a timing discontinuity rather than to a wrong value.
+
+**Not acted on.** A mitigation exists and is cheap — watch the 984's `0x48:0x69`
+HACTIVE_CHNG/VTOTAL_CHNG flags, or on the OLED the IOC's `TCON_INT` directly, as a
+"panel is unhappy even though the timing looks fine" trigger for the same digital reset.
+That is a new detection path on a driver that currently works, on the strength of one
+observation, so it belongs in review rather than in a commit at the end of a
+confirmation round. How often it happens is unknown: one occurrence, in about two days
+of running this rig.
+
+## 9. Open items
 
 - 988 rigs have not run the new driver. Detection changes reach them; untested.
 - `3x-qvue` (988) sits 4 px below a 256 boundary; the same confirmation now guards it, untested.
@@ -302,8 +379,14 @@ flags and will settle it.
   gathering for it.
 - The two-digital-reset fallback has never fired on either rig, so it is a safety net
   rather than a validated path.
-- The two hypotheses for the root cause are not yet separated, but the evidence so far
-  points at (a), a link decode error — see section 6.4.
+- Root cause of the spontaneous wedge is still open. Evidence so far points at (a), a
+  link decode error (section 6.4), and section 7.1 sharpens it: boot wedges carry clean
+  link flags, mid-session ones do not. The 01.29 snapshots will accumulate on their own.
+- **The latched-with-healthy-DTG black screen of section 8 is not detected by anything.**
+  One observation; a mitigation is sketched there and deliberately not implemented.
+- The OLED rig's Tasmota socket (`192.168.1.41`) has dropped off WiFi twice, once leaving
+  the rig unpowered for five minutes. The harness now stops and says the switch did not
+  answer rather than reporting a black screen.
 - Boot-path wedges now have their own counter, `dtg_boot_wedge_count`; `dtg_wedge_count`
   keeps its old meaning (the periodic check only), so a cold-cycle run can still use
   `dtg_wedge_count == 0` as a pass criterion.

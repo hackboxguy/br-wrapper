@@ -17,18 +17,22 @@ it interrupts a live stream. **`15.6-2k5` and `ots-oled-17` both need `wedge_rec
 `micropanel`'s `pi-config-txt.sh` writes it for each. The driver default stays 0, and `12.3-nq1`
 — the last mode-0 panel tested with neither problem — keeps the pulse.
 
-**Status, 2026-09-14: fixed and released on Pi image 01.28 for both mode-0 panels.** The 15.6" 2K5
-passed 30 cold cycles and 10 warm reboots on 01.27 and was re-validated on 01.28. The OTS-OLED —
-whose fault is a genuine wedge, not a torn read — ran 28 boots on 01.28 with 3 spontaneous wedges,
-15 recoveries, **zero DTG pulses, zero panel latches, zero black screens**, and a clean 45-minute
-soak. Section 6 of `investigation.md` has the numbers and the one behaviour that differs between
-the two panels; section 7 lists what is still open, the root cause of the wedge included.
+**Status, 2026-09-14: image 01.29 is the release on both rigs.** Module md5
+`41b42c7078bce73e1cc879eb23e97aab` (01.28 was `602642d00a6b3430f3253d7f8c455e32`); 01.29
+adds only the wedge-snapshot diagnostics and a boot-clock fix for their "since boot"
+field, no behaviour change. Confirmed on both rigs: 5 cold + 3 warm cycles each, every
+warm boot wedge recovered by a single 984 digital reset, zero fall-backs to a DTG pulse,
+zero black screens. The 15.6" 2K5 had earlier passed 30 cold and 10 warm on 01.27; the
+OTS-OLED ran 28 boots on 01.28 with 3 spontaneous wedges, 15 recoveries and a clean
+45-minute soak.
 
-**Validation.** `../../package/hh983-serializer/src/scripts/power-cycle-validate.sh` (host-side):
-8 warm reboots, all of which wedged, all detected and recovered; 10 cold cycles, no false wedges.
-`wedge-rule-check.py` checks the decision rule against the recorded distributions.
-**Full record: `investigation.md`** (symptom, root cause, the two fix attempts and the shipped
-one, validation, open items).
+**One thing this does not cover.** On 2026-09-14 the OLED was found latched black with a
+completely healthy DTG (measured 3441..3443 against a programmed 3440), `--diagnose`
+reporting the pipeline healthy, the main stream on, and **no wedge ever detected**. The
+only trace was latched event flags — `FPD_DECODE_ERROR`, `LOCK_STS_CHG`, and both
+`HACTIVE_CHNG` and `VTOTAL_CHNG`. That is a second path to a black OLED which the DP
+guard cannot see, because the guard watches H total and H total was correct by the time
+it looked. A digital reset cleared it. See `investigation.md` section 8.
 
 `data/` holds the evidence the reports cite, pruned to what backs a claim:
 
