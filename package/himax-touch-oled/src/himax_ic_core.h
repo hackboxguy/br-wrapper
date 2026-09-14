@@ -92,6 +92,27 @@ struct himax_core_fp {
 #if defined(CONFIG_TOUCHSCREEN_HIMAX_IC_HX8530)
 	#define addr_CFG_base						0X03000000U
 	#define addr_rawdata		         		0x13000100U
+
+	/* OTS (on-cell) firmware config block.
+	 *
+	 * The addr_CFG_base offsets further down (0x13007xxx) describe the
+	 * in-cell/TDDI firmware layout.  The HX8530it OTS part on the OLED-OTS
+	 * panel keeps its config block at 0x13000500 instead - HX8530K_CFG_BASE
+	 * in the vendor OTS release (260604_hxchipset_17_HX8530it_OTS).  Reading
+	 * the in-cell addresses on this part returns uninitialised SRAM, so
+	 * hx8530_mcu_touch_information() uses the addresses below.
+	 *
+	 * NOTE: himax_mcu_register_read() aligns its address DOWN to a 4-byte
+	 * boundary, so an unaligned address here returns the word containing it.
+	 * Fields are therefore picked out by byte index at the call site rather
+	 * than by giving each one its own address (MAX_PT at CFG+0x82 would
+	 * otherwise silently read CFG+0x80 and hand back RX_NUM).
+	 */
+	#define HX8530_OTS_CFG_base					0x13000500U
+	#define addr_ots_fw_ver						(HX8530_OTS_CFG_base + 0x05U)
+	#define addr_ots_chk_irq_edge				(HX8530_OTS_CFG_base + 0x7DU)
+	#define addr_ots_info_channel_num			(HX8530_OTS_CFG_base + 0x80U)
+	#define addr_ots_info_xy_res				(HX8530_OTS_CFG_base + 0x90U)
 #else
 	#define addr_CFG_base						0X00000000U
 	#define addr_rawdata						0x10000000U

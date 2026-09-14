@@ -40,6 +40,13 @@
 				status = "okay";
 				report_type = <1>;
 				himax,TSIX = <&gpio 17 0>; /* GPIO17 = touch interrupt (983 REM_INTB) */
+				/* The controller's touch origin is the corner
+				 * opposite the display's, so both axes are
+				 * mirrored (measured: display top-left reads
+				 * as 2879,1619).
+				 */
+				touchscreen-inverted-x;
+				touchscreen-inverted-y;
 			};
 		};
 	};

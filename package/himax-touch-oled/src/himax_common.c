@@ -2500,6 +2500,30 @@ static void himax_parse_report_data(struct himax_ts_data *ts, int ts_path,
 
 /* end parse_report_data*/
 
+/* Mirror a reported point when the panel's touch origin is not the display's.
+ * On the OLED-OTS 17.3" panel the touch controller scans from the opposite
+ * corner, so its overlay sets both touchscreen-inverted-x and -y, giving the
+ * 180-degree rotation measured on the bench (a touch at the display's
+ * top-left is reported by the controller at 2879,1619).
+ */
+static uint32_t himax_invert_x(struct himax_ts_data *ts, uint32_t x)
+{
+	if (!ts->pdata->inverted_x || (x >= ts->pdata->abs_x_max)) {
+		return x;
+	}
+
+	return (ts->pdata->abs_x_max - 1U) - x;
+}
+
+static uint32_t himax_invert_y(struct himax_ts_data *ts, uint32_t y)
+{
+	if (!ts->pdata->inverted_y || (y >= ts->pdata->abs_y_max)) {
+		return y;
+	}
+
+	return (ts->pdata->abs_y_max - 1U) - y;
+}
+
 static void himax_report_all_leave_event(struct himax_ts_data *ts)
 {
 	uint8_t loop_i = 0;
@@ -2631,9 +2655,11 @@ static void himax_finger_report(struct himax_ts_data *ts)
 			input_report_abs(ts->input_dev, ABS_MT_TRACKING_ID, i);
 #endif
 			input_report_abs(ts->input_dev, ABS_MT_POSITION_X,
-					 g_target_report_data->x[i]);
+					 himax_invert_x(ts,
+						g_target_report_data->x[i]));
 			input_report_abs(ts->input_dev, ABS_MT_POSITION_Y,
-					 g_target_report_data->y[i]);
+					 himax_invert_y(ts,
+						g_target_report_data->y[i]));
 #if (HX_PROTOCOL_A == 0x00)
 			ts->last_slot = i;
 			input_mt_report_slot_state(ts->input_dev,
@@ -3204,6 +3230,25 @@ int himax_chip_common_init(void)
 		goto error_ic_detect_failed;
 	}
 
+#if defined(CONFIG_TOUCHSCREEN_HIMAX_IC_HX8530)
+	/* HX8530it OTS: the two-section flash CRC describes the in-cell flash
+	 * layout and reports a mismatch on this part even with good firmware.
+	 * The vendor OTS release never runs a flash CRC during probe - it lives
+	 * in the optional HX_BOOT_UPGRADE/HX_ZERO_FLASH path - so the result is
+	 * logged and init continues.  Gating on it left touch information unread
+	 * and registered the input device 0x0 with 0 fingers.
+	 *
+	 * config_reload_enable(), power_on_init() and read_FW_ver() are skipped
+	 * deliberately: they address the in-cell 0x13007xxx config block, which
+	 * is not where this part keeps its firmware config.
+	 */
+	if (!g_core_fp.fp_calculateChecksum(ic_data->HX_FW_SIZE)) {
+		W("%s: flash CRC mismatch (expected on OTS), continuing\n",
+			__func__);
+	}
+
+	g_core_fp.fp_touch_information();
+#else
 	if (!g_core_fp.fp_calculateChecksum(ic_data->HX_FW_SIZE)) {
 		E("%s: check flash fail, please upgrade FW\n", __func__);
 #if (HX_BOOT_UPGRADE == 0x01)
@@ -3220,6 +3265,7 @@ int himax_chip_common_init(void)
 		himax_mcu_read_FW_ver();
 		g_core_fp.fp_touch_information();
 	}
+#endif
 
 #if (HX_BOOT_UPGRADE == 0x01)
 	ts->himax_boot_upgrade_wq =

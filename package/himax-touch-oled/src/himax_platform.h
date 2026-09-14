@@ -46,6 +46,12 @@ struct himax_i2c_platform_data {
 	int (*power)(int on);
 	void (*reset)(void);
 	int g_customer_control_tp_reset;
+	/* Standard Linux touchscreen bindings: the OLED-OTS panel's touch
+	 * origin is the opposite corner from the display's, so its overlay
+	 * sets both and the reported point is mirrored on each axis.
+	 */
+	bool inverted_x;
+	bool inverted_y;
 };
 
 #define HIMAX_I2C_PLATFORM

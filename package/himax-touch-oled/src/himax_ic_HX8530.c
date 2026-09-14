@@ -478,31 +478,45 @@ void hx8530_mcu_touch_information(void)
 
 	I("%s Enter\n", __func__);
 
+	/* OTS config block (HX8530_OTS_CFG_base), not the in-cell 0x13007xxx
+	 * one.  RX_NUM (CFG+0x80), TX_NUM (+0x81) and MAX_PT (+0x82) share one
+	 * word, so one read covers all three.  The values match the vendor OTS
+	 * release's fix_touch_info fallbacks (68 / 38 / 10).
+	 */
 	himax_mcu_register_read(
-		addr_fw_define_chip_rx_tx_num, DATA_LEN_4, data);
-	ic_data->HX_RX_NUM = data[2];
-	ic_data->HX_TX_NUM = data[3];
+		addr_ots_info_channel_num, DATA_LEN_4, data);
+	ic_data->HX_RX_NUM = data[0];
+	ic_data->HX_TX_NUM = data[1];
+	ic_data->HX_MAX_PT = data[2];
 
+	/* CFG+0x7D, i.e. byte 1 of the word at CFG+0x7C.  Informational only:
+	 * himax_int_register_trigger() always registers a level-low IRQ because
+	 * the 983/984 REM_INTB back-channel degrades edges.
+	 */
 	himax_mcu_register_read(
-		addr_fw_define_maxpt, DATA_LEN_4, data);
-	ic_data->HX_MAX_PT = data[0];
-
-	himax_mcu_register_read(
-		addr_fw_define_int_is_edge, DATA_LEN_4, data);
+		addr_ots_chk_irq_edge, DATA_LEN_4, data);
 	ic_data->HX_INT_IS_EDGE = ((data[1] & 0x01U) == 0x01U);
 
-	himax_mcu_register_read(
-		addr_fw_HX_ID_EN, DATA_LEN_4, data);
-	ic_data->HX_IS_ID_EN = ((data[1] & 0x02U) == 0x02U);
-	ic_data->HX_ID_PALM_EN = ((data[1] & 0x80U) == 0x80U);
-	ic_data->STOP_FW_BY_HOST_EN = ((data[1] & 0x01U) == 0x01U);
+	/* The OTS config block has no ID_EN word.  The vendor OTS release sets
+	 * FIX_HX_ID_EN = 1, but that belongs to its own report parser; this tree
+	 * parses points with the in-cell layout, where ID_EN takes the event ID
+	 * from the top two bits of the X high byte.  This panel sends plain
+	 * coordinates, and X <= 2879 keeps that high byte at 0x0B or below, so
+	 * the event ID would decode as 0 ("no touch") for every point and every
+	 * finger would be dropped.  Keep ID_EN off: BTN_TOUCH then toggles but
+	 * no ABS_MT_POSITION_X/Y is ever emitted.
+	 */
+	ic_data->HX_IS_ID_EN = false;
+	ic_data->HX_ID_PALM_EN = false;
+	ic_data->STOP_FW_BY_HOST_EN = false;
 
+	/* Little-endian 16-bit pairs here, unlike the big-endian in-cell layout */
 	himax_mcu_register_read(
-		addr_fw_define_xy_res, DATA_LEN_4, data);
-	ic_data->HX_Y_RES = ((uint16_t)data[2] << 8U);
-	ic_data->HX_Y_RES += (uint16_t)data[3];
-	ic_data->HX_X_RES = ((uint16_t)data[0] << 8U);
-	ic_data->HX_X_RES += (uint16_t)data[1];
+		addr_ots_info_xy_res, DATA_LEN_4, data);
+	ic_data->HX_X_RES = ((uint16_t)data[1] << 8U);
+	ic_data->HX_X_RES += (uint16_t)data[0];
+	ic_data->HX_Y_RES = ((uint16_t)data[3] << 8U);
+	ic_data->HX_Y_RES += (uint16_t)data[2];
 
 	private_ts->nFinger_support = ic_data->HX_MAX_PT;
 	private_ts->pdata->abs_x_min = 0;

@@ -172,6 +172,11 @@ int himax_parse_dt(struct himax_ts_data *ts,
 		I(" DT:protocol_type=%d\n", pdata->protocol_type);
 	}
 
+	pdata->inverted_x = of_property_read_bool(dt, "touchscreen-inverted-x");
+	pdata->inverted_y = of_property_read_bool(dt, "touchscreen-inverted-y");
+	I(" DT:inverted-x=%d, inverted-y=%d\n",
+		pdata->inverted_x, pdata->inverted_y);
+
 	return 0;
 }
 EXPORT_SYMBOL(himax_parse_dt);
