@@ -51,6 +51,19 @@
 #                     colour, read it twice --hold-secs apart, then command
 #                     white.  See check_hold() for why the cheap one is sound.
 #   --hold-secs=S     gap between the two reads of the held colour (default 10)
+#   --wedges=POLICY   what a detected wedge means.
+#                     "none" (default): dtg_wedge_count must be 0. Right where a
+#                     wedge can only be a false one -- 15.6-2k5, whose measured
+#                     H total sits on a byte boundary and whose real wedges are
+#                     torn reads.
+#                     "recovered": wedges are expected and the run passes as long
+#                     as each one was actually recovered -- no fall-back to a DTG
+#                     pulse, and the measurement the driver logged after the
+#                     reset is back within tolerance. Right for ots-oled-17,
+#                     where the wedge is a genuine upstream fault that arrives on
+#                     its own and the whole point of wedge_recovery=1 is to
+#                     survive it. Requiring zero there would fail the rig for
+#                     doing exactly what it is supposed to do.
 #   --warm            reboot over ssh ("sync; sudo reboot") instead of cutting
 #                     the Tasmota socket.  Cold cycles never wedge the 984 DTG
 #                     on this rig; warm reboots do, which is the only way to
@@ -99,6 +112,7 @@ TASMOTA=http://192.168.1.186
 LOG_DIR=$PWD/power-cycle-validate-logs
 PASS_NITS=50
 VERDICT_MODE=sequence
+WEDGE_POLICY=none
 PANEL=""
 HOLD_SECS=10
 WARM=0
@@ -126,6 +140,7 @@ for arg in "$@"; do
         --pass-nits=*)    PASS_NITS="${arg#*=}" ;;
         --verdict=*)      VERDICT_MODE="${arg#*=}" ;;
         --panel=*)        PANEL="${arg#*=}" ;;
+        --wedges=*)       WEDGE_POLICY="${arg#*=}" ;;
         --hold-secs=*)    HOLD_SECS="${arg#*=}" ;;
         --warm)           WARM=1 ;;
         --retry-settle=*) RETRY_SETTLE="${arg#*=}" ;;
@@ -607,6 +622,20 @@ recovery_ran() {
 }
 wedge_lines()  { rsh 30 'dmesg | grep -c "DTG wedge"'; }
 
+# Did every wedge this boot actually get recovered?
+#
+# Two ways it did not: the driver fell back to a DTG pulse (so the digital
+# resets failed, and on the OLED the pulse is what latches the panel), or the
+# measurement it logged after a reset is still out of tolerance. Prints "ok",
+# or the reason it is not.
+recovery_ok() {
+    rsh 60 'tol=$(cat /sys/module/hh983_serializer/parameters/dtg_tolerance)
+        if dmesg | grep -q "falling back to a DTG pulse"; then echo "fell back to a DTG pulse"; exit 0; fi
+        bad=$(dmesg | sed -n "s/.*digital reset after [0-9]* ms, DTG measured Htotal=\([0-9-]*\), 983 Htotal=\([0-9]*\).*/\1 \2/p" |
+              awk -v t="$tol" "{d=\$1-\$2; if (d<0) d=-d; if (d>t) print \$1\"/\"\$2}" | tr "\n" " ")
+        if [ -n "$bad" ]; then echo "reset left the measurement out of tolerance: $bad"; else echo ok; fi'
+}
+
 # Section 8 of the analysis: 150 raw MSB+LSB reads of MEAS_HTOTAL, counted.
 # After the fix the torn outliers (2560, 3066..3071 against a programmed 2816)
 # are still there - the hardware has not changed - and that is the point: the
@@ -690,7 +719,11 @@ fail_dump() {
 # ----------------------------------------------------------------------- main
 
 say "power-cycle-validate: $CYCLES cycles, soak ${SOAK_MIN} min, pi=$PI, tasmota=$TASMOTA"
-say "pass = verdict mode '$VERDICT_MODE' arrives on the glass (colorimeter only) and dtg_wedge_count == 0"
+if [ "$WEDGE_POLICY" = "recovered" ]; then
+    say "pass = verdict mode '$VERDICT_MODE' arrives on the glass, TCON_INT clear, and every wedge recovered"
+else
+    say "pass = verdict mode '$VERDICT_MODE' arrives on the glass (colorimeter only) and dtg_wedge_count == 0"
+fi
 say "log: $LOG"
 logf "# cycle,timestamp,uptime_s,wedge_count,boot_wedge_count,dmesg_wedge_lines,boot_htotal,wedged_at_boot,recovery,ioc_1008,ioc_1009,measured_sequence,result"
 
@@ -767,7 +800,16 @@ while [ "$cycle" -le "$CYCLES" ]; do
         fi
         exit 1
     fi
-    if [ "$wc_now" != "0" ]; then
+    if [ "$WEDGE_POLICY" = "recovered" ]; then
+        # Wedges are expected here; what must hold is that each was recovered.
+        rok=$(recovery_ok)
+        if [ "$rok" != "ok" ]; then
+            logf "$cycle,$(date -Is),$up_now,$wc_now,$bwc,$wl_now,$bh,$bw,$rec,$i8,$i9,\"$flat\",FAIL-RECOVERY"
+            fail_dump "$cycle" "$flat" "a wedge was not recovered cleanly: $rok"
+            exit 1
+        fi
+        [ "$wc_now" != "0" ] && say "  cycle $cycle: $wc_now wedge(s) detected while video was up, all recovered"
+    elif [ "$wc_now" != "0" ]; then
         logf "$cycle,$(date -Is),$up_now,$wc_now,$bwc,$wl_now,$bh,$bw,$rec,$i8,$i9,\"$flat\",FAIL-WEDGE"
         fail_dump "$cycle" "$flat" "panel followed every pattern but dtg_wedge_count=$wc_now (the guard still fired)"
         exit 1
@@ -799,7 +841,14 @@ while [ "$cycle" -le "$CYCLES" ]; do
         done
         wc_now=$(wedge_count)
         wl_now=$(wedge_lines)
-        if [ "$wc_now" != "0" ]; then
+        if [ "$WEDGE_POLICY" = "recovered" ]; then
+            rok=$(recovery_ok)
+            if [ "$rok" != "ok" ]; then
+                fail_dump "$cycle" "" "soak: a wedge was not recovered cleanly: $rok"
+                exit 1
+            fi
+            [ "$wc_now" != "0" ] && say "  soak: $wc_now wedge(s) detected and recovered"
+        elif [ "$wc_now" != "0" ]; then
             logf "$cycle,$(date -Is),soak-end,$wc_now,$wl_now,\"\",,FAIL-WEDGE"
             fail_dump "$cycle" "" "soak ended with dtg_wedge_count=$wc_now"
             exit 1
