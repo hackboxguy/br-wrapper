@@ -256,6 +256,41 @@ FPD-Link lock loss or decode error that reset-on-lock then mishandles (non-zero 
 compensation drifting with no link event at all (every link flag clean, only the H
 total moved).
 
+### 6.4 How long the panel tolerates a wedged timing — measured 2026-09-14
+
+`dtg_recover=0` makes the guard detect and log a wedge without acting, so a genuine
+spontaneous wedge can be left on the glass and timed. One arrived 22.8 minutes after
+boot:
+
+| | |
+|---|---|
+| at the wedge (measured 4669 vs 3440) | `Y = 0.000` already — the picture is gone in under 5 s |
+| `TCON_INT` at +0, +15 s, +39 s | clear (`0x8f`/`0x9f`) |
+| `TCON_INT` at **+61 s** | **set (`0xbf`)** — latched |
+| measured H total at +61 s | 3442 — the DTG had healed unaided by then |
+| recovery | one 984 digital reset; picture back at 219 nits |
+
+Three things follow. The picture is lost immediately but the **latch takes about a
+minute**, so the bring-up doc's 5..10 s estimate is roughly six times short. The driver
+detects in two to three polls and recovers in ~260 ms, using about 5 % of that margin.
+And a wedged timing left alone latches the panel far more slowly than a DTG *pulse*
+does — on 01.27 the panel was latched within seconds of the driver pulsing — which is
+the clearest argument yet for `wedge_recovery=1`.
+
+One oddity for whoever takes the root cause: the measurement healed itself by +61 s and
+the panel latched at that same moment, so a second timing discontinuity (the wedged
+value snapping back) may be what the TCON objects to, rather than the wedged value
+itself.
+
+**A root-cause signal.** That wedge's snapshot read `STS0=0x81 STS1=0xD5` —
+`FPD_DECODE_ERROR` and `LOCK_STS_CHG` set beside the bad H total, i.e. hypothesis (a) of
+section 6.3 rather than (b). These bits are clear-on-read and the snapshot is their only
+reader, so a first snapshot after boot shows everything latched since boot; what makes
+it more than an artefact is that report v5's cold cycle 5 had two snapshots ten seconds
+apart *both* reading `STS0=0x81`, so a new decode error occurred between them. Two
+boots, same pairing. The diagnostics of section 6.3 add the CRC counters beside these
+flags and will settle it.
+
 ## 7. Open items
 
 - 988 rigs have not run the new driver. Detection changes reach them; untested.
@@ -267,9 +302,8 @@ total moved).
   gathering for it.
 - The two-digital-reset fallback has never fired on either rig, so it is a safety net
   rather than a validated path.
-- How long the OLED tolerates a wedged timing before latching is still unmeasured: every
-  wedge has been cleared far too quickly for the panel to be at risk. Three attempts to
-  produce the conditions failed.
+- The two hypotheses for the root cause are not yet separated, but the evidence so far
+  points at (a), a link decode error — see section 6.4.
 - Boot-path wedges now have their own counter, `dtg_boot_wedge_count`; `dtg_wedge_count`
   keeps its old meaning (the periodic check only), so a cold-cycle run can still use
   `dtg_wedge_count == 0` as a pass criterion.
