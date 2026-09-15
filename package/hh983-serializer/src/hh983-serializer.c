@@ -178,6 +178,34 @@ static int ots_touch;
 module_param(ots_touch, int, 0444);
 MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984 I2C Port 1, phys 0x49) to host 0x48 (default: 0)");
 
+/* SCL timing for the 984's I2C controller, applied with ots_touch only.
+ *
+ * DS90HH984-Q1 7.6.1.41/42: the high and low pulse widths are
+ * 38.0952ns * (N + 5), the constant being one period of the 26.25 MHz internal
+ * oscillator.  The reset value of 0x7F on both gives 5.03us each way, i.e.
+ * 99.4 kHz - which is what the bus measured at before this was set.
+ *
+ * Himax specify 400 kHz for the HX8530.  0x1A/0x1E gives 1.18us high and
+ * 1.33us low, 397.7 kHz, keeping t_LOW above the 1.3us I2C Fast-mode minimum
+ * (a symmetric 0x1C/0x1C hits the same frequency but leaves t_LOW 3% short).
+ *
+ * This is worth more than compliance tidiness: a 56-byte touch report takes
+ * ~5ms at 100 kHz against the controller's ~5.5ms scan period, so the host
+ * could only service every second frame.  Measured on the bench, raising the
+ * bus took the report rate from 90 Hz to ~180 Hz with the checksum error rate
+ * unchanged (1.21% -> 1.11%) and no TDDI recoveries.
+ */
+#define DES984_SCL_HIGH_TIME	0x2B
+#define DES984_SCL_LOW_TIME	0x2C
+
+static int ots_scl_high = 0x1A;
+module_param(ots_scl_high, int, 0444);
+MODULE_PARM_DESC(ots_scl_high, "ots_touch only: 984 SCL_HIGH_TIME, 38.1ns*(N+5) (default: 0x1A, ~398 kHz with ots_scl_low)");
+
+static int ots_scl_low = 0x1E;
+module_param(ots_scl_low, int, 0444);
+MODULE_PARM_DESC(ots_scl_low, "ots_touch only: 984 SCL_LOW_TIME, 38.1ns*(N+5) (default: 0x1E)");
+
 /* HX8530 on the 984's local I2C Port 1: physical address vs host-visible alias. */
 #define OTS_TOUCH_PHYS_ADDR	0x49	/* actual 7-bit addr on the 984 Port 1 bus */
 #define OTS_TOUCH_HOST_ADDR	0x48	/* address presented to the Pi (himax DT reg) */
@@ -1697,6 +1725,24 @@ static int hh983_init_mode_984(struct hh983_data *data)
 		dev_info(&client->dev,
 			 "OTS touch routed: host 0x%02x -> 984 Port 1 phys 0x%02x\n",
 			 OTS_TOUCH_HOST_ADDR, OTS_TOUCH_PHYS_ADDR);
+
+		/* Raise the 984's local I2C bus to the 400 kHz Himax specify for
+		 * the HX8530.  Only under ots_touch: the other mode 0 boards
+		 * (15.6-2k5, 12.3-nq1) have no touch on the deserializer and are
+		 * left at the 984's 100 kHz reset value.
+		 */
+		ret = hh983_write_deser_reg(client, data->deser_addr,
+					    DES984_SCL_HIGH_TIME, ots_scl_high);
+		if (ret < 0)
+			return ret;
+		ret = hh983_write_deser_reg(client, data->deser_addr,
+					    DES984_SCL_LOW_TIME, ots_scl_low);
+		if (ret < 0)
+			return ret;
+		dev_info(&client->dev,
+			 "OTS touch bus: 984 SCL high=0x%02x low=0x%02x (~%u kHz)\n",
+			 ots_scl_high, ots_scl_low,
+			 10000000U / (381U * (ots_scl_high + ots_scl_low + 10U)));
 	}
 
 	/* Put the DTG's configuration on record once, so the snapshots of any
