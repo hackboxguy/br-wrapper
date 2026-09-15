@@ -973,10 +973,27 @@ int himax_vendor_show(struct seq_file *s, void *v)
 
 	UNUSED(v);
 
+#if defined(CONFIG_TOUCHSCREEN_HIMAX_IC_HX8530)
+	/* Deliberately no hardware access: this is a read-only diagnostic file.
+	 *
+	 * The sequence below resets the controller, which measures 1.49 s from
+	 * config_reload_enable to the reporting restart.  disp-settings polls
+	 * this file every 10 s while the Display Settings screen is open, so on
+	 * the OLED-OTS panel it showed up as the brightness slider freezing for
+	 * a second or two, once per poll, on an otherwise idle-clean system.
+	 *
+	 * Skipping it costs nothing here: himax_chip_common_init() already does
+	 * not call himax_mcu_read_FW_ver() on this part, because that reads the
+	 * in-cell 0x13007xxx config block rather than the OTS one at 0x13000500.
+	 * The vendor_* fields printed below are therefore no less populated than
+	 * they were with the reload in place - the reset bought nothing.
+	 */
+#else
 	himax_mcu_config_reload_enable();
 	himax_mcu_power_on_init();
 	himax_mcu_read_FW_ver();
 	g_core_fp.fp_touch_information();
+#endif
 
 	seq_printf(s, "IC = %s\n", private_ts->chip_name);
 
