@@ -29,6 +29,13 @@
 // TDDI touch controller configuration
 #define DEFAULT_TDDI_PATH "/proc/android_touch"
 
+// IOC firmware reference images, used to decide whether an update is
+// available. These are the images the sp6bins package installs; the IOC
+// carries the same slot image, so a CRC mismatch means the board is running
+// something other than what this rootfs ships.
+#define DEFAULT_IOC_REF_IMAGE   "/home/pi/micropanel/share/sp6bins/firmware/bios-bin/REMOTE_DISP_OTS_display_manager_ota.bin"
+#define DEFAULT_HH983_REF_IMAGE "/home/pi/micropanel/share/sp6bins/firmware/bios-bin/983HH_983_manager_ota.bin"
+
 // Config file location
 #define DEFAULT_CONFIG_FILE "/usr/share/qt-apps/disp-settings.json"
 

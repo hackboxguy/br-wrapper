@@ -1027,14 +1027,26 @@ Window {
                             visible: mcu.available || hh983.available
 
                             Text { text: "IOC:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888"; visible: mcu.available }
-                            Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff"; visible: mcu.available }
-                            Text { text: "(" + mcu.buildDateTime + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: mcu.available }
+                            Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: mcu.versionAlert ? "#e74c3c" : "#ffffff"; visible: mcu.available
+                                   ToolTip.visible: mcu.versionAlert && hoverIocA.hovered; ToolTip.text: mcu.versionAlertReason
+                                   HoverHandler { id: hoverIocA } }
+                            Text { text: "(" + mcu.buildDateTime.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: mcu.available
+                                   ToolTip.visible: hoverDateIocA.hovered; ToolTip.text: mcu.buildDateTime
+                                   HoverHandler { id: hoverDateIocA } }
+                            Text { text: mcu.shortSerial; font.pixelSize: Math.max(11, Screen.height * 0.0165); color: "#5dade2"
+                                   visible: mcu.available && mcu.shortSerial !== "" }
 
                             Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 4; Layout.bottomMargin: 4; color: "#333333"; visible: mcu.available && hh983.available }
 
                             Text { text: "HH983:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888"; visible: hh983.available }
-                            Text { text: hh983.firmwareVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff"; visible: hh983.available }
-                            Text { text: "(" + hh983.buildDateTime + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: hh983.available }
+                            Text { text: hh983.firmwareVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: hh983.versionAlert ? "#e74c3c" : "#ffffff"; visible: hh983.available
+                                   ToolTip.visible: hh983.versionAlert && hoverHhA.hovered; ToolTip.text: hh983.versionAlertReason
+                                   HoverHandler { id: hoverHhA } }
+                            Text { text: "(" + hh983.buildDateTime.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: hh983.available
+                                   ToolTip.visible: hoverDateHhA.hovered; ToolTip.text: hh983.buildDateTime
+                                   HoverHandler { id: hoverDateHhA } }
+                            Text { text: hh983.shortSerial; font.pixelSize: Math.max(11, Screen.height * 0.0165); color: "#5dade2"
+                                   visible: hh983.available && hh983.shortSerial !== "" }
 
                             Item { Layout.fillWidth: true }
                         }
@@ -1939,25 +1951,41 @@ Window {
 
                     Text { text: "OS:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888" }
                     Text { text: osVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff" }
-                    Text { text: "(" + osBuildDate + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666" }
+                    Text { text: "(" + osBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"
+                           ToolTip.visible: hoverOsB.hovered; ToolTip.text: osBuildDate
+                           HoverHandler { id: hoverOsB } }
 
                     Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 8; Layout.bottomMargin: 8; color: "#333333" }
 
                     Text { text: "App:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888" }
                     Text { text: swVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff" }
-                    Text { text: "(" + swBuildDate + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666" }
+                    Text { text: "(" + swBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"
+                           ToolTip.visible: hoverSwB.hovered; ToolTip.text: swBuildDate
+                           HoverHandler { id: hoverSwB } }
 
                     Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 8; Layout.bottomMargin: 8; color: "#333333"; visible: mcu.available }
 
                     Text { text: "IOC:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888"; visible: mcu.available }
-                    Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff"; visible: mcu.available }
-                    Text { text: "(" + mcu.buildDateTime + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"; visible: mcu.available }
+                    Text { text: mcu.firmwareVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: mcu.versionAlert ? "#e74c3c" : "#ffffff"; visible: mcu.available
+                           ToolTip.visible: mcu.versionAlert && hoverIocB.hovered; ToolTip.text: mcu.versionAlertReason
+                           HoverHandler { id: hoverIocB } }
+                    Text { text: "(" + mcu.buildDateTime.substring(0, 10) + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"; visible: mcu.available
+                           ToolTip.visible: hoverDateIocB.hovered; ToolTip.text: mcu.buildDateTime
+                           HoverHandler { id: hoverDateIocB } }
+                    Text { text: mcu.shortSerial; font.pixelSize: Math.max(11, Screen.height * 0.0135); color: "#5dade2"
+                           visible: mcu.available && mcu.shortSerial !== "" }
 
                     Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 8; Layout.bottomMargin: 8; color: "#333333"; visible: hh983.available }
 
                     Text { text: "HH983:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888"; visible: hh983.available }
-                    Text { text: hh983.firmwareVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff"; visible: hh983.available }
-                    Text { text: "(" + hh983.buildDateTime + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"; visible: hh983.available }
+                    Text { text: hh983.firmwareVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: hh983.versionAlert ? "#e74c3c" : "#ffffff"; visible: hh983.available
+                           ToolTip.visible: hh983.versionAlert && hoverHhB.hovered; ToolTip.text: hh983.versionAlertReason
+                           HoverHandler { id: hoverHhB } }
+                    Text { text: "(" + hh983.buildDateTime.substring(0, 10) + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"; visible: hh983.available
+                           ToolTip.visible: hoverDateHhB.hovered; ToolTip.text: hh983.buildDateTime
+                           HoverHandler { id: hoverDateHhB } }
+                    Text { text: hh983.shortSerial; font.pixelSize: Math.max(11, Screen.height * 0.0135); color: "#5dade2"
+                           visible: hh983.available && hh983.shortSerial !== "" }
 
                     Item { Layout.fillWidth: true }
                 }

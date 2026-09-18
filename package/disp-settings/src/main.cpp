@@ -75,6 +75,19 @@ int main(int argc, char *argv[])
                                           "protocol", "auto");
     parser.addOption(fpgaProtocolOption);
 
+    QCommandLineOption iocRefOption("ioc-ref-image",
+                                    QString("Reference image for the display IOC at 0x66, used to "
+                                            "decide whether an update is available (default: %1)")
+                                        .arg(DEFAULT_IOC_REF_IMAGE),
+                                    "path", DEFAULT_IOC_REF_IMAGE);
+    parser.addOption(iocRefOption);
+
+    QCommandLineOption hh983RefOption("hh983-ref-image",
+                                      QString("Reference image for the HH983 IOC at 0x67 (default: %1)")
+                                          .arg(DEFAULT_HH983_REF_IMAGE),
+                                      "path", DEFAULT_HH983_REF_IMAGE);
+    parser.addOption(hh983RefOption);
+
     parser.process(app);
 
     // Get screen resolution for debugging
@@ -110,6 +123,7 @@ int main(int argc, char *argv[])
 
     McuController mcuController;
     mcuController.setI2cBus(parser.value(i2cOption));
+    mcuController.setReferenceImage(parser.value(iocRefOption));
     mcuController.start();
 
     // HH983 serializer MCU on same bus at 0x67 — version/build-date only (no temp)
@@ -117,6 +131,7 @@ int main(int argc, char *argv[])
     hh983Controller.setI2cBus(parser.value(i2cOption));
     hh983Controller.setI2cAddress(0x67);
     hh983Controller.setReadTemperature(false);
+    hh983Controller.setReferenceImage(parser.value(hh983RefOption));
     hh983Controller.start();
 
     // RTQ6749 PMIC via IOC MCU (0x66) bridge to internal 0x6B
