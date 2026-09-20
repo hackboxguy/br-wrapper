@@ -10,7 +10,10 @@
 #   - Host: Raspberry Pi 4
 #   - Serializer: DS90UH983 at 0x18
 #   - Deserializer: DS90UH988 at 0x2C
-#   - Remote targets: HIMAX TDDI at 0x48, 0x49 (on deserializer I2C Port 1)
+#   - Remote target: HIMAX TDDI at 0x48, on the deserializer's I2C Port 0 or
+#     Port 1 depending on the panel board -- 12.3"-NQ5 has it on Port 1,
+#     12.3"-NQ1.1 on Port 0.  This script probes for it, as the kernel driver
+#     does.  Pass TDDI_PORT=0 or 1 in the environment to skip the probe.
 #   - I2C Bus: /dev/i2c-1
 
 # Configuration
@@ -95,17 +98,51 @@ echo "=== Step 3: Configure Serializer I2C Routing ==="
 # The serializer controls all BCC routing when connected to the host.
 # TARGET_ID: [7:1] = 7-bit address << 1
 # TARGET_ALIAS: [7:1] = alias << 1, [0] = port select (not used on serializer)
-# TARGET_DEST: [7:5] = dest port (001=Port1), [1:0] = depth (00=direct)
+# TARGET_DEST: [7:5] = dest port (000=Port0, 001=Port1), [1:0] = depth (00=direct)
+#
+# Which deserializer I2C port carries the TDDI differs per panel board, so
+# probe rather than assume.  Port 1 is tried first so a board that has it there
+# ends with exactly the register values this script used to write.
+#
+# Getting this wrong is worse than leaving it unset: TARGET_ALIAS0 claims host
+# address 0x48 unconditionally, so a wrong TARGET_DEST0 hijacks 0x48 and NACKs
+# every touch transaction -- even where plain pass-through would have reached
+# the TDDI.  That is how 12.3"-NQ1.1 touch was broken until 2026-09-20.
 
-# TDDI 0x48 -> route to deserializer I2C Port 1
+probe_port() {
+    # $1 = dest byte; returns 0 if the TDDI answers at host 0x48 through it
+    i2cset -f -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x78 0x00 2>/dev/null
+    i2cset -f -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x70 0x90 2>/dev/null
+    i2cset -f -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x88 0x$1 2>/dev/null
+    i2cset -f -y ${I2C_BUS} 0x${SERIALIZER_ADDR} 0x78 0x90 2>/dev/null
+    usleep 3000 2>/dev/null || sleep 0.01
+    i2cget -f -y ${I2C_BUS} 0x48 0x00 >/dev/null 2>&1
+}
+
+case "${TDDI_PORT}" in
+    0) DEST="00"; printf "TDDI port forced to DES I2C Port 0\n" ;;
+    1) DEST="20"; printf "TDDI port forced to DES I2C Port 1\n" ;;
+    *)
+        if probe_port "20"; then
+            DEST="20"; printf "TDDI 0x48 found on DES I2C Port 1\n"
+        elif probe_port "00"; then
+            DEST="00"; printf "TDDI 0x48 found on DES I2C Port 0\n"
+        else
+            DEST="20"
+            printf "${RED}TDDI 0x48 answered on neither port; leaving the route on Port 1${NC}\n"
+        fi
+        ;;
+esac
+
+# TDDI 0x48 -> the port selected above
 write_ser "70" "90" "TARGET_ID0: TDDI 0x48"
+write_ser "88" "${DEST}" "TARGET_DEST0: DES I2C Port $(( 0x${DEST} >> 5 ))"
 write_ser "78" "90" "TARGET_ALIAS0: alias 0x48"
-write_ser "88" "20" "TARGET_DEST0: DES I2C Port 1"
 
-# TDDI 0x49 -> route to deserializer I2C Port 1
+# TDDI 0x49 -> same port
 write_ser "71" "92" "TARGET_ID1: TDDI 0x49"
+write_ser "89" "${DEST}" "TARGET_DEST1: DES I2C Port $(( 0x${DEST} >> 5 ))"
 write_ser "79" "92" "TARGET_ALIAS1: alias 0x49"
-write_ser "89" "20" "TARGET_DEST1: DES I2C Port 1"
 echo ""
 
 echo "=== Step 4: Configure REM_INTB (TDDI touch_int forwarding) ==="
@@ -151,7 +188,8 @@ printf "${GREEN}================================================${NC}\n"
 printf "${GREEN}Initialization Complete${NC}\n"
 printf "${GREEN}================================================${NC}\n"
 echo ""
-echo "Expected: 0x48 and 0x49 visible in 'i2cdetect -r -y ${I2C_BUS}'"
+echo "Expected: 0x48 visible in 'i2cdetect -r -y ${I2C_BUS}' (0x49 only on boards"
+echo "that have a second TDDI address; neither 12.3\" panel does)"
 echo "REM_INTB chain: TDDI touch_int -> 988 INTB_IN -> BCC -> 983 REM_INTB -> Host"
 echo ""
 

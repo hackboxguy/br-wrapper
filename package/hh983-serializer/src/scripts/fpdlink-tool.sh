@@ -795,6 +795,26 @@ check_reg() {
     fi
 }
 
+# TARGET_DESTx in mode 1: BOTH deserializer I2C ports are legitimate, because
+# the panel boards disagree about which one carries the TDDI -- 12.3"-NQ5 has
+# it on Port 1, 12.3"-NQ1.1 on Port 0.  The driver probes and routes to
+# whichever answers, so flagging one of them red reports a healthy rig as
+# broken.  What matters is only that the depth bits are 0 (direct, not
+# daisy-chained).  Whether the route is actually right is settled by
+# --touch-diag's probe of host 0x48, not by this byte.
+check_target_dest() {
+    _actual=$(($1))
+    _port=$(( (_actual >> 5) & 0x07 ))
+    _depth=$(( _actual & 0x03 ))
+    if [ "$_depth" -ne 0 ]; then
+        printf " ${C_RED}[!! depth=%d, expected 0]${C_RST}" "$_depth"
+    elif [ "$_port" -eq 0 ] || [ "$_port" -eq 1 ]; then
+        printf " ${C_GRN}[OK, DES I2C Port %d]${C_RST}" "$_port"
+    else
+        printf " ${C_RED}[!! port %d is reserved]${C_RST}" "$_port"
+    fi
+}
+
 # -----------------------------------------------
 # Pipeline Diagnose (--diagnose)
 # -----------------------------------------------
@@ -1368,9 +1388,22 @@ cmd_touch_diag() {
     printf "  0x79 TARGET_ALIAS1:   %-6s alias=0x%02x" "$_ta1" "$(( ($(($_ta1)) >> 1) & 0x7F ))"
     [ "$_deser_mode" -eq 1 ] && check_reg "$_ta1" 0x92; echo ""
     printf "  0x88 TARGET_DEST0:    %-6s dest_port=%d" "$_td0" "$(( ($(($_td0)) >> 5) & 0x07 ))"
-    [ "$_deser_mode" -eq 1 ] && check_reg "$_td0" 0x20; echo ""
+    [ "$_deser_mode" -eq 1 ] && check_target_dest "$_td0"; echo ""
     printf "  0x89 TARGET_DEST1:    %-6s dest_port=%d" "$_td1" "$(( ($(($_td1)) >> 5) & 0x07 ))"
-    [ "$_deser_mode" -eq 1 ] && check_reg "$_td1" 0x20; echo ""
+    [ "$_deser_mode" -eq 1 ] && check_target_dest "$_td1"; echo ""
+
+    # Does the route actually reach the touch controller?  This is the check
+    # that means something; the register bytes above only say what was asked
+    # for.  A silent 0x48 with the registers "OK" is a wrong port.
+    if [ "$_deser_mode" -eq 1 ]; then
+        if i2cget -f -y "$I2C_BUS" 0x48 0x00 >/dev/null 2>&1; then
+            printf "  host 0x48 (TDDI):     ${C_GRN}answers${C_RST} via DES I2C Port %d\n" \
+                "$(( ($(($_td0)) >> 5) & 0x07 ))"
+        else
+            printf "  host 0x48 (TDDI):     ${C_RED}SILENT${C_RST} -- wrong port, or the panel is holding it in reset.\n"
+            printf "                        Scan both ports before blaming the panel; see hh983_route_tddi().\n"
+        fi
+    fi
 
     # --- Back Channel ---
     echo ""
@@ -1567,7 +1600,10 @@ cmd_touch_diag() {
     echo "I2C touch data path:"
     echo "  Host -> 983 GENERAL_CFG(0x07) I2C passthrough"
     if [ "$_deser_mode" -eq 1 ]; then
-        echo "    -> 983 TARGET_ID/ALIAS(0x70-0x79) routes 0x48/0x49 to Port 1"
+        echo "    -> 983 TARGET_ID/ALIAS(0x70-0x79) routes 0x48/0x49 to the"
+        echo "       deserializer I2C port TARGET_DEST(0x88/0x89) selects."
+        echo "       NOT always Port 1: 12.3\"-NQ5 has the TDDI on Port 1,"
+        echo "       12.3\"-NQ1.1 on Port 0. The driver probes for it."
     elif [ "$_deser_mode" -eq 2 ]; then
         echo "    (mode 2 is video only — no touch controller on this display)"
     fi
