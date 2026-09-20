@@ -6,6 +6,8 @@
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
 #include <QFile>
+#include <QFileInfo>
+#include <QDir>
 #include <cstring>
 
 // MCU I2C address
@@ -17,11 +19,14 @@
 #define REG_BL_TEMP         0x1002  // 2 bytes signed int16 BE, x10 degC
 #define REG_BL_PAGE         0xFF00  // bootloader page: 'B','L',proto,version,...
 #define REG_SLOT_A_INFO     0xFF20  // validity byte + first 32 header bytes
+#define REG_APP_SLOT        0xFF89  // running slot: 0x00 = A, 0x01 = B
 
 // Firmware header (lib/fwhdr.h, little-endian): magic at 0, image_crc at 28.
 // Only the first 32 bytes are exposed on the register page, which is exactly
 // enough to reach the CRC -- the field ends at byte 31.
 #define FWHDR_OFFSET_IN_IMAGE   0xA00
+#define FWHDR_BOARD_CODE_OFFSET 8
+#define FWHDR_APP_CODE_OFFSET   12
 #define FWHDR_CRC_OFFSET        28
 #define SLOT_INFO_LEN           33      // 1 validity byte + 32 header bytes
 #define BL_PAGE_LEN             8
@@ -46,8 +51,7 @@ McuController::McuController(QObject *parent)
     , m_readTemperature(true)
     , m_backlightTemp(0.0)
     , m_backlightTempValid(false)
-    , m_referenceCrcValid(false)
-    , m_referenceCrc(0)
+    , m_referencesLoaded(false)
     , m_candidateStatus(StatusUnknown)
     , m_candidateCount(0)
     , m_versionAlert(false)
@@ -82,7 +86,17 @@ void McuController::setReadTemperature(bool enabled)
 void McuController::setReferenceImage(const QString &path)
 {
     m_referenceImage = path;
-    m_referenceCrcValid = false;
+    m_referenceDir.clear();
+    m_references.clear();
+    m_referencesLoaded = false;
+}
+
+void McuController::setReferenceDir(const QString &dir)
+{
+    m_referenceDir = dir;
+    m_referenceImage.clear();
+    m_references.clear();
+    m_referencesLoaded = false;
 }
 
 void McuController::start()
@@ -200,31 +214,30 @@ void McuController::setStatus(bool noBootloader, bool updateAvailable, const QSt
     emit firmwareStatusChanged();
 }
 
-// CRC32 of the image this rootfs ships, read straight out of its header.
-// Cached: the file does not change while the app runs, and re-reading it on
-// every 5 s poll would be pointless I/O.
-bool McuController::referenceCrc(quint32 *crc)
+// Little-endian u32 out of a header byte block.
+static quint32 hdrU32(const unsigned char *h, int off)
 {
-    if (m_referenceCrcValid) {
-        *crc = m_referenceCrc;
-        return true;
-    }
-    if (m_referenceImage.isEmpty()) {
-        return false;
-    }
+    return static_cast<quint32>(h[off]) |
+           (static_cast<quint32>(h[off + 1]) << 8) |
+           (static_cast<quint32>(h[off + 2]) << 16) |
+           (static_cast<quint32>(h[off + 3]) << 24);
+}
 
-    QFile f(m_referenceImage);
+// Read one shipped image's header and remember what identifies it.
+//
+// Two layouts carry the same header: a stripped OTA image starts at the slot
+// base, so the header sits at 0xA00; a full bootloader+slot image has it at
+// 0x10A00. Both are accepted so a directory holding either kind works.
+bool McuController::appendReference(const QString &path)
+{
+    QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
         return false;
     }
 
-    // Two layouts carry the same header: a stripped OTA image starts at the
-    // slot base, so the header sits at 0xA00; a full bootloader+slot image has
-    // it at 0x10A00. Try the OTA layout first -- that is what this points at.
     static const qint64 kOrigins[2] = { 0, 0x10000 };
     for (int i = 0; i < 2; i++) {
-        const qint64 off = kOrigins[i] + FWHDR_OFFSET_IN_IMAGE;
-        if (!f.seek(off)) {
+        if (!f.seek(kOrigins[i] + FWHDR_OFFSET_IN_IMAGE)) {
             continue;
         }
         char hdr[32];
@@ -235,18 +248,57 @@ bool McuController::referenceCrc(quint32 *crc)
             continue;
         }
         const unsigned char *u = reinterpret_cast<const unsigned char *>(hdr);
-        m_referenceCrc = static_cast<quint32>(u[FWHDR_CRC_OFFSET]) |
-                         (static_cast<quint32>(u[FWHDR_CRC_OFFSET + 1]) << 8) |
-                         (static_cast<quint32>(u[FWHDR_CRC_OFFSET + 2]) << 16) |
-                         (static_cast<quint32>(u[FWHDR_CRC_OFFSET + 3]) << 24);
-        m_referenceCrcValid = true;
+        RefImage r;
+        r.boardCode = hdrU32(u, FWHDR_BOARD_CODE_OFFSET);
+        r.appCode   = hdrU32(u, FWHDR_APP_CODE_OFFSET);
+        r.crc       = hdrU32(u, FWHDR_CRC_OFFSET);
+        m_references.append(r);
         f.close();
-        *crc = m_referenceCrc;
         return true;
     }
 
     f.close();
     return false;
+}
+
+// Build the candidate list once: the files do not change while the app runs.
+//
+// An explicit --ioc-ref-image is honoured, and its A/B sibling is added with
+// it, because a board running the other slot of the very same build is not a
+// board that needs updating. Otherwise every image in the shipped directory is
+// catalogued and the board_code picks the right one at comparison time.
+void McuController::loadReferences()
+{
+    if (m_referencesLoaded) {
+        return;
+    }
+    m_referencesLoaded = true;
+
+    if (!m_referenceImage.isEmpty()) {
+        appendReference(m_referenceImage);
+
+        QString sibling = m_referenceImage;
+        if (sibling.endsWith("_otaB.bin")) {
+            sibling.replace(sibling.length() - 9, 9, "_ota.bin");
+        } else if (sibling.endsWith("_ota.bin")) {
+            sibling.replace(sibling.length() - 8, 8, "_otaB.bin");
+        } else {
+            sibling.clear();
+        }
+        if (!sibling.isEmpty() && QFileInfo::exists(sibling)) {
+            appendReference(sibling);
+        }
+    } else if (!m_referenceDir.isEmpty()) {
+        QDir dir(m_referenceDir);
+        const QStringList names =
+            dir.entryList(QStringList() << "*_ota.bin" << "*_otaB.bin", QDir::Files, QDir::Name);
+        for (const QString &n : names) {
+            appendReference(dir.absoluteFilePath(n));
+        }
+    }
+
+    qInfo() << "McuController(0x" + QString::number(m_i2cAddress, 16) + "):"
+            << m_references.size() << "reference image(s) catalogued";
 }
 
 // Read a register block twice and require the two to agree.
@@ -290,12 +342,9 @@ McuController::Status McuController::evaluateStatus(int fd, QString *reason)
         return StatusNoBootloader;
     }
 
-    // 2. Does the slot it is running match the image this rootfs ships?
-    quint32 fileCrc = 0;
-    if (!referenceCrc(&fileCrc)) {
-        return StatusUnknown;
-    }
-
+    // 2. Does the slot it is running match an image this rootfs ships FOR THIS
+    //    BOARD? The board_code in the running image's own header selects the
+    //    candidates, and either slot image of that build is a match.
     uint8_t info[SLOT_INFO_LEN];
     if (!readStable(fd, REG_SLOT_A_INFO, info, SLOT_INFO_LEN)) {
         return StatusUnknown;
@@ -304,21 +353,59 @@ McuController::Status McuController::evaluateStatus(int fd, QString *reason)
         return StatusUnknown;
     }
 
-    const uint8_t *hdr = info + 1;              // skip the validity byte
-    const quint32 boardCrc =
-        static_cast<quint32>(hdr[FWHDR_CRC_OFFSET]) |
-        (static_cast<quint32>(hdr[FWHDR_CRC_OFFSET + 1]) << 8) |
-        (static_cast<quint32>(hdr[FWHDR_CRC_OFFSET + 2]) << 16) |
-        (static_cast<quint32>(hdr[FWHDR_CRC_OFFSET + 3]) << 24);
+    const unsigned char *hdr = info + 1;        // skip the validity byte
+    const quint32 boardCrc   = hdrU32(hdr, FWHDR_CRC_OFFSET);
+    const quint32 boardCode  = hdrU32(hdr, FWHDR_BOARD_CODE_OFFSET);
+    const quint32 appCode    = hdrU32(hdr, FWHDR_APP_CODE_OFFSET);
 
-    if (boardCrc != fileCrc) {
-        *reason = QObject::tr("Update available: the board carries a different "
-                              "image (0x%1) from the one this system ships (0x%2).")
-                      .arg(boardCrc, 8, 16, QChar('0'))
-                      .arg(fileCrc, 8, 16, QChar('0'));
-        return StatusUpdateAvailable;
+    loadReferences();
+
+    int candidates = 0;
+    QString shipped;
+    for (int i = 0; i < m_references.size(); i++) {
+        const RefImage &r = m_references.at(i);
+        if (r.boardCode != boardCode || r.appCode != appCode) {
+            continue;
+        }
+        if (r.crc == boardCrc) {
+            return StatusOk;                    // running slot A or slot B of it
+        }
+        candidates++;
+        if (!shipped.isEmpty()) {
+            shipped += QLatin1String("/");
+        }
+        shipped += QString("0x%1").arg(r.crc, 8, 16, QChar('0'));
     }
-    return StatusOk;
+
+    if (candidates == 0) {
+        // Nothing shipped for this board. Not a finding: see the header.
+        return StatusUnknown;
+    }
+
+    *reason = QObject::tr("Update available: the board carries a different "
+                          "image (0x%1) from the one this system ships (%2).")
+                  .arg(boardCrc, 8, 16, QChar('0'))
+                  .arg(shipped);
+    return StatusUpdateAvailable;
+}
+
+// Which slot the application is running from. Read every poll rather than
+// once: an update followed by a warm activation changes it without a reset.
+void McuController::readActiveSlot(int fd)
+{
+    uint8_t slot = 0;
+    QString s;
+    if (readStable(fd, REG_APP_SLOT, &slot, 1)) {
+        if (slot == 0x00) {
+            s = QStringLiteral("A");
+        } else if (slot == 0x01) {
+            s = QStringLiteral("B");
+        }
+    }
+    if (s != m_activeSlot) {
+        m_activeSlot = s;
+        emit activeSlotChanged();
+    }
 }
 
 // Publish only after the same answer has been seen several polls running.
@@ -411,6 +498,7 @@ void McuController::updateFirmwareStatus(int fd)
     QString reason;
     publishStatus(evaluateStatus(fd, &reason), reason);
     readChipSerial(fd);
+    readActiveSlot(fd);
 }
 
 void McuController::refresh()

@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QTimer>
 #include <QString>
+#include <QVector>
 
 /**
  * McuController - I2C communication with RH850 MCU (16-bit sub-addressing)
@@ -23,10 +24,28 @@
  *   noBootloader   0xFF00 does not answer with "BL", so this is a pre-A/B
  *                  image that cannot be updated over I2C at all. It needs a
  *                  wire flash, which is worth surfacing prominently.
- *   updateAvailable the slot CRC32 the board reports differs from the CRC32 of
- *                  the image this rootfs ships. Not "newer" -- different; a
- *                  downgrade is a legitimate update and the shipped image is
+ *   updateAvailable the slot CRC32 the board reports matches NEITHER slot image
+ *                  this rootfs ships for that board. Not "newer" -- different;
+ *                  a downgrade is a legitimate update and the shipped image is
  *                  authoritative. This mirrors update-iocs.sh --check.
+ *
+ * Which image is "the one this rootfs ships" is decided by the board_code in
+ * the running image's own header, not by a fixed path. Three things forced
+ * that, all seen on the bench on 2026-09-20:
+ *
+ *   - The display IOC is a different application per board variant (OTS,
+ *     REMOTE_DISP, SPARTAN7/S4). One hardcoded default could only ever be
+ *     right on one rig, and painted the other two red while they were running
+ *     exactly the right firmware.
+ *   - app_code does NOT identify a variant: OTS and REMOTE_DISP are both
+ *     display_manager and share 0xcdcbc722. board_code is the discriminator.
+ *   - A board legitimately runs slot B, whose CRC differs from the slot A
+ *     image. Both slot images of a build carry the same board_code and
+ *     app_code and differ only in image_crc, so BOTH are accepted.
+ *
+ * When no shipped image carries the running board_code the status is Unknown,
+ * not "update available": a board this rootfs ships nothing for is not a
+ * board with a problem.
  *
  * When the status cannot be determined the published status is LEFT ALONE --
  * not reset to "ok". An unreadable board must not be painted as a problem it
@@ -56,6 +75,9 @@ class McuController : public QObject
     // Empty when the firmware predates the chip-ID registers, so the QML can
     // simply hide the field on a legacy board rather than show a placeholder.
     Q_PROPERTY(QString shortSerial READ shortSerial NOTIFY shortSerialChanged)
+    // "A", "B", or empty when the board does not report it (pre-A/B firmware,
+    // or a read that did not land). The QML hides the field when it is empty.
+    Q_PROPERTY(QString activeSlot READ activeSlot NOTIFY activeSlotChanged)
 
 public:
     explicit McuController(QObject *parent = nullptr);
@@ -64,7 +86,11 @@ public:
     void setI2cBus(const QString &bus);
     void setI2cAddress(int address);
     void setReadTemperature(bool enabled);
+    // Explicit single image: that file AND its A/B sibling are accepted.
     void setReferenceImage(const QString &path);
+    // Directory of shipped images: the one matching the board's board_code is
+    // selected automatically, which needs no per-rig configuration.
+    void setReferenceDir(const QString &dir);
     void start();
 
     bool available() const { return m_available; }
@@ -77,6 +103,7 @@ public:
     bool updateAvailable() const { return m_updateAvailable; }
     bool noBootloader() const { return m_noBootloader; }
     QString shortSerial() const { return m_shortSerial; }
+    QString activeSlot() const { return m_activeSlot; }
 
 public slots:
     void refresh();
@@ -89,6 +116,7 @@ signals:
     void backlightTempValidChanged();
     void firmwareStatusChanged();
     void shortSerialChanged();
+    void activeSlotChanged();
 
 private:
     int openI2c();
@@ -104,7 +132,16 @@ private:
     Status evaluateStatus(int fd, QString *reason);
     void publishStatus(Status s, const QString &reason);
     void readChipSerial(int fd);
-    bool referenceCrc(quint32 *crc);
+    void readActiveSlot(int fd);
+
+    // One shipped slot image, reduced to what identifies it.
+    struct RefImage {
+        quint32 boardCode;
+        quint32 appCode;
+        quint32 crc;
+    };
+    void loadReferences();
+    bool appendReference(const QString &path);
     void updateFirmwareStatus(int fd);
     void setStatus(bool noBootloader, bool updateAvailable, const QString &reason);
 
@@ -121,13 +158,15 @@ private:
     bool m_backlightTempValid;
 
     QString m_referenceImage;
-    bool m_referenceCrcValid;
-    quint32 m_referenceCrc;
+    QString m_referenceDir;
+    bool m_referencesLoaded;
+    QVector<RefImage> m_references;
 
     Status m_candidateStatus;
     int m_candidateCount;
 
     QString m_shortSerial;
+    QString m_activeSlot;
 
     bool m_versionAlert;
     bool m_updateAvailable;

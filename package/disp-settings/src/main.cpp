@@ -6,6 +6,7 @@
 #include <QDebug>
 #include <QScreen>
 #include <QFile>
+#include <QFileInfo>
 #include <QTextStream>
 #include "config.h"
 #include "AlsDimmerController.h"
@@ -75,9 +76,14 @@ int main(int argc, char *argv[])
                                           "protocol", "auto");
     parser.addOption(fpgaProtocolOption);
 
+    // Unset, the DIRECTORY holding this default is catalogued and the board's
+    // own board_code selects the image -- which is right on every board variant
+    // without per-rig configuration. Set, the given file and its A/B sibling
+    // are the only candidates.
     QCommandLineOption iocRefOption("ioc-ref-image",
                                     QString("Reference image for the display IOC at 0x66, used to "
-                                            "decide whether an update is available (default: %1)")
+                                            "decide whether an update is available. Unset, the "
+                                            "images beside %1 are matched by board code.")
                                         .arg(DEFAULT_IOC_REF_IMAGE),
                                     "path", DEFAULT_IOC_REF_IMAGE);
     parser.addOption(iocRefOption);
@@ -123,7 +129,11 @@ int main(int argc, char *argv[])
 
     McuController mcuController;
     mcuController.setI2cBus(parser.value(i2cOption));
-    mcuController.setReferenceImage(parser.value(iocRefOption));
+    if (parser.isSet(iocRefOption)) {
+        mcuController.setReferenceImage(parser.value(iocRefOption));
+    } else {
+        mcuController.setReferenceDir(QFileInfo(DEFAULT_IOC_REF_IMAGE).absolutePath());
+    }
     mcuController.start();
 
     // HH983 serializer MCU on same bus at 0x67 — version/build-date only (no temp)
@@ -131,7 +141,11 @@ int main(int argc, char *argv[])
     hh983Controller.setI2cBus(parser.value(i2cOption));
     hh983Controller.setI2cAddress(0x67);
     hh983Controller.setReadTemperature(false);
-    hh983Controller.setReferenceImage(parser.value(hh983RefOption));
+    if (parser.isSet(hh983RefOption)) {
+        hh983Controller.setReferenceImage(parser.value(hh983RefOption));
+    } else {
+        hh983Controller.setReferenceDir(QFileInfo(DEFAULT_HH983_REF_IMAGE).absolutePath());
+    }
     hh983Controller.start();
 
     // RTQ6749 PMIC via IOC MCU (0x66) bridge to internal 0x6B
