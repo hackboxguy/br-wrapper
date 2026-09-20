@@ -4,7 +4,10 @@
  *
  * Supports three configurations:
  *   Mode 0: DS90UH983 + DS90UH984 (REM_INTB forwarding)
- *   Mode 1: DS90UH983 + DS90UH988 (I2C passthrough for TDDI + REM_INTB)
+ *   Mode 1: DS90UH983 + DS90UH988 (I2C passthrough for TDDI + REM_INTB).
+ *           Which of the deserializer's two local I2C ports the TDDI is on
+ *           differs per panel board and is probed, not assumed -- see the
+ *           tddi_port parameter and hh983_route_tddi().
  *   Mode 2: DS90UH983 + DS90Ux988, video only (no touch, no interrupts)
  *
  * All three modes guard against the same deserializer DTG wedge: the DTG's
@@ -206,6 +209,43 @@ static int ots_scl_low = 0x1E;
 module_param(ots_scl_low, int, 0444);
 MODULE_PARM_DESC(ots_scl_low, "ots_touch only: 984 SCL_LOW_TIME, 38.1ns*(N+5) (default: 0x1E)");
 
+/* Mode 1 (983+988): which of the deserializer's two local I2C ports the TDDI
+ * touch controller hangs off.  The two 12.3" boards do not agree, and both are
+ * driven by the same SD image with the same config_mode=1, so the driver finds
+ * out instead of being told:
+ *
+ *   12.3"-NQ5  (Spartan-7 + RH850 F1KM-S4):  TDDI 0x48 on 988 I2C Port 1.
+ *       Port 0 carries the board's own devices -- FPGAs 0x1d/0x1e, the 988 at
+ *       0x2c, PMIC 0x50, 0x58, IOC 0x66.
+ *   12.3"-NQ1.1 (Lattice-25, no MCU on the display): TDDI 0x48 on 988 I2C
+ *       Port 0, beside the 988 itself.  Port 1 carries 0x1d, 0x2d and 0x49.
+ *   (Both measured 2026-09-20 by walking TARGET_ID0 across each port.)
+ *
+ * Pointing the route at the wrong port does more than miss the touch.
+ * TARGET_ALIAS0 claims host address 0x48 unconditionally, so a wrong
+ * TARGET_DEST0 *hijacks* that address and NACKs everything the himax driver
+ * sends -- which is how NQ1.1 failed, with "himax_bus_write: i2c_write_block
+ * retry over 3" and probe -EREMOTEIO, even though plain pass-through on Port 0
+ * would have reached the TDDI perfectly well had the alias not been in the way.
+ *
+ * -1 probes Port 1 first and falls back to Port 0.  Port 1 first is deliberate:
+ * on a board where the TDDI is on Port 1 the register writes end up identical
+ * to what this driver did before auto-detection existed.
+ *
+ * Note that target slot 0 is shared property.  The 983HH's RH850 claims it
+ * during its own bring-up: the DIP3 "12.3in 1920x720 OLDI" profile writes
+ * TARGET_ID0/ALIAS0/DEST0 = 0x58/0x58/0x00, aliasing the deserializer 0x2C to
+ * 0x2C on Port 0.  That is an identity alias, so overwriting it here costs
+ * nothing -- host access to 0x2C falls back to plain pass-through, which lands
+ * on the same device (verified on both 12.3" rigs).  A future profile that
+ * aliased a deserializer from a *different* physical address would not survive
+ * this, and the fix would be to move the TDDI onto slots 2/3; mode 2 already
+ * avoids slot 0 for exactly this reason.  Do not assume slot 0 is free.
+ */
+static int tddi_port = -1;
+module_param(tddi_port, int, 0444);
+MODULE_PARM_DESC(tddi_port, "Mode 1 only: deserializer I2C port carrying the TDDI touch controller, 0 or 1; -1 = probe Port 1 then Port 0 (default)");
+
 /* HX8530 on the 984's local I2C Port 1: physical address vs host-visible alias. */
 #define OTS_TOUCH_PHYS_ADDR	0x49	/* actual 7-bit addr on the 984 Port 1 bus */
 #define OTS_TOUCH_HOST_ADDR	0x48	/* address presented to the Pi (himax DT reg) */
@@ -354,6 +394,9 @@ struct hh983_data {
 	int guard_dtg_first;         /* first measurement of that run, for the plausibility check */
 	unsigned long guard_wedge_at;/* jiffies of the last wedge restore */
 	bool guard_wedge_armed;      /* guard_wedge_at holds a real timestamp */
+	/* Mode 1 TDDI routing */
+	int tddi_port_used;          /* deserializer I2C port the touch route points at */
+	bool tddi_found;             /* the TDDI answered there */
 };
 
 static int hh983_write_reg(struct i2c_client *client, u8 reg, u8 value)
@@ -1631,6 +1674,125 @@ resched:
 				      msecs_to_jiffies(poll_interval_ms));
 }
 
+/* Program one of the 983's remote-target slots.
+ *
+ * TARGET_ALIAS is what claims a host address, so it is cleared first and
+ * written last: that way the slot is never live with a stale ID or DEST, and
+ * a caller that is re-pointing an existing route cannot leave a window where
+ * host transactions go somewhere unintended.
+ */
+static int hh983_set_target(struct i2c_client *client, u8 id_reg, u8 alias_reg,
+			    u8 dest_reg, u8 remote_addr, u8 host_addr, u8 dest)
+{
+	int ret;
+
+	ret = hh983_write_reg(client, alias_reg, 0x00);
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, id_reg, MAKE_TARGET_ID(remote_addr));
+	if (ret < 0)
+		return ret;
+	ret = hh983_write_reg(client, dest_reg, dest);
+	if (ret < 0)
+		return ret;
+	return hh983_write_reg(client, alias_reg, MAKE_TARGET_ID(host_addr));
+}
+
+/* Does a 7-bit address answer on the host bus?
+ *
+ * One 1-byte read and nothing else -- no register pointer write, so it cannot
+ * disturb the state of whatever answers.  i2c_transfer() goes to the adapter
+ * directly, so it works whether or not a driver has claimed the address.
+ */
+static bool hh983_addr_acks(struct i2c_client *client, u8 addr)
+{
+	u8 buf = 0;
+	struct i2c_msg msg = {
+		.addr = addr,
+		.flags = I2C_M_RD,
+		.len = 1,
+		.buf = &buf,
+	};
+
+	return i2c_transfer(client->adapter, &msg, 1) == 1;
+}
+
+/* Point the touch route at the deserializer I2C port the TDDI is actually on.
+ *
+ * Returns the port in use.  data->tddi_found records whether the TDDI answered
+ * there; when it did not, the route is left on Port 1, which is what this
+ * driver always did, so a board that is merely slow to release its touch
+ * controller behaves exactly as before rather than being routed somewhere new.
+ *
+ * See the tddi_port module parameter for why this is probed and not assumed.
+ */
+static int hh983_route_tddi(struct hh983_data *data)
+{
+	static const u8 dest_of_port[2] = { TARGET_DEST_PORT0, TARGET_DEST_PORT1 };
+	static const int probe_order[2] = { 1, 0 };	/* Port 1 first: see above */
+	struct i2c_client *client = data->client;
+	int port = -1;
+	int i, ret;
+
+	if (tddi_port == 0 || tddi_port == 1) {
+		port = tddi_port;
+	} else {
+		for (i = 0; i < ARRAY_SIZE(probe_order); i++) {
+			ret = hh983_set_target(client, SER_TARGET_ID0,
+					       SER_TARGET_ALIAS0, SER_TARGET_DEST0,
+					       TDDI_ADDR_1, TDDI_ADDR_1,
+					       dest_of_port[probe_order[i]]);
+			if (ret < 0)
+				return ret;
+			usleep_range(2000, 4000);
+
+			if (hh983_addr_acks(client, TDDI_ADDR_1)) {
+				port = probe_order[i];
+				break;
+			}
+			dev_dbg(&client->dev,
+				"TDDI 0x%02X did not answer on deserializer I2C Port %d\n",
+				TDDI_ADDR_1, probe_order[i]);
+		}
+	}
+
+	data->tddi_found = (port >= 0);
+	if (port < 0)
+		port = 1;
+
+	/* Slot 0: the TDDI itself, host 0x48 -> remote 0x48 on the chosen port. */
+	ret = hh983_set_target(client, SER_TARGET_ID0, SER_TARGET_ALIAS0,
+			       SER_TARGET_DEST0, TDDI_ADDR_1, TDDI_ADDR_1,
+			       dest_of_port[port]);
+	if (ret < 0)
+		return ret;
+
+	/* Slot 1: the TDDI's second address, same port.  Neither 12.3" board
+	 * answers on it and the himax driver only ever uses 0x48, so this is
+	 * kept for boards that do rather than because anything here needs it.
+	 */
+	ret = hh983_set_target(client, SER_TARGET_ID1, SER_TARGET_ALIAS1,
+			       SER_TARGET_DEST1, TDDI_ADDR_2, TDDI_ADDR_2,
+			       dest_of_port[port]);
+	if (ret < 0)
+		return ret;
+
+	data->tddi_port_used = port;
+
+	if (data->tddi_found)
+		dev_info(&client->dev,
+			 "TDDI 0x%02X found on deserializer I2C Port %d (%s); host 0x%02X/0x%02X routed there\n",
+			 TDDI_ADDR_1, port,
+			 (tddi_port < 0) ? "probed" : "forced by tddi_port",
+			 TDDI_ADDR_1, TDDI_ADDR_2);
+	else
+		dev_warn(&client->dev,
+			 "TDDI 0x%02X answered on neither deserializer I2C port; routing host 0x%02X to Port 1 as before. Touch will not work until the panel releases it\n",
+			 TDDI_ADDR_1, TDDI_ADDR_1);
+
+	return port;
+}
+
 /* Configure REM_INTB on serializer (common to both modes) */
 static int hh983_configure_rem_intb(struct i2c_client *client, int port, int mode)
 {
@@ -1727,9 +1889,13 @@ static int hh983_init_mode_984(struct hh983_data *data)
 			 OTS_TOUCH_HOST_ADDR, OTS_TOUCH_PHYS_ADDR);
 
 		/* Raise the 984's local I2C bus to the 400 kHz Himax specify for
-		 * the HX8530.  Only under ots_touch: the other mode 0 boards
-		 * (15.6-2k5, 12.3-nq1) have no touch on the deserializer and are
-		 * left at the 984's 100 kHz reset value.
+		 * the HX8530.  Only under ots_touch, so the other mode 0 board
+		 * (15.6-2k5) is left at the 984's 100 kHz reset value.
+		 *
+		 * 12.3-nq1 used to be named here as a board with no touch on the
+		 * deserializer.  That was wrong: it has an HX83192A TDDI at 0x48
+		 * on its deserializer's I2C Port 0, and it runs mode 1 (988), not
+		 * mode 0.  Measured 2026-09-20 -- see hh983_route_tddi().
 		 */
 		ret = hh983_write_deser_reg(client, data->deser_addr,
 					    DES984_SCL_HIGH_TIME, ots_scl_high);
@@ -1793,25 +1959,11 @@ static int hh983_init_mode_988(struct hh983_data *data)
 	if (ret >= 0)
 		dev_info(&client->dev, "988 RX Lock Status: 0x%02X\n", ret);
 
-	/* Step 4: Configure TARGET_ID/ALIAS/DEST for TDDI 0x48 -> Port 1 */
-	ret = hh983_write_reg(client, SER_TARGET_ID0, MAKE_TARGET_ID(TDDI_ADDR_1));
-	if (ret < 0)
-		return ret;
-	ret = hh983_write_reg(client, SER_TARGET_ALIAS0, MAKE_TARGET_ID(TDDI_ADDR_1));
-	if (ret < 0)
-		return ret;
-	ret = hh983_write_reg(client, SER_TARGET_DEST0, TARGET_DEST_PORT1);
-	if (ret < 0)
-		return ret;
-
-	/* Step 5: Configure TARGET_ID/ALIAS/DEST for TDDI 0x49 -> Port 1 */
-	ret = hh983_write_reg(client, SER_TARGET_ID1, MAKE_TARGET_ID(TDDI_ADDR_2));
-	if (ret < 0)
-		return ret;
-	ret = hh983_write_reg(client, SER_TARGET_ALIAS1, MAKE_TARGET_ID(TDDI_ADDR_2));
-	if (ret < 0)
-		return ret;
-	ret = hh983_write_reg(client, SER_TARGET_DEST1, TARGET_DEST_PORT1);
+	/* Step 4/5: route the TDDI (host 0x48 and 0x49) to whichever of the
+	 * deserializer's two local I2C ports it is on.  Which one that is
+	 * differs between the 12.3" boards -- see the tddi_port parameter.
+	 */
+	ret = hh983_route_tddi(data);
 	if (ret < 0)
 		return ret;
 
@@ -1844,9 +1996,10 @@ static int hh983_init_mode_988(struct hh983_data *data)
 		/* Don't fail - passthrough may still work */
 	}
 
-	dev_info(&client->dev, "Mode 1 (983+988) initialization complete\n");
-	dev_info(&client->dev, "TDDI 0x%02X and 0x%02X should be visible on I2C bus\n",
-		 TDDI_ADDR_1, TDDI_ADDR_2);
+	dev_info(&client->dev,
+		 "Mode 1 (983+988) initialization complete (TDDI route: deserializer I2C Port %d, %s)\n",
+		 data->tddi_port_used,
+		 data->tddi_found ? "TDDI answering" : "TDDI SILENT");
 
 	/* Allow FPDLink I2C passthrough to fully stabilize before returning.
 	 * The himax touch driver may probe during this delay via deferred probe.

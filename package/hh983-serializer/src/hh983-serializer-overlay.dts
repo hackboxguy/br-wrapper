@@ -11,7 +11,11 @@
  * The driver mode is controlled via module parameter, not from the overlay:
  *   /etc/modprobe.d/hh983.conf: options hh983-serializer config_mode=<0|1|2>
  *     0 = 983 + 984  (REM_INTB forwarding)
- *     1 = 983 + 988  (TDDI touch via I2C pass-through + REM_INTB)
+ *     1 = 983 + 988  (TDDI touch via I2C pass-through + REM_INTB).  The
+ *         deserializer I2C port carrying the TDDI is probed at init (Port 1
+ *         then Port 0), because the 12.3" boards differ: NQ5 has it on Port 1,
+ *         NQ1.1 on Port 0.  Override with the tddi_port parameter if ever
+ *         needed; the default suits both.
  *     2 = 983 + 988  video only, no touch (3x QVue); pass-through only, so the
  *         983 target slots the RH850 used to alias the 988 are left alone
  *
