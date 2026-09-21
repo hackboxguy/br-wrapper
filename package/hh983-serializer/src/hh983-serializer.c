@@ -246,6 +246,34 @@ static int tddi_port = -1;
 module_param(tddi_port, int, 0444);
 MODULE_PARM_DESC(tddi_port, "Mode 1 only: deserializer I2C port carrying the TDDI touch controller, 0 or 1; -1 = probe Port 1 then Port 0 (default)");
 
+/* Local-dimming FPGA on the panel board (mode 1).
+ *
+ * The same port split that hides the TDDI hides this too, and the two boards
+ * swap BOTH devices across the ports (measured 2026-09-20/21):
+ *
+ *   12.3"-NQ5  : FPGA 0x1d on 988 I2C Port 0, TDDI 0x48 on Port 1.
+ *   12.3"-NQ1.1: FPGA 0x1d on 988 I2C Port 1, TDDI 0x48 on Port 0.
+ *
+ * Port 0 is what plain pass-through reaches, so on NQ5 the FPGA needs no help
+ * and is left alone -- no target slot is spent and that rig's registers are
+ * unchanged.  On NQ1.1 nothing routed Port 1, so 0x1d was simply absent from
+ * the host bus: i2cdetect showed nothing, and als-dimmer -- which drives BOTH
+ * the OPT4001 ambient sensor and the backlight through 0x1d -- failed every
+ * 500 ms with "I2C write failed (wrote -1 of 6 bytes): Input/output error".
+ * Routing it fixes the backlight slider and lets als-dimmer start.
+ *
+ * Slot 2 is used, not slot 0 or 1: those carry the TDDI, and slot 0 is also
+ * the one the 983HH's RH850 claims for its own deserializer alias.  Slots 2
+ * and 3 are written by none of the generated 983_manager profiles (checked
+ * across all 14), so slot 2 is free on every board this driver runs on.
+ *
+ * Set to 0 to route nothing, or to another 7-bit address for a board that puts
+ * the FPGA elsewhere.
+ */
+static int fpga_addr = 0x1D;
+module_param(fpga_addr, int, 0444);
+MODULE_PARM_DESC(fpga_addr, "Mode 1 only: 7-bit address of the panel's local-dimming FPGA to expose to the host, routed via target slot 2 only if plain pass-through cannot already reach it (default: 0x1D; 0 = route nothing)");
+
 /* HX8530 on the 984's local I2C Port 1: physical address vs host-visible alias. */
 #define OTS_TOUCH_PHYS_ADDR	0x49	/* actual 7-bit addr on the 984 Port 1 bus */
 #define OTS_TOUCH_HOST_ADDR	0x48	/* address presented to the Pi (himax DT reg) */
@@ -262,10 +290,13 @@ MODULE_PARM_DESC(tddi_port, "Mode 1 only: deserializer I2C port carrying the TDD
 #define SER_INTERRUPT_CTL        0x51  /* Interrupt enable: [7]=INTB_PIN_EN [4]=IE_DP_RX0 */
 #define SER_TARGET_ID0           0x70
 #define SER_TARGET_ID1           0x71
+#define SER_TARGET_ID2           0x72
 #define SER_TARGET_ALIAS0        0x78
 #define SER_TARGET_ALIAS1        0x79
+#define SER_TARGET_ALIAS2        0x7A
 #define SER_TARGET_DEST0         0x88
 #define SER_TARGET_DEST1         0x89
+#define SER_TARGET_DEST2         0x8A
 #define SER_INTERRUPT_CTRL       0xC6
 #define SER_IND_ACC_CTL          0x40  /* [5:2]=page, [1]=auto-inc, [0]=read strobe */
 #define SER_IND_ACC_ADDR         0x41
@@ -1793,6 +1824,62 @@ static int hh983_route_tddi(struct hh983_data *data)
 	return port;
 }
 
+/* Expose the panel's local-dimming FPGA to the host if it is not already
+ * reachable.  See the fpga_addr parameter for why this is needed and why it
+ * uses target slot 2.
+ *
+ * Costs nothing on a board whose FPGA is on the deserializer's I2C Port 0:
+ * plain pass-through already reaches it, the probe says so, and slot 2 is left
+ * disarmed exactly as this driver has always left it.
+ */
+static void hh983_route_fpga(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+
+	if (fpga_addr <= 0 || fpga_addr > 0x7F)
+		return;
+
+	/* Clear slot 2 before probing, so a stale alias from a previous boot
+	 * cannot make an unreachable FPGA look reachable.  A host reboot resets
+	 * neither the 983 nor the deserializer.
+	 */
+	hh983_write_reg(client, SER_TARGET_ALIAS2, 0x00);
+	usleep_range(2000, 4000);
+
+	if (hh983_addr_acks(client, fpga_addr)) {
+		dev_info(&client->dev,
+			 "FPGA 0x%02x reachable by pass-through (deserializer I2C Port 0); no target slot used\n",
+			 fpga_addr);
+		return;
+	}
+
+	if (hh983_set_target(client, SER_TARGET_ID2, SER_TARGET_ALIAS2,
+			     SER_TARGET_DEST2, fpga_addr, fpga_addr,
+			     TARGET_DEST_PORT1) < 0) {
+		dev_warn(&client->dev, "Failed to program target slot 2 for FPGA 0x%02x\n",
+			 fpga_addr);
+		return;
+	}
+	usleep_range(2000, 4000);
+
+	if (hh983_addr_acks(client, fpga_addr)) {
+		dev_info(&client->dev,
+			 "FPGA 0x%02x routed via target slot 2 to deserializer I2C Port 1\n",
+			 fpga_addr);
+		return;
+	}
+
+	/* Not on either port.  Leave the slot disarmed rather than claiming a
+	 * host address that answers nothing -- an armed alias intercepts the
+	 * address, which is what made the TDDI's wrong port worse than no
+	 * routing at all.
+	 */
+	hh983_write_reg(client, SER_TARGET_ALIAS2, 0x00);
+	dev_info(&client->dev,
+		 "No FPGA at 0x%02x on either deserializer I2C port; slot 2 left disarmed\n",
+		 fpga_addr);
+}
+
 /* Configure REM_INTB on serializer (common to both modes) */
 static int hh983_configure_rem_intb(struct i2c_client *client, int port, int mode)
 {
@@ -1966,6 +2053,11 @@ static int hh983_init_mode_988(struct hh983_data *data)
 	ret = hh983_route_tddi(data);
 	if (ret < 0)
 		return ret;
+
+	/* Step 5b: the panel's local-dimming FPGA hides behind the same port
+	 * split.  Done after the TDDI so touch owns slots 0/1 regardless.
+	 */
+	hh983_route_fpga(data);
 
 	/* Step 6: Configure REM_INTB for Port 0
 	 * IMPORTANT: Use Port 0, NOT Port 1!
