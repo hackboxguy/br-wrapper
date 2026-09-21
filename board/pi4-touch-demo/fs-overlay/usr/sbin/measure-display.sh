@@ -30,7 +30,16 @@ PATTERNPATH="$MYPATH/patterns"
 MEASUREMENT_DELAY="${MEASUREMENT_DELAY:-5}"
 RETRY_DELAY="${RETRY_DELAY:-3}"
 MAX_RETRIES="${MAX_RETRIES:-3}"
-SPOTREAD_TIMEOUT="${SPOTREAD_TIMEOUT:-30}"
+# 60 s, not 30. Argyll resets the instrument when it opens it. On the
+# 12.3"-NQ5 rig that reset was measured stalling 34.8 s on every call -- the
+# kernel logged USB resets at exactly that interval -- while the identical call
+# took 1.8 s on the 2.5k rig. The 30 s cap therefore killed a good measurement
+# five seconds short and printed SENSOR,ERROR, which reads like a dead panel and
+# cost an hour chasing the display instead of the colorimeter. The stall is
+# transient -- it cleared on a reboot, after which the same rig read in 4.6 s --
+# so this costs nothing when the instrument is healthy and only buys patience
+# when it is not. Override with --timeout=<seconds> or $SPOTREAD_TIMEOUT.
+SPOTREAD_TIMEOUT="${SPOTREAD_TIMEOUT:-60}"
 SPOTREAD_CMD="${SPOTREAD_CMD:-spotread}"
 DEBUG="${DEBUG:-no}"
 AUTO_USB_RESET="${AUTO_USB_RESET:-yes}"
