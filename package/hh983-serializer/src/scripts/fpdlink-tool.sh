@@ -514,24 +514,33 @@ cmd_988_timings() {
 
     # Also show override/configured timing for reference
     echo ""
+    # Each MSB register carries its field's override-enable bit (bit 7, or
+    # bit 6 for the two sync widths), so a value only reaches the DTG when
+    # that bit is set - or always, when PG_DATA_SOURCE_SEL is 0 or 2. Note
+    # 0x2D/0x2E is VSYNC and 0x2F/0x30 is HSYNC (DS90UH988 datasheet Page 20).
     echo "--- Override Timing (Page 0x50, Port 0) ---"
-    oh_total=$(ind_read15_be  "$ADDR_988" 0x50 0x21 0x22)
-    ov_total=$(ind_read15_be  "$ADDR_988" 0x50 0x23 0x24)
-    oh_active=$(ind_read15_be "$ADDR_988" 0x50 0x25 0x26)
-    ov_active=$(ind_read15_be "$ADDR_988" 0x50 0x27 0x28)
-    oh_start=$(ind_read15_be  "$ADDR_988" 0x50 0x29 0x2a)
-    ov_start=$(ind_read15_be  "$ADDR_988" 0x50 0x2b 0x2c)
-    oh_sync=$(ind_read13_be   "$ADDR_988" 0x50 0x2d 0x2e)
-    ov_sync=$(ind_read13_be   "$ADDR_988" 0x50 0x2f 0x30)
+    echo "  H Total:       $(dtg_override "$ADDR_988" 0x21 0x22 7)"
+    echo "  V Total:       $(dtg_override "$ADDR_988" 0x23 0x24 7)"
+    echo "  H Active:      $(dtg_override "$ADDR_988" 0x25 0x26 7)"
+    echo "  V Active:      $(dtg_override "$ADDR_988" 0x27 0x28 7)"
+    echo "  H Start:       $(dtg_override "$ADDR_988" 0x29 0x2a 7)"
+    echo "  V Start:       $(dtg_override "$ADDR_988" 0x2b 0x2c 7)"
+    echo "  H Sync Width:  $(dtg_override "$ADDR_988" 0x2f 0x30 6)"
+    echo "  V Sync Width:  $(dtg_override "$ADDR_988" 0x2d 0x2e 6)"
+}
 
-    echo "  H Total:       $oh_total"
-    echo "  V Total:       $ov_total"
-    echo "  H Active:      $oh_active"
-    echo "  V Active:      $ov_active"
-    echo "  H Start:       $oh_start"
-    echo "  V Start:       $ov_start"
-    echo "  H Sync Width:  $oh_sync"
-    echo "  V Sync Width:  $ov_sync"
+# One DTG override field: dtg_override <dev_addr> <msb_off> <lsb_off> <enable_bit>
+# The value sits in the MSB bits below the enable bit plus the LSB register.
+dtg_override() {
+    _dev=$1; _en_bit=$4
+    _msb=$(ind_read8 "$_dev" 0x50 "$2")
+    _lsb=$(ind_read8 "$_dev" 0x50 "$3")
+    _val=$(( ((_msb & ((1 << _en_bit) - 1)) << 8) | _lsb ))
+    if [ $(( (_msb >> _en_bit) & 1 )) -ne 0 ]; then
+        echo "$_val  (override ON)"
+    else
+        echo "$_val  (override off)"
+    fi
 }
 
 # -----------------------------------------------
