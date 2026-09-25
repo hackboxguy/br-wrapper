@@ -76,6 +76,8 @@ Window {
                     return "qrc:/patterns/WhiteBox.qml"
                 case "whiteboxmm":
                     return "qrc:/patterns/WhiteBoxMM.qml"
+                case "edge-ruler":
+                    return "qrc:/patterns/EdgeRuler.qml"
                 default:
                     return "qrc:/patterns/GrayscaleRamp.qml"
             }
@@ -171,7 +173,7 @@ Window {
                     var patterns = ["grayscale-ramp", "ansi-checker", "colorbar","white", "black",
                                    "red", "green", "blue", "cyan", "magenta", "yellow",
                                    "zone-boundary-grid", "blooming-detection", "cross-dimming", "whitebox",
-                                   "whiteboxmm"];
+                                   "whiteboxmm", "edge-ruler"];
                     var currentIndex = patterns.indexOf(patternController.currentPattern) + 1;
                     var totalPatterns = patterns.length;
                     return currentIndex + "/" + totalPatterns;

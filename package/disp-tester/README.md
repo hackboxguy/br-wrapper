@@ -33,6 +33,12 @@ A Qt5-based display pattern generator application designed for testing displays 
 - **zone-boundary-grid**: Grid pattern for local dimming zone mapping (1008 zones, configurable)
 - **blooming-detection**: Single pulsing pixel for blooming measurement
 - **cross-dimming**: 4 corner spots with pulsing animation for zone interference testing
+- **edge-ruler**: Finds active pixels lost (cropped or shifted) between the source and the glass.
+  A 1 px frame sits on the outermost pixels; the two outermost columns are colored (left: red,
+  green; right: blue, white). Near the middle of each edge, column/row *n* counted inward carries
+  a line (n+1)*14 px long labelled *n*, so the shortest step still visible is the first column/row
+  that reaches the panel. In a macro photo of an edge, the frame colors show which source columns
+  landed there: e.g. blue, white, blue, white on the right means the last pixel pair was repeated
 
 ### **Custom Patterns**
 - **RGB patches**: Custom colors with `pattern rgb R G B` (values 0-255)
@@ -478,6 +484,7 @@ pattern yellow              # Full yellow screen
 pattern zone-boundary-grid  # Local dimming zone grid
 pattern blooming-detection  # Single pixel blooming test
 pattern cross-dimming       # Zone interference test
+pattern edge-ruler          # Cropped/shifted edge pixel check
 
 # Custom RGB
 pattern rgb 255 128 64      # Custom color (R G B values 0-255)

@@ -46,7 +46,7 @@ PatternController::PatternController(QObject *parent)
     m_patterns << "grayscale-ramp" << "ansi-checker" << "colorbar" << "white" << "black"
                << "red" << "green" << "blue" << "cyan" << "magenta" << "yellow"
                << "zone-boundary-grid" << "blooming-detection" << "cross-dimming" << "whitebox"
-               << "whiteboxmm";
+               << "whiteboxmm" << "edge-ruler";
     m_currentPattern = m_patterns[0];
 }
 
