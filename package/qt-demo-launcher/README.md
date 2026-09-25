@@ -183,6 +183,7 @@ echo "get-running-app" | nc -q 0 192.168.1.100 8081
 ```json
 "title": {
   "text": "Display Demonstrator",           // Title text
+  "subtitle": "Test suite",            // Second line (tiles theme only)
   "logo": "/path/to/logo.png",         // Optional logo image
   "logo_size": {
     "width": 200,
@@ -254,6 +255,49 @@ echo "get-running-app" | nc -q 0 192.168.1.100 8081
   "border_radius": 20                 // Corner radius
 }
 ```
+
+### Theme Configuration (optional)
+
+Without a `theme` block the launcher keeps the classic flat stylesheet buttons.
+`"style": "tiles"` switches to painted cards: an icon badge and accent stripe per
+button, a header with logo, breadcrumb, status chips (resolution, IP, API port)
+and a seconds clock, plus a SMPTE colour-bar strip. [qt-demo-launcher-pios.json](src/qt-demo-launcher-pios.json)
+uses it.
+
+```json
+"theme": {
+  "style": "tiles",                   // classic (default), tiles
+  "font_family": "Roboto",            // Optional; falls back to the default font
+  "animations": true,                 // Tile entrance wave, touch ripple, scanline, live pulse
+  "color_bars": true,                 // SMPTE 75% bar strip under the header
+  "corner_marks": true,               // Registration marks on the outermost pixels (crop check)
+  "grid_spacing": 48,                 // Background grid pitch, 0 disables
+  "show_clock": true,                 // HH:mm:ss clock with live pulse (frozen-frame check)
+  "show_ip": true,                    // IP and API port chips
+  "show_resolution": true,            // Screen resolution chip
+  "background_color": "#080C18",      // Colours below are the defaults; they are
+  "grid_color": "#101828",            // multiples of the RGB565 steps so 16bpp
+  "card_color": "#182030",            // framebuffers show them without dithering
+  "card_hover_color": "#202C40",
+  "card_border_color": "#283450",
+  "text_color": "#F0F4F8",
+  "subtext_color": "#8894A8"
+}
+```
+
+With the tiles style, `title.subtitle` adds a second header line (sub-pages show
+a breadcrumb instead), and each button accepts:
+
+```json
+"subtitle": "Solid, ramp & geometry patterns",  // Second line on the tile
+"accent_color": "#38BDF8"                       // Badge, stripe and icon tint (default: background_color)
+```
+
+Icons may be PNG or SVG. In the tiles style they are recoloured with the accent colour,
+so white line-art icons work best. The bundled set lives in [icons/](icons/) and is
+installed to `<prefix>/share/qt-apps/icons/`. A button whose `program` does not exist is
+drawn dimmed and labelled "Not installed". In the tiles style, a button fires 160 ms after
+it is pressed (0 ms with animations off), so the ripple is visible before the launcher hides.
 
 ### Special Button Types
 

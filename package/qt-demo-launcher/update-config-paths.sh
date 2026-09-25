@@ -50,6 +50,9 @@ sed -i "s|/usr/share/qt-apps/cluster-launcher.sh|$BASE_PATH/share/qt-apps/cluste
 sed -i "s|/usr/share/qt-apps/display-analysis-report.sh|$BASE_PATH/share/qt-apps/display-analysis-report.sh|g" "$CONFIG_FILE"
 sed -i "s|/usr/share/qt-apps/display-analysis-start-child.sh|$BASE_PATH/share/qt-apps/display-analysis-start-child.sh|g" "$CONFIG_FILE"
 
+# Launcher icons/logo are installed with the scripts in ${BASE_PATH}/share/qt-apps/icons/
+sed -i "s|/usr/share/qt-apps/icons/|$BASE_PATH/share/qt-apps/icons/|g" "$CONFIG_FILE"
+
 # Update directory paths in arguments (data is in ${BASE_PATH}/share/qt-apps/)
 sed -i "s|\"arguments\": \\[\"/Pictures\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Pictures\"|g" "$CONFIG_FILE"
 sed -i "s|\"arguments\": \\[\"/Patterns\"|\"arguments\": [\"$BASE_PATH/share/qt-apps/Patterns\"|g" "$CONFIG_FILE"

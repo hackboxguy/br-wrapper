@@ -24,6 +24,22 @@
 #include <QFileSystemWatcher>
 #include <QScreen>
 #include <QMap>
+#include <QPainter>
+#include <QPainterPath>
+#include <QImageReader>
+#include <QTimer>
+#include <QDateTime>
+#include <QElapsedTimer>
+#include <QVariantAnimation>
+#include <QEasingCurve>
+#include <QMouseEvent>
+#include <QFontDatabase>
+#include <QPointer>
+#include <cmath>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include "NetworkInterface.h"
 
 struct ButtonConfig {
@@ -56,6 +72,8 @@ struct ButtonConfig {
 
     // Styling
     int fontSize = 24;
+    QString subtitle;     // "tiles" theme: second line under the text
+    QString accentColor;  // "tiles" theme: badge/stripe color (defaults to background_color)
     QString backgroundColor = "#404040";
     QString hoverColor = "#505050";
     int borderRadius = 15;
@@ -63,6 +81,7 @@ struct ButtonConfig {
 
 struct TitleConfig {
     QString text = "Touch Applications";
+    QString subtitle;  // "tiles" theme only
     QString logoPath;
     int logoWidth = 150;
     int logoHeight = 60;
@@ -83,12 +102,588 @@ struct LayoutConfig {
     bool dynamicLayout = true;  // Dynamic sizing to fill screen (can be disabled)
 };
 
+// Optional "theme" block. The default "classic" style keeps the original
+// stylesheet buttons; "tiles" switches to the painted card look below.
+// Default colors are multiples of the RGB565 steps so they don't dither on
+// 16bpp framebuffers.
+struct ThemeConfig {
+    QString style = "classic"; // classic, tiles
+    QString fontFamily;
+    QString backgroundColor = "#080C18";
+    QString gridColor = "#101828";
+    int gridSpacing = 48;      // 0 disables the background grid
+    bool cornerMarks = true;   // registration marks on the outermost pixels
+    bool colorBars = true;     // SMPTE bar strip under the header
+    QString cardColor = "#182030";
+    QString cardHoverColor = "#202C40";
+    QString cardBorderColor = "#283450";
+    QString textColor = "#F0F4F8";
+    QString subtextColor = "#8894A8";
+    bool showClock = true;
+    bool showIp = true;
+    bool showResolution = true;
+    bool animations = true;
+
+    bool isTiles() const { return style == "tiles"; }
+};
+
 struct LauncherConfig {
+    ThemeConfig theme;
     TitleConfig title;
     LayoutConfig layout;
     QList<ButtonConfig> buttons;
     int windowWidth = 800;
     int windowHeight = 600;
+};
+
+// ---------------------------------------------------------------------------
+// "tiles" theme widgets. None of these need moc: they only use lambdas.
+// ---------------------------------------------------------------------------
+
+static QColor mixColor(const QColor &a, const QColor &b, qreal t)
+{
+    return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * t,
+                            a.greenF() + (b.greenF() - a.greenF()) * t,
+                            a.blueF() + (b.blueF() - a.blueF()) * t,
+                            a.alphaF() + (b.alphaF() - a.alphaF()) * t);
+}
+
+static QFont themeFont(const ThemeConfig &theme, int pixelSize, int weight)
+{
+    QFont font;
+    if (!theme.fontFamily.isEmpty()) {
+        font.setFamily(theme.fontFamily);
+    }
+    font.setPixelSize(qMax(8, pixelSize));
+    font.setWeight(weight);
+    font.setStyleStrategy(QFont::PreferAntialias);
+    return font;
+}
+
+// Loads a PNG or SVG (via the qsvg image plugin) fitted into box. SVGs are
+// rasterized at the target size so they stay sharp. A valid tint recolors
+// every opaque pixel while keeping the icon's alpha, so one white line-art
+// icon set serves every accent color.
+static QPixmap loadIcon(const QString &path, const QSize &box, const QColor &tint = QColor())
+{
+    if (path.isEmpty() || box.isEmpty() || !QFile::exists(path)) {
+        return QPixmap();
+    }
+
+    QImageReader reader(path);
+    QSize natural = reader.size();
+    if (natural.isValid()) {
+        reader.setScaledSize(natural.scaled(box, Qt::KeepAspectRatio));
+    }
+    QImage image = reader.read();
+    if (image.isNull()) {
+        return QPixmap();
+    }
+    if (image.size() != image.size().scaled(box, Qt::KeepAspectRatio) || !natural.isValid()) {
+        image = image.scaled(box, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    image = image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+
+    if (tint.isValid()) {
+        QPainter p(&image);
+        p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        p.fillRect(image.rect(), tint);
+    }
+    return QPixmap::fromImage(image);
+}
+
+// First IPv4 address of an interface that is up and not loopback.
+static QString primaryIPv4()
+{
+    struct ifaddrs *list = nullptr;
+    if (getifaddrs(&list) != 0) {
+        return QString();
+    }
+
+    QString result;
+    for (struct ifaddrs *ifa = list; ifa; ifa = ifa->ifa_next) {
+        if (!ifa->ifa_addr || ifa->ifa_addr->sa_family != AF_INET) continue;
+        if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK)) continue;
+
+        char buf[INET_ADDRSTRLEN];
+        const struct sockaddr_in *sin = reinterpret_cast<const struct sockaddr_in *>(ifa->ifa_addr);
+        if (inet_ntop(AF_INET, &sin->sin_addr, buf, sizeof(buf))) {
+            result = QString::fromLatin1(buf);
+            break;
+        }
+    }
+    freeifaddrs(list);
+    return result;
+}
+
+// Central widget. Paints nothing in the classic style, so the main window's
+// black stylesheet background shows through as before.
+class BackdropWidget : public QWidget
+{
+public:
+    explicit BackdropWidget(const ThemeConfig *theme, QWidget *parent = nullptr)
+        : QWidget(parent), m_theme(theme) {}
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        if (!m_theme || !m_theme->isTiles()) return;
+
+        QPainter p(this);
+        p.fillRect(rect(), QColor(m_theme->backgroundColor));
+
+        if (m_theme->gridSpacing > 0) {
+            p.setPen(QColor(m_theme->gridColor));
+            int step = m_theme->gridSpacing;
+            // Center the grid so the margins on both sides match
+            int ox = (width() % step) / 2;
+            int oy = (height() % step) / 2;
+            for (int x = ox; x < width(); x += step) p.drawLine(x, 0, x, height());
+            for (int y = oy; y < height(); y += step) p.drawLine(0, y, width(), y);
+        }
+
+        if (m_theme->cornerMarks) {
+            // Drawn on the outermost pixel rows/columns: if any mark is
+            // missing, the panel is cropping or mis-timing the frame.
+            int len = qMax(16, height() / 30);
+            int w = width() - 1, h = height() - 1;
+            p.setPen(QPen(QColor("#5868A0"), 2, Qt::SolidLine, Qt::FlatCap));
+            p.drawLine(0, 1, len, 1);      p.drawLine(1, 0, 1, len);
+            p.drawLine(w - len, 1, w, 1);  p.drawLine(w, 0, w, len);
+            p.drawLine(0, h, len, h);      p.drawLine(1, h - len, 1, h);
+            p.drawLine(w - len, h, w, h);  p.drawLine(w, h - len, w, h);
+        }
+    }
+
+private:
+    const ThemeConfig *m_theme;
+};
+
+// Header: logo, title/breadcrumb, status chips, a seconds clock with a live
+// pulse (doubles as a frozen-frame indicator) and the SMPTE bar strip with a
+// scanline sweeping across it.
+class LauncherHeader : public QWidget
+{
+public:
+    LauncherHeader(const ThemeConfig &theme, const QString &title, const QString &subtitle,
+                   const QString &logoPath, int port, int height, QWidget *parent = nullptr)
+        : QWidget(parent), m_theme(theme), m_title(title), m_subtitle(subtitle),
+          m_logoPath(logoPath), m_port(port)
+    {
+        setFixedHeight(height);
+        setAttribute(Qt::WA_OpaquePaintEvent, false);
+
+        m_ip = primaryIPv4();
+        if (QScreen *screen = QApplication::primaryScreen()) {
+            m_resolution = QString("%1×%2").arg(screen->size().width()).arg(screen->size().height());
+        }
+
+        m_tick = new QTimer(this);
+        m_tick->setInterval(1000);
+        QObject::connect(m_tick, &QTimer::timeout, [this]() {
+            // DHCP may come up after the launcher, so keep polling
+            if (++m_tickCount % 5 == 0) {
+                QString ip = primaryIPv4();
+                if (ip != m_ip) {
+                    m_ip = ip;
+                    update();
+                    return;
+                }
+            }
+            update(m_clockRect.toAlignedRect().adjusted(-2, -2, 2, 2));
+        });
+
+        m_anim = new QTimer(this);
+        m_anim->setInterval(40);
+        QObject::connect(m_anim, &QTimer::timeout, [this]() {
+            update(m_pulseRect.toAlignedRect().adjusted(-2, -2, 2, 2));
+            if (m_scanActive || scanPhase() >= 0) {
+                update(m_stripRect.toAlignedRect());
+            }
+        });
+        m_elapsed.start();
+    }
+
+protected:
+    void showEvent(QShowEvent *) override
+    {
+        if (m_theme.showClock) m_tick->start();
+        if (m_theme.animations) m_anim->start();
+    }
+
+    void hideEvent(QHideEvent *) override
+    {
+        m_tick->stop();
+        m_anim->stop();
+    }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::TextAntialiasing);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+
+        const qreal W = width();
+        const qreal H = height();
+        const QColor text(m_theme.textColor);
+        const QColor subtext(m_theme.subtextColor);
+
+        qreal stripH = m_theme.colorBars ? qMax(4.0, qRound(H * 0.06) * 1.0) : 0;
+        qreal bodyH = H - stripH - (stripH > 0 ? qRound(H * 0.14) : 0);
+
+        // Logo
+        qreal x = 0;
+        if (!m_logoPath.isEmpty()) {
+            QSize box(qRound(bodyH * 0.98), qRound(bodyH * 0.74));
+            if (m_logo.isNull() || m_logoBox != box) {
+                m_logo = loadIcon(m_logoPath, box);
+                m_logoBox = box;
+            }
+            if (!m_logo.isNull()) {
+                p.drawPixmap(QPointF(0, (bodyH - m_logo.height()) / 2), m_logo);
+                x = m_logo.width() + H * 0.2;
+            }
+        }
+
+        // Title block
+        QFont titleFont = themeFont(m_theme, qRound(bodyH * 0.38), QFont::Bold);
+        QFont subFont = themeFont(m_theme, qRound(bodyH * 0.2), QFont::Normal);
+        QFontMetricsF fmT(titleFont), fmS(subFont);
+        qreal gap = bodyH * 0.05;
+        qreal blockH = fmT.height() + (m_subtitle.isEmpty() ? 0 : gap + fmS.height());
+        qreal top = (bodyH - blockH) / 2;
+        p.setFont(titleFont);
+        p.setPen(text);
+        p.drawText(QPointF(x, top + fmT.ascent()), m_title);
+        qreal titleRight = x + fmT.horizontalAdvance(m_title);
+        if (!m_subtitle.isEmpty()) {
+            p.setFont(subFont);
+            p.setPen(subtext);
+            p.drawText(QPointF(x, top + fmT.height() + gap + fmS.ascent()), m_subtitle);
+            titleRight = qMax(titleRight, x + fmS.horizontalAdvance(m_subtitle));
+        }
+        titleRight += H * 0.4;
+
+        // Clock + live pulse
+        qreal right = W;
+        if (m_theme.showClock) {
+            QFont clockFont = themeFont(m_theme, qRound(bodyH * 0.36), QFont::Medium);
+            QFont dateFont = themeFont(m_theme, qRound(bodyH * 0.19), QFont::Normal);
+            QFontMetricsF fmC(clockFont), fmD(dateFont);
+            QDateTime now = QDateTime::currentDateTime();
+            qreal clockW = qMax(fmC.horizontalAdvance("88:88:88"), fmD.horizontalAdvance(now.toString("ddd dd MMM yyyy")));
+            qreal cBlockH = fmC.height() + gap + fmD.height();
+            qreal cTop = (bodyH - cBlockH) / 2;
+            m_clockRect = QRectF(W - clockW, cTop, clockW, cBlockH);
+            p.setFont(clockFont);
+            p.setPen(text);
+            p.drawText(QRectF(W - clockW, cTop, clockW, fmC.height()), Qt::AlignRight | Qt::AlignVCenter,
+                       now.toString("HH:mm:ss"));
+            p.setFont(dateFont);
+            p.setPen(subtext);
+            p.drawText(QRectF(W - clockW, cTop + fmC.height() + gap, clockW, fmD.height()),
+                       Qt::AlignRight | Qt::AlignVCenter, now.toString("ddd dd MMM yyyy"));
+
+            qreal r = qMax(3.0, bodyH * 0.06);
+            QPointF c(W - clockW - H * 0.22, cTop + fmC.height() / 2);
+            m_pulseRect = QRectF(c.x() - r * 3, c.y() - r * 3, r * 6, r * 6);
+            QColor live("#34D399");
+            if (m_theme.animations) {
+                qreal t = std::fmod(m_elapsed.elapsed() / 1600.0, 1.0);
+                QColor halo = live;
+                halo.setAlphaF(0.55 * (1.0 - t));
+                p.setPen(Qt::NoPen);
+                p.setBrush(halo);
+                p.drawEllipse(c, r * (1.0 + 1.9 * t), r * (1.0 + 1.9 * t));
+            }
+            p.setPen(Qt::NoPen);
+            p.setBrush(live);
+            p.drawEllipse(c, r, r);
+            right = m_pulseRect.left() - H * 0.15;
+        }
+
+        // Status chips, dropped from the left if they would hit the title
+        QList<QPair<QString, QString>> chips;
+        if (m_theme.showResolution && !m_resolution.isEmpty()) chips << qMakePair(QString("RES"), m_resolution);
+        if (m_theme.showIp) chips << qMakePair(QString("IP"), m_ip.isEmpty() ? QString("no link") : m_ip);
+        if (m_theme.showIp && m_port > 0) chips << qMakePair(QString("API"), QString(":%1").arg(m_port));
+
+        QFont labelFont = themeFont(m_theme, qRound(bodyH * 0.16), QFont::Bold);
+        QFont valueFont = themeFont(m_theme, qRound(bodyH * 0.2), QFont::Medium);
+        QFontMetricsF fmL(labelFont), fmV(valueFont);
+        qreal chipH = bodyH * 0.44;
+        qreal pad = chipH * 0.42;
+        for (int i = chips.size() - 1; i >= 0; --i) {
+            qreal labelW = fmL.horizontalAdvance(chips[i].first);
+            qreal valueW = fmV.horizontalAdvance(chips[i].second);
+            qreal chipW = pad + labelW + pad * 0.6 + valueW + pad;
+            qreal left = right - chipW;
+            if (left < titleRight) break;
+            QRectF chip(left, (bodyH - chipH) / 2, chipW, chipH);
+            p.setPen(QPen(QColor(m_theme.cardBorderColor), 1.2));
+            p.setBrush(QColor(m_theme.cardColor));
+            p.drawRoundedRect(chip, chipH / 2, chipH / 2);
+            p.setFont(labelFont);
+            p.setPen(subtext);
+            p.drawText(QRectF(chip.left() + pad, chip.top(), labelW, chipH), Qt::AlignVCenter, chips[i].first);
+            p.setFont(valueFont);
+            p.setPen(text);
+            p.drawText(QRectF(chip.left() + pad + labelW + pad * 0.6, chip.top(), valueW + 1, chipH),
+                       Qt::AlignVCenter, chips[i].second);
+            right = left - H * 0.12;
+        }
+
+        // SMPTE 75% bars
+        if (stripH > 0) {
+            m_stripRect = QRectF(0, H - stripH, W, stripH);
+            static const char *bars[] = { "#C0C0C0", "#C0C000", "#00C0C0", "#00C000",
+                                          "#C000C0", "#C00000", "#0000C0" };
+            QPainterPath clip;
+            clip.addRoundedRect(m_stripRect, stripH / 2, stripH / 2);
+            p.save();
+            p.setClipPath(clip);
+            qreal segW = W / 7.0;
+            for (int i = 0; i < 7; ++i) {
+                p.fillRect(QRectF(i * segW, m_stripRect.top(), segW + 1, stripH), QColor(bars[i]));
+            }
+            qreal phase = m_theme.animations ? scanPhase() : -1;
+            m_scanActive = phase >= 0;
+            if (m_scanActive) {
+                qreal bandW = W * 0.14;
+                qreal cx = -bandW + phase * (W + 2 * bandW);
+                QLinearGradient g(cx - bandW / 2, 0, cx + bandW / 2, 0);
+                g.setColorAt(0.0, QColor(255, 255, 255, 0));
+                g.setColorAt(0.5, QColor(255, 255, 255, 210));
+                g.setColorAt(1.0, QColor(255, 255, 255, 0));
+                p.fillRect(QRectF(cx - bandW / 2, m_stripRect.top(), bandW, stripH), g);
+            }
+            p.restore();
+        }
+    }
+
+private:
+    // 0..1 while the scanline sweeps (2.2 s), -1 during the 3.8 s pause
+    qreal scanPhase() const
+    {
+        qint64 t = m_elapsed.elapsed() % 6000;
+        return t < 2200 ? t / 2200.0 : -1;
+    }
+
+    ThemeConfig m_theme;
+    QString m_title;
+    QString m_subtitle;
+    QString m_logoPath;
+    QPixmap m_logo;
+    QSize m_logoBox;
+    int m_port;
+    QString m_ip;
+    QString m_resolution;
+    QTimer *m_tick;
+    QTimer *m_anim;
+    int m_tickCount = 0;
+    QElapsedTimer m_elapsed;
+    QRectF m_clockRect;
+    QRectF m_pulseRect;
+    QRectF m_stripRect;
+    bool m_scanActive = false;
+};
+
+// Card-style launcher button. Still a QPushButton so layouts, the pressed()
+// connection and qobject_cast in buttonClicked() keep working.
+class TileButton : public QPushButton
+{
+public:
+    TileButton(const ButtonConfig &config, const ThemeConfig &theme, bool missing,
+               QWidget *parent = nullptr)
+        : QPushButton(parent), m_config(config), m_theme(theme), m_missing(missing)
+    {
+        setText(config.text);
+        setFocusPolicy(Qt::NoFocus);
+        setAttribute(Qt::WA_Hover);
+        m_accent = QColor(config.accentColor.isEmpty() ? config.backgroundColor : config.accentColor);
+        if (!m_accent.isValid()) m_accent = QColor("#38BDF8");
+
+        m_revealAnim = new QVariantAnimation(this);
+        m_revealAnim->setStartValue(0.0);
+        m_revealAnim->setEndValue(1.0);
+        m_revealAnim->setDuration(420);
+        m_revealAnim->setEasingCurve(QEasingCurve::OutCubic);
+        QObject::connect(m_revealAnim, &QVariantAnimation::valueChanged, [this](const QVariant &v) {
+            m_reveal = v.toReal();
+            update();
+        });
+
+        m_rippleAnim = new QVariantAnimation(this);
+        m_rippleAnim->setStartValue(0.0);
+        m_rippleAnim->setEndValue(1.0);
+        m_rippleAnim->setDuration(480);
+        m_rippleAnim->setEasingCurve(QEasingCurve::OutQuad);
+        QObject::connect(m_rippleAnim, &QVariantAnimation::valueChanged, [this](const QVariant &v) {
+            m_ripple = v.toReal();
+            update();
+        });
+        QObject::connect(m_rippleAnim, &QVariantAnimation::finished, [this]() {
+            m_ripple = -1;
+            update();
+        });
+    }
+
+    int gridRow() const { return m_config.row; }
+    int gridColumn() const { return m_config.column; }
+
+    void playReveal(int delayMs)
+    {
+        if (!m_theme.animations) return;
+        m_revealAnim->stop();
+        m_reveal = 0.0;
+        update();
+        QTimer::singleShot(delayMs, this, [this]() { m_revealAnim->start(); });
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (m_theme.animations) {
+            m_ripplePos = event->localPos();
+            m_rippleAnim->stop();
+            m_ripple = 0.0;
+            m_rippleAnim->start();
+        }
+        QPushButton::mousePressEvent(event);
+    }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        p.setRenderHint(QPainter::TextAntialiasing);
+        p.setRenderHint(QPainter::SmoothPixmapTransform);
+
+        QRectF r = QRectF(rect()).adjusted(1.5, 1.5, -1.5, -1.5);
+        const qreal h = r.height();
+
+        // Entrance: fade in while growing from 92%
+        if (m_reveal < 1.0) {
+            qreal s = 0.92 + 0.08 * m_reveal;
+            p.translate(r.center());
+            p.scale(s, s);
+            p.translate(-r.center());
+            p.setOpacity(m_reveal);
+        }
+        if (m_missing) p.setOpacity(p.opacity() * 0.5);
+
+        const QColor text(m_theme.textColor);
+        const QColor subtext(m_theme.subtextColor);
+        const bool down = isDown();
+        const bool hover = underMouse();
+        const qreal radius = qMin(h * 0.14, 28.0);
+
+        QPainterPath card;
+        card.addRoundedRect(r, radius, radius);
+        QColor fill = down ? mixColor(QColor(m_theme.cardColor), m_accent, 0.22)
+                           : hover ? QColor(m_theme.cardHoverColor) : QColor(m_theme.cardColor);
+        p.fillPath(card, fill);
+
+        p.save();
+        p.setClipPath(card);
+        // Accent stripe and a faint top sheen
+        qreal barW = qMax(4.0, h * 0.035);
+        p.fillRect(QRectF(r.left(), r.top(), barW, h), m_accent);
+        p.fillRect(QRectF(r.left(), r.top(), r.width(), qMax(1.0, h * 0.008)), QColor(255, 255, 255, 18));
+        if (m_ripple >= 0) {
+            qreal maxR = std::hypot(qMax(m_ripplePos.x(), r.width() - m_ripplePos.x()),
+                                    qMax(m_ripplePos.y(), r.height() - m_ripplePos.y()));
+            QColor wave = m_accent;
+            wave.setAlphaF(0.35 * (1.0 - m_ripple));
+            p.setPen(Qt::NoPen);
+            p.setBrush(wave);
+            p.drawEllipse(m_ripplePos, maxR * m_ripple, maxR * m_ripple);
+        }
+        p.restore();
+
+        p.setBrush(Qt::NoBrush);
+        p.setPen(QPen(down ? m_accent : QColor(m_theme.cardBorderColor), down ? 2.0 : 1.2));
+        p.drawPath(card);
+
+        // Icon badge
+        qreal x = r.left() + barW + h * 0.2;
+        bool hasIcon = !m_config.iconPath.isEmpty() && m_config.iconLayout != "text_only";
+        if (hasIcon) {
+            qreal badge = h * 0.56;
+            QRectF badgeRect(x, r.center().y() - badge / 2, badge, badge);
+            QColor badgeFill = m_accent;
+            badgeFill.setAlphaF(down ? 0.32 : 0.16);
+            QColor badgeEdge = m_accent;
+            badgeEdge.setAlphaF(0.45);
+            p.setPen(QPen(badgeEdge, 1.2));
+            p.setBrush(badgeFill);
+            p.drawRoundedRect(badgeRect, badge * 0.26, badge * 0.26);
+
+            QSize iconBox(qRound(badge * 0.62), qRound(badge * 0.62));
+            if (m_icon.isNull() || m_iconBox != iconBox) {
+                m_icon = loadIcon(m_config.iconPath, iconBox, m_accent.lighter(115));
+                m_iconBox = iconBox;
+            }
+            if (!m_icon.isNull()) {
+                p.drawPixmap(QPointF(badgeRect.center().x() - m_icon.width() / 2.0,
+                                     badgeRect.center().y() - m_icon.height() / 2.0), m_icon);
+            }
+            x = badgeRect.right() + h * 0.17;
+        }
+
+        // Chevron for buttons that open a page
+        qreal textRight = r.right() - h * 0.18;
+        if (m_config.action.toLower() == "navigate") {
+            qreal s = h * 0.09;
+            QPointF c(r.right() - h * 0.22, r.center().y());
+            p.setPen(QPen(m_accent, qMax(2.0, h * 0.025), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.drawPolyline(QPolygonF() << QPointF(c.x() - s / 2, c.y() - s)
+                                       << QPointF(c.x() + s / 2, c.y())
+                                       << QPointF(c.x() - s / 2, c.y() + s));
+            textRight = c.x() - h * 0.2;
+        }
+        qreal textW = qMax(10.0, textRight - x);
+
+        // Title shrinks (to 70%) before it elides; subtitle just elides
+        int titlePx = qRound(h * 0.19);
+        QFont titleFont = themeFont(m_theme, titlePx, QFont::DemiBold);
+        while (titlePx > h * 0.19 * 0.7 && QFontMetricsF(titleFont).horizontalAdvance(m_config.text) > textW) {
+            titleFont.setPixelSize(--titlePx);
+        }
+        QFontMetricsF fmT(titleFont);
+        QString title = fmT.elidedText(m_config.text, Qt::ElideRight, textW);
+
+        QString sub = m_missing ? QString("Not installed") : m_config.subtitle;
+        QFont subFont = themeFont(m_theme, qRound(h * 0.12), QFont::Normal);
+        QFontMetricsF fmS(subFont);
+        sub = fmS.elidedText(sub, Qt::ElideRight, textW);
+
+        qreal gap = h * 0.04;
+        qreal blockH = fmT.height() + (sub.isEmpty() ? 0 : gap + fmS.height());
+        qreal top = r.center().y() - blockH / 2;
+        p.setFont(titleFont);
+        p.setPen(text);
+        p.drawText(QPointF(x, top + fmT.ascent()), title);
+        if (!sub.isEmpty()) {
+            p.setFont(subFont);
+            p.setPen(m_missing ? QColor("#F87171") : subtext);
+            p.drawText(QPointF(x, top + fmT.height() + gap + fmS.ascent()), sub);
+        }
+    }
+
+private:
+    ButtonConfig m_config;
+    ThemeConfig m_theme;
+    bool m_missing;
+    QColor m_accent;
+    QPixmap m_icon;
+    QSize m_iconBox;
+    qreal m_reveal = 1.0;
+    qreal m_ripple = -1;
+    QPointF m_ripplePos;
+    QVariantAnimation *m_revealAnim;
+    QVariantAnimation *m_rippleAnim;
 };
 
 class TouchAppLauncher : public QMainWindow
@@ -120,8 +715,20 @@ private slots:
         QPushButton *button = qobject_cast<QPushButton*>(sender());
         if (!button) return;
 
-        QString buttonId = button->property("buttonId").toString();
+        activateButton(button->property("buttonId").toString());
+    }
 
+protected:
+    void showEvent(QShowEvent *event) override
+    {
+        QMainWindow::showEvent(event);
+        // Replay the entrance each time we come back from a launched app
+        animateTilesIn();
+    }
+
+private:
+    void activateButton(const QString &buttonId)
+    {
         // Find button config
         ButtonConfig config;
         bool found = false;
@@ -225,6 +832,8 @@ private slots:
 	    calculateScaleFactor();
 	    calculateDynamicSizes();
 	    applyMainLayoutMetrics(mainLayout);
+	    applyWindowBackground();
+	    m_tiles.clear();
 
 	    // Remove existing title and button layouts.
 	    while (mainLayout->count() > 0) {
@@ -242,12 +851,16 @@ private slots:
 	    if (buttonLayout) {
 		mainLayout->addLayout(buttonLayout);
 	    }
+	    if (m_config.theme.isTiles()) {
+		mainLayout->addStretch(1);
+	    }
 
 	    mainLayout->invalidate();
 	    mainLayout->activate();
 	    centralWidget->updateGeometry();
 	    centralWidget->update();
 	    update();
+	    animateTilesIn();
 
 	    qDebug() << "UI refresh complete";
     }
@@ -375,6 +988,30 @@ private:
     int m_dynamicButtonWidth;  // Calculated button width for dynamic layout
     int m_dynamicButtonHeight; // Calculated button height for dynamic layout
     int m_titleHeight;  // Estimated title widget height
+    QList<QPointer<TileButton>> m_tiles;  // Tiles on the current page, for the entrance animation
+    bool m_activationPending = false;     // A tile press is waiting out its ripple
+
+    int tileHeaderHeight() const
+    {
+        QScreen *screen = QApplication::primaryScreen();
+        int screenHeight = screen ? screen->size().height() : 720;
+        return qBound(64, (int)(screenHeight * 0.14), 160);
+    }
+
+    void applyWindowBackground()
+    {
+        QString color = m_config.theme.isTiles() ? m_config.theme.backgroundColor : QString("#000000");
+        setStyleSheet(QString("QMainWindow { background-color: %1; }").arg(color));
+    }
+
+    // Diagonal wave: each tile starts a little after its upper-left neighbour
+    void animateTilesIn()
+    {
+        if (!m_config.theme.isTiles() || !m_config.theme.animations) return;
+        for (const QPointer<TileButton> &tile : m_tiles) {
+            if (tile) tile->playReveal(60 + (tile->gridRow() + tile->gridColumn()) * 70);
+        }
+    }
 
     void calculateScaleFactor()
     {
@@ -440,6 +1077,9 @@ private:
         int scaledTitleFontSize = qMax(16, (int)(m_config.title.fontSize * m_scaleFactor));
         int scaledTitlePadding = qMax(5, (int)(15 * m_scaleFactor));
         m_titleHeight = scaledTitleFontSize + scaledTitlePadding * 2 + scaledMainSpacing;
+        if (m_config.theme.isTiles()) {
+            m_titleHeight = tileHeaderHeight() + scaledMainSpacing;
+        }
 
         // Calculate available content area
         int availableWidth = screenWidth - scaledLeftMargin - scaledRightMargin;
@@ -818,6 +1458,27 @@ private:
         m_config.title.layout = title["layout"].toString("text_only");
         m_config.title.fontSize = title["font_size"].toInt(32);
         m_config.title.color = title["color"].toString("#ffffff");
+        m_config.title.subtitle = title["subtitle"].toString();
+
+        // Parse theme (optional; absent means the classic look)
+        QJsonObject theme = launcher["theme"].toObject();
+        ThemeConfig &t = m_config.theme;
+        t.style = theme["style"].toString(t.style).toLower();
+        t.fontFamily = theme["font_family"].toString(t.fontFamily);
+        t.backgroundColor = theme["background_color"].toString(t.backgroundColor);
+        t.gridColor = theme["grid_color"].toString(t.gridColor);
+        t.gridSpacing = theme["grid_spacing"].toInt(t.gridSpacing);
+        t.cornerMarks = theme["corner_marks"].toBool(t.cornerMarks);
+        t.colorBars = theme["color_bars"].toBool(t.colorBars);
+        t.cardColor = theme["card_color"].toString(t.cardColor);
+        t.cardHoverColor = theme["card_hover_color"].toString(t.cardHoverColor);
+        t.cardBorderColor = theme["card_border_color"].toString(t.cardBorderColor);
+        t.textColor = theme["text_color"].toString(t.textColor);
+        t.subtextColor = theme["subtext_color"].toString(t.subtextColor);
+        t.showClock = theme["show_clock"].toBool(t.showClock);
+        t.showIp = theme["show_ip"].toBool(t.showIp);
+        t.showResolution = theme["show_resolution"].toBool(t.showResolution);
+        t.animations = theme["animations"].toBool(t.animations);
 
         // Parse layout configuration
         QJsonObject layout = launcher["layout"].toObject();
@@ -883,6 +1544,8 @@ private:
             btn.fontSize = btnObj["font_size"].toInt(24);
             btn.backgroundColor = btnObj["background_color"].toString("#404040");
             btn.hoverColor = btnObj["hover_color"].toString("#505050");
+            btn.subtitle = btnObj["subtitle"].toString();
+            btn.accentColor = btnObj["accent_color"].toString();
             btn.borderRadius = btnObj["border_radius"].toInt(15);
 
             if (btn.action.toLower() == "navigate") {
@@ -1142,9 +1805,9 @@ private:
     void setupUI()
     {
         setWindowTitle("Touch App Launcher");
-        setStyleSheet("QMainWindow { background-color: #000000; }");
+        applyWindowBackground();
 
-        QWidget *centralWidget = new QWidget;
+        QWidget *centralWidget = new BackdropWidget(&m_config.theme);
         setCentralWidget(centralWidget);
 
         QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
@@ -1161,6 +1824,9 @@ private:
         if (buttonLayout) {
             mainLayout->addLayout(buttonLayout);
         }
+        if (m_config.theme.isTiles()) {
+            mainLayout->addStretch(1);
+        }
 
         // Don't set minimum size - let it adapt to screen
         // setMinimumSize(m_config.windowWidth, m_config.windowHeight);
@@ -1172,6 +1838,22 @@ private:
 
         if (m_config.title.layout == "text_only" && titleText.isEmpty()) {
             return nullptr; // No title
+        }
+
+        if (m_config.theme.isTiles()) {
+            // Sub-pages show where we are, e.g. "Home > Calibration Tools"
+            QString subtitle = m_config.title.subtitle;
+            if (m_currentPage != "home") {
+                QStringList crumbs;
+                for (const QString &pageId : m_pageStack) {
+                    crumbs << (pageId == "home" ? QString("Home") : m_pageTitles.value(pageId, pageId));
+                }
+                crumbs << titleText;
+                subtitle = crumbs.join(QString::fromUtf8("  \u203A  "));
+            }
+            QString logo = m_config.title.layout == "text_only" ? QString() : m_config.title.logoPath;
+            return new LauncherHeader(m_config.theme, titleText, subtitle, logo,
+                                      m_networkPort, tileHeaderHeight());
         }
 
         QWidget *titleWidget = new QWidget;
@@ -1289,9 +1971,6 @@ private:
 
     QPushButton* createButton(const ButtonConfig &config)
     {
-        QPushButton *button = new QPushButton;
-        button->setProperty("buttonId", config.id);
-
         // Determine button size: use dynamic if enabled, otherwise use scaled fixed size
         int buttonWidth, buttonHeight;
         bool useDynamic = m_config.layout.dynamicLayout && !m_forceFixedLayout
@@ -1305,6 +1984,31 @@ private:
             buttonWidth = (int)(config.width * m_scaleFactor);
             buttonHeight = (int)(config.height * m_scaleFactor);
         }
+
+        if (m_config.theme.isTiles()) {
+            bool missing = !config.program.isEmpty() && !QFile::exists(config.program);
+            TileButton *tile = new TileButton(config, m_config.theme, missing);
+            tile->setProperty("buttonId", config.id);
+            tile->setFixedSize(buttonWidth, buttonHeight);
+            // Launch on press (as the classic buttons do), but let the ripple
+            // play briefly before the launcher hides or the page changes
+            QString buttonId = config.id;
+            int delay = m_config.theme.animations ? 160 : 0;
+            connect(tile, &QPushButton::pressed, this, [this, buttonId, delay]() {
+                if (m_activationPending) return;
+                m_activationPending = true;
+                QTimer::singleShot(delay, this, [this, buttonId]() {
+                    m_activationPending = false;
+                    activateButton(buttonId);
+                });
+            });
+            m_tiles.append(tile);
+            return tile;
+        }
+
+        QPushButton *button = new QPushButton;
+        button->setProperty("buttonId", config.id);
+        button->setFocusPolicy(Qt::NoFocus);
 
         button->setMinimumSize(buttonWidth, buttonHeight);
         button->setMaximumSize(buttonWidth, buttonHeight);

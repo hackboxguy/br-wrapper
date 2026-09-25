@@ -82,6 +82,13 @@ install(PROGRAMS
     DESTINATION ${DATA_DIR}
 )
 
+# Launcher icons and logo (referenced as /usr/share/qt-apps/icons/... in the
+# JSON; update-config-paths.sh rewrites them to the install prefix)
+install(DIRECTORY icons/
+    DESTINATION ${DATA_DIR}/icons
+    FILES_MATCHING PATTERN "*.svg" PATTERN "*.png"
+)
+
 # Install systemd service and udev rules based on option
 # Check if parent set INSTALL_SYSTEMD_SERVICES variable
 if(NOT DEFINED INSTALL_SYSTEMD_SERVICES)

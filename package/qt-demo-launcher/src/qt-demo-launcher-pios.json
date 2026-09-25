@@ -1,13 +1,25 @@
 {
   "launcher": {
+    "theme": {
+      "style": "tiles",
+      "font_family": "Roboto",
+      "animations": true,
+      "color_bars": true,
+      "corner_marks": true,
+      "grid_spacing": 48,
+      "show_clock": true,
+      "show_ip": true,
+      "show_resolution": true
+    },
     "title": {
-      "text": "Display-Diagnostics-Tool",
-      "logo": "/usr/share/icons/company-logo-large.png",
+      "text": "Display Diagnostics Tool",
+      "subtitle": "Automotive remote-display test suite",
+      "logo": "/usr/share/qt-apps/icons/ddt-logo.svg",
       "logo_size": {
         "width": 200,
         "height": 80
       },
-      "layout": "text_only",
+      "layout": "logo_left",
       "font_size": 56,
       "color": "#FFFFFF"
     },
@@ -18,13 +30,13 @@
     "layout": {
       "type": "grid",
       "columns": 3,
-      "rows": 5,
-      "spacing": 30,
+      "rows": 3,
+      "spacing": 36,
       "margins": {
-        "top": 100,
-        "bottom": 100,
-        "left": 150,
-        "right": 150
+        "top": 44,
+        "bottom": 60,
+        "left": 80,
+        "right": 80
       }
     },
     "buttons": [
@@ -32,7 +44,8 @@
         "id": "gallery",
         "enabled": true,
         "text": "Photo Gallery",
-        "icon": "/usr/share/icons/gallery-large.png",
+        "subtitle": "Browse pictures",
+        "icon": "/usr/share/qt-apps/icons/photo-gallery.svg",
         "program": "/usr/bin/touch-gallery",
         "arguments": ["/Pictures"],
         "working_directory": "/Pictures",
@@ -50,6 +63,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#F472B6",
         "background_color": "#34495E",
         "hover_color": "#2C3E50",
         "border_radius": 20
@@ -58,12 +72,13 @@
         "id": "demo-video",
         "enabled": true,
         "text": "Demo Video",
-        "icon": "/usr/share/icons/video-large.png",
+        "subtitle": "Video playback test clip",
+        "icon": "/usr/share/qt-apps/icons/demo-video.svg",
         "program": "/usr/share/qt-apps/kodi-video.sh",
         "arguments": [],
         "working_directory": "/tmp",
         "position": {
-          "row": 0,
+          "row": 1,
           "column": 0
         },
         "size": {
@@ -76,6 +91,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#F59E0B",
         "background_color": "#E67E22",
         "hover_color": "#D35400",
         "border_radius": 20
@@ -84,34 +100,9 @@
         "id": "slideshow",
         "enabled": false,
         "text": "Slideshow",
-        "icon": "/usr/share/icons/slideshow-large.png",
+        "subtitle": "Picture slideshow",
+        "icon": "/usr/share/qt-apps/icons/photo-gallery.svg",
         "program": "/usr/share/qt-apps/kodi-slideshow.sh",
-        "arguments": [],
-        "working_directory": "/tmp",
-        "position": {
-          "row": 0,
-          "column": 1
-        },
-        "size": {
-          "width": 640,
-          "height": 200
-        },
-        "icon_size": {
-          "width": 100,
-          "height": 100
-        },
-        "icon_layout": "icon_top",
-        "font_size": 30,
-        "background_color": "#27AE60",
-        "hover_color": "#229954",
-        "border_radius": 20
-      },
-      {
-        "id": "drawing",
-        "enabled": true,
-        "text": "Drawing App",
-        "icon": "/usr/share/icons/paint-large.png",
-        "program": "/usr/lib/qt/examples/widgets/touch/fingerpaint/fingerpaint",
         "arguments": [],
         "working_directory": "/tmp",
         "position": {
@@ -128,68 +119,18 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
-        "background_color": "#E74C3C",
-        "hover_color": "#C0392B",
+        "accent_color": "#F59E0B",
+        "background_color": "#27AE60",
+        "hover_color": "#229954",
         "border_radius": 20
       },
       {
-        "id": "pattern-generator",
+        "id": "drawing",
         "enabled": true,
-        "text": "Pattern Generator",
-        "icon": "/usr/share/icons/tools-large.png",
-        "program": "/usr/bin/disp-tester",
-        "arguments": [],
-        "working_directory": "/tmp",
-        "position": {
-          "row": 1,
-          "column": 1
-        },
-        "size": {
-          "width": 640,
-          "height": 200
-        },
-        "icon_size": {
-          "width": 100,
-          "height": 100
-        },
-        "icon_layout": "icon_top",
-        "font_size": 30,
-        "background_color": "#8E44AD",
-        "hover_color": "#7D3C98",
-        "border_radius": 20
-      },
-      {
-        "id": "test-pictures",
-        "enabled": true,
-        "text": "Test Pictures",
-        "icon": "/usr/share/icons/gallery-large.png",
-        "program": "/usr/bin/touch-gallery",
-        "arguments": ["/Patterns"],
-        "working_directory": "/Patterns",
-        "position": {
-          "row": 1,
-          "column": 2
-        },
-        "size": {
-          "width": 640,
-          "height": 200
-        },
-        "icon_size": {
-          "width": 100,
-          "height": 100
-        },
-        "icon_layout": "icon_top",
-        "font_size": 30,
-        "background_color": "#8E4450",
-        "hover_color": "#2C3E50",
-        "border_radius": 20
-      },
-      {
-        "id": "media-player",
-        "enabled": true,
-        "text": "Media Player",
-        "icon": "/usr/share/icons/video-large.png",
-        "program": "/usr/share/qt-apps/kodi-launcher.sh",
+        "text": "Drawing App",
+        "subtitle": "Touch & multi-touch paint test",
+        "icon": "/usr/share/qt-apps/icons/touch-paint.svg",
+        "program": "/usr/lib/qt/examples/widgets/touch/fingerpaint/fingerpaint",
         "arguments": [],
         "working_directory": "/tmp",
         "position": {
@@ -206,6 +147,91 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#FB7185",
+        "background_color": "#E74C3C",
+        "hover_color": "#C0392B",
+        "border_radius": 20
+      },
+      {
+        "id": "pattern-generator",
+        "enabled": true,
+        "text": "Pattern Generator",
+        "subtitle": "Solid, ramp & geometry patterns",
+        "icon": "/usr/share/qt-apps/icons/pattern-generator.svg",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 0,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "accent_color": "#38BDF8",
+        "background_color": "#8E44AD",
+        "hover_color": "#7D3C98",
+        "border_radius": 20
+      },
+      {
+        "id": "test-pictures",
+        "enabled": true,
+        "text": "Test Pictures",
+        "subtitle": "Reference test images",
+        "icon": "/usr/share/qt-apps/icons/test-pictures.svg",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": ["/Patterns"],
+        "working_directory": "/Patterns",
+        "position": {
+          "row": 0,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "accent_color": "#22D3EE",
+        "background_color": "#8E4450",
+        "hover_color": "#2C3E50",
+        "border_radius": 20
+      },
+      {
+        "id": "media-player",
+        "enabled": true,
+        "text": "Media Player",
+        "subtitle": "Kodi media center",
+        "icon": "/usr/share/qt-apps/icons/media-player.svg",
+        "program": "/usr/share/qt-apps/kodi-launcher.sh",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 1,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "accent_color": "#FB923C",
         "background_color": "#E67E22",
         "hover_color": "#D35400",
         "border_radius": 20
@@ -214,7 +240,8 @@
         "id": "disp-settings",
         "enabled": true,
         "text": "Display Settings",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Brightness, timing & panel setup",
+        "icon": "/usr/share/qt-apps/icons/display-settings.svg",
         "program": "/usr/bin/disp-settings",
         "arguments": [],
         "working_directory": "/tmp",
@@ -232,6 +259,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#34D399",
         "background_color": "#16A085",
         "hover_color": "#1ABC9C",
         "border_radius": 20
@@ -240,13 +268,14 @@
         "id": "cluster-demo",
         "enabled": true,
         "text": "Cluster Demo",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Animated instrument cluster",
+        "icon": "/usr/share/qt-apps/icons/cluster-demo.svg",
         "program": "/usr/share/qt-apps/cluster-launcher.sh",
         "arguments": [],
         "working_directory": "/tmp",
         "position": {
-          "row": 0,
-          "column": 1
+          "row": 1,
+          "column": 2
         },
         "size": {
           "width": 640,
@@ -258,6 +287,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#FACC15",
         "background_color": "#2C3E50",
         "hover_color": "#1A252F",
         "border_radius": 20
@@ -266,7 +296,8 @@
         "id": "calibration-tools",
         "enabled": true,
         "text": "Calibration Tools",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Colorimeter measurement & analysis",
+        "icon": "/usr/share/qt-apps/icons/calibration-tools.svg",
         "action": "navigate",
         "target_page": "calibration-tools",
         "page_title": "Calibration Tools",
@@ -284,6 +315,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#A78BFA",
         "background_color": "#006C8E",
         "hover_color": "#005A78",
         "border_radius": 20
@@ -293,7 +325,8 @@
         "enabled": true,
         "page": "calibration-tools",
         "text": "Brightness Calibration",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "ALS dimmer sweep & install",
+        "icon": "/usr/share/qt-apps/icons/brightness.svg",
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--script", "/home/pi/micropanel/bin/als-dimmer-sweep-child.py",
@@ -317,6 +350,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#FACC15",
         "background_color": "#006C8E",
         "hover_color": "#005A78",
         "border_radius": 20
@@ -326,7 +360,8 @@
         "enabled": true,
         "page": "calibration-tools",
         "text": "Live Measurement",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Real-time luminance & chroma",
+        "icon": "/usr/share/qt-apps/icons/live-measurement.svg",
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--child-action-button",
@@ -353,6 +388,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#34D399",
         "background_color": "#5B6C5D",
         "hover_color": "#465748",
         "border_radius": 20
@@ -362,7 +398,8 @@
         "enabled": true,
         "page": "calibration-tools",
         "text": "White Point Matching",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Match panel to target white",
+        "icon": "/usr/share/qt-apps/icons/white-point.svg",
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--child-action-button",
@@ -392,6 +429,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#E2E8F0",
         "background_color": "#006C8E",
         "hover_color": "#005A78",
         "border_radius": 20
@@ -401,7 +439,8 @@
         "enabled": false,
         "page": "calibration-tools",
         "text": "White Point Matching New",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Match panel to target white (v2)",
+        "icon": "/usr/share/qt-apps/icons/white-point.svg",
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--child-action-button",
@@ -439,6 +478,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#E2E8F0",
         "background_color": "#008E6C",
         "hover_color": "#00785A",
         "border_radius": 20
@@ -448,7 +488,8 @@
         "enabled": false,
         "page": "calibration-tools",
         "text": "White Point Profiling New",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "White-point profiling (v2)",
+        "icon": "/usr/share/qt-apps/icons/white-point.svg",
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--child-action-button",
@@ -478,6 +519,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#CBD5E1",
         "background_color": "#6C5D8E",
         "hover_color": "#574878",
         "border_radius": 20
@@ -487,7 +529,8 @@
         "enabled": true,
         "page": "calibration-tools",
         "text": "Analyze Local-Dimming APL",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Luminance vs. APL report",
+        "icon": "/usr/share/qt-apps/icons/local-dimming.svg",
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--child-action-button",
@@ -505,7 +548,7 @@
         "working_directory": "/tmp",
         "position": {
           "row": 1,
-          "column": 1
+          "column": 0
         },
         "size": {
           "width": 640,
@@ -517,6 +560,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#38BDF8",
         "background_color": "#5B7E8E",
         "hover_color": "#466878",
         "border_radius": 20
@@ -526,7 +570,8 @@
         "enabled": false,
         "page": "calibration-tools",
         "text": "D65 Calibration",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Calibrate to D65",
+        "icon": "/usr/share/qt-apps/icons/white-point.svg",
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--child-action-button",
@@ -562,6 +607,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#FDE68A",
         "background_color": "#8E6C00",
         "hover_color": "#785A00",
         "border_radius": 20
@@ -571,7 +617,8 @@
         "enabled": true,
         "page": "calibration-tools",
         "text": "Analyze Color Gamut",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Measure primaries & gamut",
+        "icon": "/usr/share/qt-apps/icons/color-gamut.svg",
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--child-action-button",
@@ -588,38 +635,7 @@
         ],
         "working_directory": "/tmp",
         "position": {
-          "row": 2,
-          "column": 0
-        },
-        "size": {
-          "width": 640,
-          "height": 200
-        },
-        "icon_size": {
-          "width": 100,
-          "height": 100
-        },
-        "icon_layout": "icon_top",
-        "font_size": 30,
-        "background_color": "#5B7E8E",
-        "hover_color": "#466878",
-        "border_radius": 20
-      },
-      {
-        "id": "view-reports",
-        "enabled": true,
-        "page": "calibration-tools",
-        "text": "View Reports",
-        "icon": "/usr/share/icons/tools-large.png",
-        "program": "/usr/bin/touch-gallery",
-        "arguments": [
-          "--enable-usb-copy",
-          "--usb-copy-script", "/home/pi/micropanel/bin/copy-image-to-usb.sh",
-          "/home/pi/test-reports"
-        ],
-        "working_directory": "/tmp",
-        "position": {
-          "row": 2,
+          "row": 1,
           "column": 1
         },
         "size": {
@@ -632,6 +648,40 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#F472B6",
+        "background_color": "#5B7E8E",
+        "hover_color": "#466878",
+        "border_radius": 20
+      },
+      {
+        "id": "view-reports",
+        "enabled": true,
+        "page": "calibration-tools",
+        "text": "View Reports",
+        "subtitle": "Browse & copy reports to USB",
+        "icon": "/usr/share/qt-apps/icons/view-reports.svg",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": [
+          "--enable-usb-copy",
+          "--usb-copy-script", "/home/pi/micropanel/bin/copy-image-to-usb.sh",
+          "/home/pi/test-reports"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 1,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "accent_color": "#A78BFA",
         "background_color": "#6C5D8E",
         "hover_color": "#574878",
         "border_radius": 20
@@ -695,7 +745,8 @@
         "enabled": true,
         "page": "calibration-tools",
         "text": "Back",
-        "icon": "/usr/share/icons/tools-large.png",
+        "subtitle": "Return to home",
+        "icon": "/usr/share/qt-apps/icons/back.svg",
         "action": "back",
         "position": {
           "row": 2,
@@ -711,6 +762,7 @@
         },
         "icon_layout": "icon_top",
         "font_size": 30,
+        "accent_color": "#94A3B8",
         "background_color": "#2C3E50",
         "hover_color": "#1A252F",
         "border_radius": 20
