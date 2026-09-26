@@ -111,6 +111,69 @@ ApplicationWindow {
                 y = Math.max(-panLimitY, Math.min(panLimitY, y))
             }
 
+            // Pan limits for a scale other than the current one
+            function limitX(s) { return Math.max(0, (paintedWidth * s - parent.width) / 2) }
+            function limitY(s) { return Math.max(0, (paintedHeight * s - parent.height) / 2) }
+
+            // Stop a glide or zoom in progress (a new touch or pinch takes over)
+            function stopMotion() {
+                glideX.stop()
+                glideY.stop()
+                zoomAnim.stop()
+            }
+
+            // Double-tap: zoom in so the tapped point stays under the finger,
+            // or back to fit when already zoomed in. (px, py) are in this
+            // item's own, unscaled coordinates, as a MouseArea inside it reports.
+            function toggleZoomAt(px, py) {
+                stopMotion()
+                if (scale > 1.01) {
+                    zoomTo(1.0, 0, 0)
+                    return
+                }
+                var target = Math.min(pinchArea.pinch.maximumScale, 2.5)
+                var cx = width / 2, cy = height / 2
+                // Screen position of the tapped point now, kept fixed after zoom
+                var sx = x + cx + (px - cx) * scale
+                var sy = y + cy + (py - cy) * scale
+                var tx = sx - cx - (px - cx) * target
+                var ty = sy - cy - (py - cy) * target
+                tx = Math.max(-limitX(target), Math.min(limitX(target), tx))
+                ty = Math.max(-limitY(target), Math.min(limitY(target), ty))
+                zoomTo(target, tx, ty)
+            }
+
+            function zoomTo(s, tx, ty) {
+                zoomScale.to = s
+                zoomX.to = tx
+                zoomY.to = ty
+                zoomAnim.restart()
+            }
+
+            // Momentum after a pan: keep moving at the release speed and ease
+            // to a stop, never past the edges. With OutCubic over 600 ms the
+            // start speed matches the finger's when the distance is v * 200 ms.
+            function glide(vx, vy) {
+                stopMotion()
+                if (Math.abs(vx) > 0.2) {
+                    glideX.to = Math.max(-panLimitX, Math.min(panLimitX, x + vx * 200))
+                    glideX.restart()
+                }
+                if (Math.abs(vy) > 0.2) {
+                    glideY.to = Math.max(-panLimitY, Math.min(panLimitY, y + vy * 200))
+                    glideY.restart()
+                }
+            }
+
+            ParallelAnimation {
+                id: zoomAnim
+                NumberAnimation { id: zoomScale; target: mainImage; property: "scale"; duration: 220; easing.type: Easing.OutCubic }
+                NumberAnimation { id: zoomX; target: mainImage; property: "x"; duration: 220; easing.type: Easing.OutCubic }
+                NumberAnimation { id: zoomY; target: mainImage; property: "y"; duration: 220; easing.type: Easing.OutCubic }
+            }
+            NumberAnimation { id: glideX; target: mainImage; property: "x"; duration: 600; easing.type: Easing.OutCubic }
+            NumberAnimation { id: glideY; target: mainImage; property: "y"; duration: 600; easing.type: Easing.OutCubic }
+
             PinchArea {
                 id: pinchArea
                 anchors.fill: parent
@@ -118,6 +181,7 @@ ApplicationWindow {
                 pinch.minimumScale: 0.5
                 pinch.maximumScale: 4.0
                 enabled: !isSlideshow // Disable pinch in slideshow mode
+                onPinchStarted: mainImage.stopMotion()
                 onPinchFinished: mainImage.clampPosition()
 
                 MouseArea {
@@ -142,14 +206,18 @@ ApplicationWindow {
                     property real startY: 0
                     property bool isPanning: false
                     property bool hasMoved: false
+                    property var samples: []      // recent image positions while panning, for momentum
+                    property real pendingTapX: 0
 
                     onPressed: {
+                        mainImage.stopMotion()     // a touch catches a gliding image
                         lastX = mouse.x
                         lastY = mouse.y
                         startX = mouse.x
                         startY = mouse.y
                         isPanning = false
                         hasMoved = false
+                        samples = []
                     }
 
                     onPositionChanged: {
@@ -168,10 +236,51 @@ ApplicationWindow {
                             if (drag.active) {
                                 hasMoved = true
                                 isPanning = true
+                                // Keep ~100 ms of positions to measure the release speed
+                                var now = Date.now()
+                                var s = samples.filter(function (p) { return now - p.t < 100 })
+                                s.push({ t: now, x: mainImage.x, y: mainImage.y })
+                                samples = s
                             }
 
                             lastX = mouse.x
                             lastY = mouse.y
+                        }
+                    }
+
+                    // Single-tap actions wait for the double-tap interval, so a
+                    // double-tap zooms instead of also navigating or toggling UI
+                    Timer {
+                        id: tapTimer
+                        interval: Qt.styleHints.mouseDoubleClickInterval
+                        onTriggered: mouseArea.singleTap(mouseArea.pendingTapX)
+                    }
+
+                    onDoubleClicked: {
+                        if (isSlideshow) return
+                        tapTimer.stop()
+                        mainImage.toggleZoomAt(mouse.x, mouse.y)
+                    }
+
+                    function singleTap(tapX) {
+                        if (mainImage.scale === 1.0) {
+                            // Navigation only works at normal scale
+                            if (tapX < width / 4) {
+                                previousImage()
+                            } else if (tapX > width * 3 / 4) {
+                                nextImage()
+                            } else {
+                                uiVisible = !uiVisible
+                                if (uiVisible) {
+                                    uiHideTimer.restart()
+                                }
+                            }
+                        } else {
+                            // When zoomed, only toggle UI
+                            uiVisible = !uiVisible
+                            if (uiVisible) {
+                                uiHideTimer.restart()
+                            }
                         }
                     }
 
@@ -186,32 +295,23 @@ ApplicationWindow {
                             }
                             showUITemporarily()
                         } else {
-                            // Normal gallery mode behavior
+                            // Normal gallery mode: act once no second tap follows
                             if (!isPanning && !hasMoved) {
-                                if (mainImage.scale === 1.0) {
-                                    // Navigation only works at normal scale
-                                    if (mouse.x < parent.width / 4) {
-                                        previousImage()
-                                    } else if (mouse.x > parent.width * 3 / 4) {
-                                        nextImage()
-                                    } else {
-                                        uiVisible = !uiVisible
-                                        if (uiVisible) {
-                                            uiHideTimer.restart()
-                                        }
-                                    }
-                                } else {
-                                    // When zoomed, only toggle UI
-                                    uiVisible = !uiVisible
-                                    if (uiVisible) {
-                                        uiHideTimer.restart()
-                                    }
-                                }
+                                pendingTapX = mouse.x
+                                tapTimer.restart()
                             }
                         }
                     }
 
                     onReleased: {
+                        // Momentum: release speed over the last ~100 ms of the pan
+                        if (isPanning && samples.length >= 2) {
+                            var a = samples[0], b = samples[samples.length - 1]
+                            var dt = Math.max(1, b.t - a.t)
+                            if (Date.now() - b.t < 60) {   // finger still moving at release
+                                mainImage.glide((b.x - a.x) / dt, (b.y - a.y) / dt)
+                            }
+                        }
                         if (!isSlideshow) {
                             // Swipe navigation only at normal scale
                             if (mainImage.scale === 1.0 && hasMoved && !isPanning) {
@@ -499,7 +599,8 @@ ApplicationWindow {
                     anchors.centerIn: parent
                     text: isSlideshow ? 
                           (slideshowPaused ? "Tap to resume slideshow" : "Tap to pause slideshow") :
-                          (mainImage.scale !== 1.0 ? "Tap center to fit image" : "Swipe or tap edges to navigate")
+                          (mainImage.scale !== 1.0 ? "Drag to pan \u00b7 double-tap or FIT to fit image"
+                                                   : "Swipe or tap edges to navigate \u00b7 double-tap to zoom")
                     color: "white"
                     font.pixelSize: 20
                     font.family: "DejaVu Sans"
