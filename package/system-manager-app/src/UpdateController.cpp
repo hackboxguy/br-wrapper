@@ -156,7 +156,11 @@ void UpdateController::onOutput()
     m_pending += m_process->readAll();
     int nl;
     while ((nl = m_pending.indexOf('\n')) >= 0) {
-        QString line = QString::fromUtf8(m_pending.left(nl)).trimmed();
+        QString line = QString::fromUtf8(m_pending.left(nl));
+        // disptool colours its phase lines; keep the text, drop the escapes
+        static const QRegularExpression ansi("\\x1B\\[[0-9;]*[A-Za-z]");
+        line.remove(ansi);
+        line = line.trimmed();
         m_pending.remove(0, nl + 1);
         if (!line.isEmpty()) handleLine(line);
     }
