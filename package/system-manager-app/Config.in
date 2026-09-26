@@ -1,0 +1,12 @@
+config BR2_PACKAGE_SYSTEM_MANAGER_APP
+	bool "system-manager-app"
+	depends on BR2_PACKAGE_QT5
+	select BR2_PACKAGE_QT5BASE_GUI
+	select BR2_PACKAGE_QT5DECLARATIVE
+	select BR2_PACKAGE_QT5DECLARATIVE_QUICK
+	help
+	  System Manager for the display rig. Its firmware section shows the firmware each
+	  board runs (983HH serializer board, display controller) against
+	  the images this system ships, and installs them over I2C through
+	  update-iocs.sh (space6-architecture disptool). Started from
+	  qt-demo-launcher's "System Manager" button.
