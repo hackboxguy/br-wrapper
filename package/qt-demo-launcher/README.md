@@ -310,7 +310,8 @@ uses it.
   "card_hover_color": "#202C40",
   "card_border_color": "#283450",
   "text_color": "#F0F4F8",
-  "subtext_color": "#8894A8"
+  "subtext_color": "#8894A8",
+  "notice_file": "/tmp/micropanel-notice" // Optional: its first line is shown as an amber header chip
 }
 ```
 
@@ -319,8 +320,15 @@ a breadcrumb instead), and each button accepts:
 
 ```json
 "subtitle": "Solid, ramp & geometry patterns",  // Second line on the tile
-"accent_color": "#38BDF8"                       // Badge, stripe and icon tint (default: background_color)
+"accent_color": "#38BDF8",                      // Badge, stripe and icon tint (default: background_color)
+"badge_command": "/usr/bin/system-update-check.sh"  // Optional: first output line shown as a tile badge
 ```
+
+`badge_command` runs through `/bin/sh -c` about 20 s after the launcher starts and again whenever
+a launched app exits — never while an app is running. An empty output clears the badge. The
+System Manager button uses it for "Update available" (see `package/system-manager-app`).
+`notice_file` is read once a second; the System Manager writes `Power cycle required` there after
+a firmware update, and `/tmp` clears it on the next boot.
 
 Icons may be PNG or SVG. In the tiles style they are recoloured with the accent colour,
 so white line-art icons work best. The bundled set lives in [icons/](icons/) and is

@@ -80,6 +80,7 @@ struct ButtonConfig {
     int fontSize = 24;
     QString subtitle;     // "tiles" theme: second line under the text
     QString accentColor;  // "tiles" theme: badge/stripe color (defaults to background_color)
+    QString badgeCommand; // "tiles" theme: shell command whose first output line is shown as a badge
     QString backgroundColor = "#404040";
     QString hoverColor = "#505050";
     int borderRadius = 15;
@@ -129,6 +130,7 @@ struct ThemeConfig {
     bool showIp = true;
     bool showResolution = true;
     bool animations = true;
+    QString noticeFile;        // first line shown as an amber header chip while the file exists
 
     bool isTiles() const { return style == "tiles"; }
 };
@@ -280,6 +282,7 @@ public:
         setAttribute(Qt::WA_OpaquePaintEvent, false);
 
         m_ip = primaryIPv4();
+        m_notice = readNotice();
         if (QScreen *screen = QApplication::primaryScreen()) {
             m_resolution = QString("%1×%2").arg(screen->size().width()).arg(screen->size().height());
         }
@@ -287,6 +290,14 @@ public:
         m_tick = new QTimer(this);
         m_tick->setInterval(1000);
         QObject::connect(m_tick, &QTimer::timeout, [this]() {
+            // A notice (e.g. "Power cycle required" after a firmware update)
+            // appears and disappears while the launcher runs
+            QString notice = readNotice();
+            if (notice != m_notice) {
+                m_notice = notice;
+                update();
+                return;
+            }
             // DHCP may come up after the launcher, so keep polling
             if (++m_tickCount % 5 == 0) {
                 QString ip = primaryIPv4();
@@ -409,8 +420,10 @@ protected:
             right = m_pulseRect.left() - H * 0.15;
         }
 
-        // Status chips, dropped from the left if they would hit the title
+        // Status chips, dropped from the left if they would hit the title.
+        // A notice comes first in the list so it is the last one dropped.
         QList<QPair<QString, QString>> chips;
+        if (!m_notice.isEmpty()) chips << qMakePair(QString("!"), m_notice);
         if (m_theme.showResolution && !m_resolution.isEmpty()) chips << qMakePair(QString("RES"), m_resolution);
         if (m_theme.showIp) chips << qMakePair(QString("IP"), m_ip.isEmpty() ? QString("no link") : m_ip);
         if (m_theme.showIp && m_port > 0) chips << qMakePair(QString("API"), QString(":%1").arg(m_port));
@@ -427,14 +440,17 @@ protected:
             qreal left = right - chipW;
             if (left < titleRight) break;
             QRectF chip(left, (bodyH - chipH) / 2, chipW, chipH);
-            p.setPen(QPen(QColor(m_theme.cardBorderColor), 1.2));
-            p.setBrush(QColor(m_theme.cardColor));
+            const bool isNotice = !m_notice.isEmpty() && i == 0;
+            const QColor amber("#FBBF24");
+            QColor fillC = isNotice ? QColor(amber.red(), amber.green(), amber.blue(), 40) : QColor(m_theme.cardColor);
+            p.setPen(QPen(isNotice ? amber : QColor(m_theme.cardBorderColor), 1.2));
+            p.setBrush(fillC);
             p.drawRoundedRect(chip, chipH / 2, chipH / 2);
             p.setFont(labelFont);
-            p.setPen(subtext);
+            p.setPen(isNotice ? amber : subtext);
             p.drawText(QRectF(chip.left() + pad, chip.top(), labelW, chipH), Qt::AlignVCenter, chips[i].first);
             p.setFont(valueFont);
-            p.setPen(text);
+            p.setPen(isNotice ? amber : text);
             p.drawText(QRectF(chip.left() + pad + labelW + pad * 0.6, chip.top(), valueW + 1, chipH),
                        Qt::AlignVCenter, chips[i].second);
             right = left - H * 0.12;
@@ -469,6 +485,14 @@ protected:
     }
 
 private:
+    QString readNotice() const
+    {
+        if (m_theme.noticeFile.isEmpty()) return QString();
+        QFile f(m_theme.noticeFile);
+        if (!f.open(QIODevice::ReadOnly)) return QString();
+        return QString::fromUtf8(f.readLine(200)).trimmed();
+    }
+
     // 0..1 while the scanline sweeps (2.2 s), -1 during the 3.8 s pause
     qreal scanPhase() const
     {
@@ -484,6 +508,7 @@ private:
     QSize m_logoBox;
     int m_port;
     QString m_ip;
+    QString m_notice;
     QString m_resolution;
     QTimer *m_tick;
     QTimer *m_anim;
@@ -537,6 +562,13 @@ public:
 
     int gridRow() const { return m_config.row; }
     int gridColumn() const { return m_config.column; }
+
+    void setBadge(const QString &text)
+    {
+        if (text == m_badge) return;
+        m_badge = text;
+        update();
+    }
 
     void playReveal(int delayMs)
     {
@@ -679,12 +711,28 @@ protected:
             p.setPen(m_missing ? QColor("#F87171") : subtext);
             p.drawText(QPointF(x, top + fmT.height() + gap + fmS.ascent()), sub);
         }
+
+        // Badge (e.g. "Update available") in the top-right corner
+        if (!m_badge.isEmpty()) {
+            QFont badgeFont = themeFont(m_theme, qRound(u * 0.1), QFont::Bold);
+            QFontMetricsF fmB(badgeFont);
+            const qreal bh = fmB.height() + u * 0.06;
+            const qreal bw = fmB.horizontalAdvance(m_badge) + bh;
+            QRectF b(r.right() - u * 0.14 - bw, r.top() + u * 0.12, bw, bh);
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor("#FBBF24"));
+            p.drawRoundedRect(b, bh / 2, bh / 2);
+            p.setFont(badgeFont);
+            p.setPen(QColor("#081018"));
+            p.drawText(b, Qt::AlignCenter, m_badge);
+        }
     }
 
 private:
     ButtonConfig m_config;
     ThemeConfig m_theme;
     bool m_missing;
+    QString m_badge;
     QColor m_accent;
     QPixmap m_icon;
     QSize m_iconBox;
@@ -870,6 +918,9 @@ public:
         // the header or empty grid space), keys arrive at the window.
         qApp->installEventFilter(this);
         setFocusPolicy(Qt::StrongFocus);
+        // Badge commands (e.g. the System Update check) run once the display
+        // chain has settled after boot, then each time an app exits
+        QTimer::singleShot(20000, this, [this]() { runBadgeCommands(); });
     }
 
 private slots:
@@ -887,6 +938,7 @@ protected:
         QMainWindow::showEvent(event);
         // Replay the entrance each time we come back from a launched app
         animateTilesIn();
+        if (m_badgesStarted) runBadgeCommands();
     }
 
     void keyPressEvent(QKeyEvent *event) override
@@ -1240,6 +1292,39 @@ private:
     QElapsedTimer m_swipeClock;
     ulong m_swipeLastTs = 0;
     QEvent::Type m_swipeLastType = QEvent::None;
+
+    QMap<QString, QString> m_badges;       // button id -> badge text from its badge_command
+    QSet<QString> m_badgeRunning;
+    bool m_badgesStarted = false;
+
+    // Run each button's badge_command and show its first output line on the
+    // tile. Never while an app runs (the launcher is hidden then): a badge
+    // check must not share the bus with what the app is doing.
+    void runBadgeCommands()
+    {
+        m_badgesStarted = true;
+        if (!isVisible() || (m_runningProcess && m_runningProcess->state() != QProcess::NotRunning)) {
+            return;   // showEvent runs them when the launcher is back
+        }
+        for (const ButtonConfig &b : m_config.buttons) {
+            if (b.badgeCommand.isEmpty() || !b.enabled || m_badgeRunning.contains(b.id)) continue;
+            QProcess *proc = new QProcess(this);
+            const QString id = b.id;
+            m_badgeRunning.insert(id);
+            connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+                    [this, proc, id](int, QProcess::ExitStatus) {
+                QString text = QString::fromUtf8(proc->readAllStandardOutput()).section('\n', 0, 0).trimmed();
+                m_badgeRunning.remove(id);
+                m_badges.insert(id, text);
+                for (const QPointer<TileButton> &tile : m_tiles) {
+                    if (tile && tile->property("buttonId").toString() == id) tile->setBadge(text);
+                }
+                proc->deleteLater();
+            });
+            QTimer::singleShot(90000, proc, [proc]() { proc->kill(); });
+            proc->start("/bin/sh", QStringList() << "-c" << b.badgeCommand);
+        }
+    }
 
     struct GridPlacement {
         ButtonConfig config;
@@ -1905,6 +1990,7 @@ private:
         t.showIp = theme["show_ip"].toBool(t.showIp);
         t.showResolution = theme["show_resolution"].toBool(t.showResolution);
         t.animations = theme["animations"].toBool(t.animations);
+        t.noticeFile = theme["notice_file"].toString(t.noticeFile);
 
         // Parse layout configuration
         QJsonObject layout = launcher["layout"].toObject();
@@ -1974,6 +2060,7 @@ private:
             btn.hoverColor = btnObj["hover_color"].toString("#505050");
             btn.subtitle = btnObj["subtitle"].toString();
             btn.accentColor = btnObj["accent_color"].toString();
+            btn.badgeCommand = btnObj["badge_command"].toString();
             btn.borderRadius = btnObj["border_radius"].toInt(15);
 
             if (btn.action.toLower() == "navigate") {
@@ -2414,6 +2501,7 @@ private:
             TileButton *tile = new TileButton(config, m_config.theme, missing);
             tile->setProperty("buttonId", config.id);
             tile->setFixedSize(buttonWidth, buttonHeight);
+            tile->setBadge(m_badges.value(config.id));
             // Launch on press (as the classic buttons do), delayed so the
             // ripple is seen and a swipe can cancel it (scheduleActivation)
             QString buttonId = config.id;

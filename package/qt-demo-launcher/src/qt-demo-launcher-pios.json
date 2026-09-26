@@ -9,7 +9,8 @@
       "grid_spacing": 48,
       "show_clock": true,
       "show_ip": true,
-      "show_resolution": true
+      "show_resolution": true,
+      "notice_file": "/tmp/micropanel-notice"
     },
     "title": {
       "text": "Display Diagnostics Tool",
@@ -50,7 +51,7 @@
         "arguments": ["/Pictures"],
         "working_directory": "/Pictures",
         "position": {
-          "row": 2,
+          "row": 3,
           "column": 0
         },
         "size": {
@@ -64,6 +65,35 @@
         "icon_layout": "icon_top",
         "font_size": 30,
         "accent_color": "#F472B6",
+        "background_color": "#34495E",
+        "hover_color": "#2C3E50",
+        "border_radius": 20
+      },
+      {
+        "id": "system-manager",
+        "enabled": true,
+        "text": "System Manager",
+        "subtitle": "Firmware updates",
+        "icon": "/usr/share/qt-apps/icons/system-manager.svg",
+        "program": "/usr/bin/system-manager-app",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "badge_command": "/usr/bin/system-update-check.sh",
+        "position": {
+          "row": 2,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "accent_color": "#60A5FA",
         "background_color": "#34495E",
         "hover_color": "#2C3E50",
         "border_radius": 20
