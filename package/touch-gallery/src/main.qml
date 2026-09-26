@@ -77,21 +77,38 @@ ApplicationWindow {
 
         Image {
             id: mainImage
-            anchors.centerIn: parent
+            // Positioned by x/y, not anchors: anchors would pin the image and
+            // silently ignore every pan (one finger or the pinch's own drag).
+            // It fills the screen, so x = y = 0 is the centred, unzoomed view.
+            x: 0
+            y: 0
             width: parent.width
             height: parent.height
             fillMode: Image.PreserveAspectFit
             smooth: true
             source: folderModel.count > 0 ? folderModel.get(currentImageIndex, "fileURL") : ""
 
+            // How far the image may move from centre so that the zoomed
+            // picture (not the letterbox around it) still covers the screen
+            // edge it is dragged away from. 0 when it fits in that direction.
+            readonly property real panLimitX: Math.max(0, (paintedWidth * scale - parent.width) / 2)
+            readonly property real panLimitY: Math.max(0, (paintedHeight * scale - parent.height) / 2)
+            readonly property bool panEnabled: !isSlideshow && scale > 1.0
+
             onSourceChanged: {
                 resetImageTransform()
             }
+            onScaleChanged: clampPosition()
 
             function resetImageTransform() {
                 scale = 1.0
                 x = 0
                 y = 0
+            }
+
+            function clampPosition() {
+                x = Math.max(-panLimitX, Math.min(panLimitX, x))
+                y = Math.max(-panLimitY, Math.min(panLimitY, y))
             }
 
             PinchArea {
@@ -101,10 +118,23 @@ ApplicationWindow {
                 pinch.minimumScale: 0.5
                 pinch.maximumScale: 4.0
                 enabled: !isSlideshow // Disable pinch in slideshow mode
+                onPinchFinished: mainImage.clampPosition()
 
                 MouseArea {
                     id: mouseArea
                     anchors.fill: parent
+
+                    // One-finger pan when zoomed in, like a phone. drag.target
+                    // works in scene coordinates, so moving (and scaling) the
+                    // image this MouseArea sits in does not feed back into the
+                    // drag, which is what made a hand-rolled pan stutter.
+                    drag.target: mainImage.panEnabled ? mainImage : null
+                    drag.axis: Drag.XAndYAxis
+                    drag.minimumX: -mainImage.panLimitX
+                    drag.maximumX: mainImage.panLimitX
+                    drag.minimumY: -mainImage.panLimitY
+                    drag.maximumY: mainImage.panLimitY
+                    drag.filterChildren: false
 
                     property real lastX: 0
                     property real lastY: 0
@@ -127,28 +157,17 @@ ApplicationWindow {
                             var deltaX = mouse.x - lastX
                             var deltaY = mouse.y - lastY
 
+                            // Movement only classifies the gesture here (tap vs
+                            // swipe vs pan); the pan itself is drag.target's job
                             if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
                                 hasMoved = true
-
-                                // Always allow panning when not at normal scale
-                                if (mainImage.scale !== 1.0) {
-                                    isPanning = true
-                                    mainImage.x += deltaX
-                                    mainImage.y += deltaY
-
-                                    // Optional: Add bounds checking
-                                    var imageWidth = mainImage.width * mainImage.scale
-                                    var imageHeight = mainImage.height * mainImage.scale
-                                    var maxX = Math.max(0, (imageWidth - parent.width) / 2)
-                                    var maxY = Math.max(0, (imageHeight - parent.height) / 2)
-
-                                    if (maxX > 0) {
-                                        mainImage.x = Math.max(-maxX, Math.min(maxX, mainImage.x))
-                                    }
-                                    if (maxY > 0) {
-                                        mainImage.y = Math.max(-maxY, Math.min(maxY, mainImage.y))
-                                    }
-                                }
+                                if (mainImage.scale !== 1.0) isPanning = true
+                            }
+                            // While dragging, the image travels with the finger,
+                            // so the local position hardly changes: go by the drag
+                            if (drag.active) {
+                                hasMoved = true
+                                isPanning = true
                             }
 
                             lastX = mouse.x
@@ -207,9 +226,9 @@ ApplicationWindow {
                             }
                         }
 
-                        // Reset states
-                        isPanning = false
-                        hasMoved = false
+                        // isPanning/hasMoved are reset on the next press, not
+                        // here: released comes before clicked, and a pan must
+                        // not end by toggling the UI
                     }
                 }
             }
