@@ -148,6 +148,17 @@ echo "get-running-app" | nc -q 0 192.168.1.100 8081
 # Returns: none (if no app is running)
 ```
 
+#### `get-screen`, `screen <n>`, `next-screen`, `prev-screen`
+A grid page with more buttons than `rows` × `columns` is split into screens (see
+[Screens](#screens-more-buttons-than-the-grid-holds)). These show or change the current page's screen;
+numbers are 1-based.
+
+```bash
+echo "get-screen" | nc -q 0 192.168.1.100 8081    # Returns: 1/2
+echo "screen 2" | nc -q 0 192.168.1.100 8081      # Returns: OK
+echo "next-screen" | nc -q 0 192.168.1.100 8081   # Returns: OK, or ERROR: screen-out-of-range at the end
+```
+
 ### Error Responses
 
 | Error | Description |
@@ -218,6 +229,24 @@ echo "get-running-app" | nc -q 0 192.168.1.100 8081
   }
 }
 ```
+
+### Screens: more buttons than the grid holds
+A grid page shows `rows` × `columns` buttons at a time. When a page has more, it is split into
+screens: the grid shrinks slightly to make room for a pager under it (a dot per screen with
+previous/next arrows), and the user changes screen by swiping left/right anywhere on the page,
+tapping an arrow or a dot, the Left/Right or PageUp/PageDown keys, or the network commands above.
+Pages that fit on one screen look and behave exactly as before.
+
+Where a button goes:
+- `"position": {"screen": 1, "row": 0, "column": 0}` puts it on a given screen (0-based).
+- Without `screen`, a `row` past the last grid row continues on the next screen: with `"rows": 3`,
+  row 3 is the first row of the second screen.
+- A button with no `position`, or whose cell is taken or outside the grid, fills the first free cell
+  in reading order (a warning is logged for a taken cell).
+
+This applies to every page, including sub-pages opened by a `navigate` button; navigating always
+starts on the first screen. On a page with several screens a button launches 150 ms after it is
+pressed, and a horizontal swipe that starts on it cancels the launch.
 
 ### Button Configuration
 ```json

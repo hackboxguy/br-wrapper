@@ -36,6 +36,10 @@
 #include <QFontDatabase>
 #include <QPointer>
 #include <cmath>
+#include <functional>
+#include <QVector>
+#include <QSet>
+#include <QKeyEvent>
 #include <ifaddrs.h>
 #include <net/if.h>
 #include <netinet/in.h>
@@ -62,6 +66,8 @@ struct ButtonConfig {
     int column = 0;
     int columnSpan = 1;
     int rowSpan = 1;
+    int screen = -1;           // grid screen (0-based); -1 = derive from row (see gridPlacements)
+    bool hasPosition = false;  // false = auto-placed into the first free cell
     int width = 200;
     int height = 100;
 
@@ -689,6 +695,156 @@ private:
     QVariantAnimation *m_rippleAnim;
 };
 
+// Page indicator under the grid, shown only when a page's buttons spill over
+// more than one screen: prev arrow, one dot per screen, next arrow. Tapping an
+// arrow or a dot selects a screen; swiping on the grid does the same (see
+// TouchAppLauncher::eventFilter).
+class PagerBar : public QWidget
+{
+public:
+    PagerBar(const ThemeConfig &theme, int count, int current, int height,
+             std::function<void(int)> onSelect, QWidget *parent = nullptr)
+        : QWidget(parent), m_theme(theme), m_count(count), m_current(current),
+          m_onSelect(onSelect)
+    {
+        setFixedHeight(height);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        layoutParts();
+
+        const QColor active(m_theme.textColor);
+        QColor idle(m_theme.subtextColor);
+        idle.setAlphaF(0.45);
+
+        for (int i = 0; i < m_count; ++i) {
+            QPointF c = m_dots[i].center();
+            qreal r = (i == m_current) ? m_dotR * 1.25 : m_dotR;
+            p.setPen(Qt::NoPen);
+            p.setBrush(i == m_current ? active : idle);
+            p.drawEllipse(c, r, r);
+        }
+
+        drawChevron(p, m_prev, false, m_current > 0);
+        drawChevron(p, m_next, true, m_current < m_count - 1);
+    }
+
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        layoutParts();
+        QPointF pos = event->localPos();
+        int target = -1;
+        if (m_prev.contains(pos)) target = m_current - 1;
+        else if (m_next.contains(pos)) target = m_current + 1;
+        else {
+            for (int i = 0; i < m_count; ++i) {
+                if (m_dots[i].contains(pos)) target = i;
+            }
+        }
+        if (target >= 0 && target < m_count && target != m_current && m_onSelect) {
+            m_onSelect(target);
+        }
+    }
+
+private:
+    // Touch targets: each arrow is a square the bar's height; each dot gets a
+    // cell that wide too, so a fingertip hits it without precision.
+    void layoutParts()
+    {
+        const qreal h = height();
+        m_dotR = qMax(3.0, h * 0.11);
+        const qreal cell = h * 0.8;
+        const qreal dotsW = cell * m_count;
+        const qreal x0 = (width() - dotsW) / 2.0;
+        m_dots.clear();
+        for (int i = 0; i < m_count; ++i) {
+            m_dots.append(QRectF(x0 + i * cell, 0, cell, h));
+        }
+        m_prev = QRectF(x0 - h * 1.2, 0, h, h);
+        m_next = QRectF(x0 + dotsW + h * 0.2, 0, h, h);
+    }
+
+    void drawChevron(QPainter &p, const QRectF &box, bool pointsRight, bool enabled)
+    {
+        QColor c(m_theme.textColor);
+        c.setAlphaF(enabled ? 0.9 : 0.2);
+        const qreal s = box.height() * 0.16;
+        const QPointF m = box.center();
+        const qreal dir = pointsRight ? 1.0 : -1.0;
+        p.setPen(QPen(c, qMax(2.0, box.height() * 0.06), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+        p.setBrush(Qt::NoBrush);
+        p.drawPolyline(QPolygonF() << QPointF(m.x() - dir * s / 2, m.y() - s)
+                                   << QPointF(m.x() + dir * s / 2, m.y())
+                                   << QPointF(m.x() - dir * s / 2, m.y() + s));
+    }
+
+    ThemeConfig m_theme;
+    int m_count;
+    int m_current;
+    std::function<void(int)> m_onSelect;
+    QVector<QRectF> m_dots;
+    QRectF m_prev;
+    QRectF m_next;
+    qreal m_dotR = 4;
+};
+
+// Slides one snapshot of the grid out and the next one in. Drawing two cached
+// pixmaps per frame is far cheaper on linuxfb than repainting live tiles, and
+// the overlay also swallows taps until the new screen is in place.
+class SlideOverlay : public QWidget
+{
+public:
+    SlideOverlay(const QPixmap &from, const QPixmap &to, int direction, QWidget *parent)
+        : QWidget(parent), m_from(from), m_to(to), m_direction(direction)
+    {
+        setAttribute(Qt::WA_OpaquePaintEvent);
+        m_anim = new QVariantAnimation(this);
+        m_anim->setStartValue(0.0);
+        m_anim->setEndValue(1.0);
+        m_anim->setDuration(260);
+        m_anim->setEasingCurve(QEasingCurve::OutCubic);
+        QObject::connect(m_anim, &QVariantAnimation::valueChanged, [this](const QVariant &v) {
+            m_progress = v.toReal();
+            update();
+        });
+        QObject::connect(m_anim, &QVariantAnimation::finished, [this]() {
+            hide();
+            deleteLater();
+        });
+    }
+
+    void start()
+    {
+        show();
+        raise();
+        m_anim->start();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        const int w = width();
+        const int offset = qRound(m_progress * w);
+        // direction +1: next screen comes in from the right
+        p.drawPixmap(-m_direction * offset, 0, m_from);
+        p.drawPixmap(m_direction * (w - offset), 0, m_to);
+    }
+
+    void mousePressEvent(QMouseEvent *event) override { event->accept(); }
+
+private:
+    QPixmap m_from;
+    QPixmap m_to;
+    int m_direction;
+    qreal m_progress = 0.0;
+    QVariantAnimation *m_anim;
+};
+
 class TouchAppLauncher : public QMainWindow
 {
     Q_OBJECT
@@ -710,6 +866,10 @@ public:
         validatePrograms();
         setupNetworkInterface();
         setupConfigWatcher();
+        // Swipes between screens are tracked app-wide (they can start on a tile,
+        // the header or empty grid space), keys arrive at the window.
+        qApp->installEventFilter(this);
+        setFocusPolicy(Qt::StrongFocus);
     }
 
 private slots:
@@ -727,6 +887,74 @@ protected:
         QMainWindow::showEvent(event);
         // Replay the entrance each time we come back from a launched app
         animateTilesIn();
+    }
+
+    void keyPressEvent(QKeyEvent *event) override
+    {
+        switch (event->key()) {
+        case Qt::Key_Left:
+        case Qt::Key_PageUp:
+            showScreen(m_currentScreen - 1);
+            return;
+        case Qt::Key_Right:
+        case Qt::Key_PageDown:
+            showScreen(m_currentScreen + 1);
+            return;
+        default:
+            QMainWindow::keyPressEvent(event);
+        }
+    }
+
+    // Horizontal swipe = previous/next screen. Only active on a page with more
+    // than one screen, so single-screen pages behave exactly as before. Never
+    // consumes the event: the pressed widget must still see its release.
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        const QEvent::Type type = event->type();
+        if (type != QEvent::MouseButtonPress && type != QEvent::MouseMove
+            && type != QEvent::MouseButtonRelease) {
+            return QMainWindow::eventFilter(watched, event);
+        }
+        if (!isVisible() || m_screenCount < 2) {
+            m_swipeTracking = false;
+            return QMainWindow::eventFilter(watched, event);
+        }
+
+        QMouseEvent *me = static_cast<QMouseEvent *>(event);
+        // An app-level filter sees a propagated mouse event once per receiver
+        if (me->timestamp() == m_swipeLastTs && type == m_swipeLastType) {
+            return QMainWindow::eventFilter(watched, event);
+        }
+        m_swipeLastTs = me->timestamp();
+        m_swipeLastType = type;
+
+        const QPoint pos = me->globalPos();
+        if (type == QEvent::MouseButtonPress) {
+            m_swipeTracking = true;
+            m_swiping = false;
+            m_swipeStart = pos;
+            m_swipeClock.start();
+        } else if (type == QEvent::MouseMove && m_swipeTracking && !m_swiping) {
+            const int dx = pos.x() - m_swipeStart.x();
+            const int dy = pos.y() - m_swipeStart.y();
+            const int slop = qMax(20, width() / 80);
+            if (qAbs(dx) > slop && qAbs(dx) > 2 * qAbs(dy)) {
+                // It's a swipe, not a tap: drop the launch the press scheduled
+                m_swiping = true;
+                cancelActivation();
+            }
+        } else if (type == QEvent::MouseButtonRelease && m_swipeTracking) {
+            m_swipeTracking = false;
+            if (m_swiping) {
+                m_swiping = false;
+                const int dx = pos.x() - m_swipeStart.x();
+                const qreal speed = qAbs(dx) / qMax<qreal>(1.0, m_swipeClock.elapsed());  // px/ms
+                if (qAbs(dx) > width() / 12 || (speed > 0.4 && qAbs(dx) > 40)) {
+                    showScreen(m_currentScreen + (dx < 0 ? 1 : -1));
+                }
+            }
+        }
+        return QMainWindow::eventFilter(watched, event);
     }
 
 private:
@@ -844,26 +1072,16 @@ private:
 		deleteLayoutRecursively(item);
 	    }
 
-	    QWidget *titleWidget = createTitleWidget();
-	    if (titleWidget) {
-		mainLayout->addWidget(titleWidget);
-	    }
-
-	    // Create new button layout with current page
-	    QLayout *buttonLayout = createButtonLayout();
-	    if (buttonLayout) {
-		mainLayout->addLayout(buttonLayout);
-	    }
-	    if (m_config.theme.isTiles()) {
-		mainLayout->addStretch(1);
-	    }
+	    populateMainLayout(mainLayout);
 
 	    mainLayout->invalidate();
 	    mainLayout->activate();
 	    centralWidget->updateGeometry();
 	    centralWidget->update();
 	    update();
-	    animateTilesIn();
+	    if (!m_suppressReveal) {
+		animateTilesIn();
+	    }
 
 	    qDebug() << "UI refresh complete";
     }
@@ -879,7 +1097,9 @@ private:
 		    deleteLayoutRecursively(child);
 		}
 	    } else if (QWidget *widget = item->widget()) {
-		// Delete widget
+		// Hide now (deletion is deferred) so a following grab() or paint
+		// never shows the old page's widgets under the new ones
+		widget->hide();
 		widget->deleteLater();
 	    }
 
@@ -910,6 +1130,18 @@ private:
             }
         } else if (cmd == "get-page") {
             m_networkInterface->sendResponse(m_currentPage);
+        } else if (cmd == "get-screen") {
+            m_networkInterface->sendResponse(QString("%1/%2").arg(m_currentScreen + 1).arg(m_screenCount));
+        } else if ((cmd == "screen" && parts.size() >= 2) || cmd == "next-screen" || cmd == "prev-screen") {
+            int target = cmd == "next-screen" ? m_currentScreen + 1
+                       : cmd == "prev-screen" ? m_currentScreen - 1
+                       : parts[1].toInt() - 1;   // 1-based for people
+            if (target < 0 || target >= m_screenCount) {
+                m_networkInterface->sendResponse("ERROR: screen-out-of-range");
+            } else {
+                showScreen(target);
+                m_networkInterface->sendResponse("OK");
+            }
         } else if (cmd == "navigate" && parts.size() >= 2) {
             if (navigateToPage(parts[1])) {
                 m_networkInterface->sendResponse("OK");
@@ -993,6 +1225,191 @@ private:
     int m_titleHeight;  // Estimated title widget height
     QList<QPointer<TileButton>> m_tiles;  // Tiles on the current page, for the entrance animation
     bool m_activationPending = false;     // A tile press is waiting out its ripple
+    quint64 m_activationToken = 0;         // Bumped to cancel a scheduled launch (swipe)
+
+    // Screens: a grid page whose buttons need more cells than rows x columns
+    // is split into screens, shown one at a time (swipe, pager, keys, API).
+    int m_currentScreen = 0;
+    int m_screenCount = 1;
+    bool m_suppressReveal = false;         // A slide replaces the entrance wave
+    QPointer<QWidget> m_headerWidget;
+    QPointer<QWidget> m_pagerWidget;
+    bool m_swipeTracking = false;
+    bool m_swiping = false;
+    QPoint m_swipeStart;
+    QElapsedTimer m_swipeClock;
+    ulong m_swipeLastTs = 0;
+    QEvent::Type m_swipeLastType = QEvent::None;
+
+    struct GridPlacement {
+        ButtonConfig config;
+        int screen;
+        int row;
+        int column;
+    };
+
+    // Where each visible button of a page goes. Explicit position.screen wins;
+    // otherwise a row past the grid continues on the next screen (row 3 of a
+    // 3-row grid = screen 2, row 1), so existing configs place as before.
+    // Buttons without a position, or whose cell is taken or outside the grid,
+    // fill the first free cell in reading order.
+    QList<GridPlacement> gridPlacements(const QString &pageId, int *screenCount) const
+    {
+        const int rows = qMax(1, m_config.layout.rows);
+        const int cols = qMax(1, m_config.layout.columns);
+        QList<GridPlacement> placed;
+        QList<ButtonConfig> pending;
+        QSet<qint64> used;
+        auto key = [](int sc, int r, int c) { return ((qint64)sc << 32) | (r << 16) | c; };
+        auto fits = [&](int sc, int r, int c, int rs, int cs) {
+            if (sc < 0 || r < 0 || c < 0 || r + rs > rows || c + cs > cols) return false;
+            for (int i = 0; i < rs; ++i)
+                for (int j = 0; j < cs; ++j)
+                    if (used.contains(key(sc, r + i, c + j))) return false;
+            return true;
+        };
+        auto take = [&](const ButtonConfig &b, int sc, int r, int c) {
+            for (int i = 0; i < b.rowSpan; ++i)
+                for (int j = 0; j < b.columnSpan; ++j)
+                    used.insert(key(sc, r + i, c + j));
+            placed.append({b, sc, r, c});
+        };
+
+        for (const ButtonConfig &b : buttonsForPage(pageId)) {
+            if (!b.hasPosition) { pending.append(b); continue; }
+            int sc = b.screen >= 0 ? b.screen : b.row / rows;
+            int r = b.screen >= 0 ? b.row : b.row % rows;
+            if (fits(sc, r, b.column, qMax(1, b.rowSpan), qMax(1, b.columnSpan))) {
+                take(b, sc, r, b.column);
+            } else {
+                qWarning() << "Button" << b.id << "cell taken or outside the grid, auto-placing";
+                pending.append(b);
+            }
+        }
+        for (ButtonConfig b : pending) {
+            b.rowSpan = 1;
+            b.columnSpan = 1;
+            for (int sc = 0; ; ++sc) {
+                bool done = false;
+                for (int r = 0; r < rows && !done; ++r)
+                    for (int c = 0; c < cols && !done; ++c)
+                        if (fits(sc, r, c, 1, 1)) { take(b, sc, r, c); done = true; }
+                if (done) break;
+            }
+        }
+
+        int count = 1;
+        for (const GridPlacement &gp : placed) count = qMax(count, gp.screen + 1);
+        if (screenCount) *screenCount = count;
+        return placed;
+    }
+
+    int screenCountFor(const QString &pageId) const
+    {
+        if (m_config.layout.type != "grid") return 1;
+        int count = 1;
+        gridPlacements(pageId, &count);
+        return count;
+    }
+
+    int pagerHeight() const
+    {
+        QScreen *screen = QApplication::primaryScreen();
+        int screenHeight = screen ? screen->size().height() : 720;
+        return qBound(36, (int)(screenHeight * 0.06), 72);
+    }
+
+    // Title, buttons of the current screen and (if needed) the pager - shared by
+    // setupUI and refreshUI.
+    void populateMainLayout(QVBoxLayout *mainLayout)
+    {
+        m_screenCount = screenCountFor(m_currentPage);
+        m_currentScreen = qBound(0, m_currentScreen, m_screenCount - 1);
+
+        QWidget *titleWidget = createTitleWidget();
+        m_headerWidget = titleWidget;
+        if (titleWidget) {
+            mainLayout->addWidget(titleWidget);
+        }
+
+        QLayout *buttonLayout = createButtonLayout();
+        if (buttonLayout) {
+            mainLayout->addLayout(buttonLayout);
+        }
+        if (m_config.theme.isTiles() || m_screenCount > 1) {
+            mainLayout->addStretch(1);
+        }
+
+        m_pagerWidget = nullptr;
+        if (m_screenCount > 1) {
+            PagerBar *pager = new PagerBar(m_config.theme, m_screenCount, m_currentScreen,
+                                           pagerHeight(), [this](int target) { showScreen(target); });
+            m_pagerWidget = pager;
+            mainLayout->addWidget(pager);
+        }
+    }
+
+    // Change screen within the current page, sliding when animations are on.
+    void showScreen(int target)
+    {
+        if (target < 0 || target >= m_screenCount || target == m_currentScreen) return;
+        const int direction = target > m_currentScreen ? 1 : -1;
+        cancelActivation();
+
+        QWidget *central = centralWidget();
+        const bool slide = central && m_config.theme.animations && m_headerWidget && m_pagerWidget;
+        QRect area;
+        QPixmap from;
+        if (slide) {
+            const int top = m_headerWidget->geometry().bottom() + 1;
+            const int bottom = m_pagerWidget->geometry().top();
+            area = QRect(0, top, central->width(), qMax(1, bottom - top));
+            from = central->grab(area);
+        }
+
+        m_currentScreen = target;
+        m_suppressReveal = slide;
+        refreshUI();
+        m_suppressReveal = false;
+
+        if (slide) {
+            QPixmap to = central->grab(area);
+            SlideOverlay *overlay = new SlideOverlay(from, to, direction, central);
+            overlay->setGeometry(area);
+            overlay->start();
+        }
+        qDebug() << "Screen" << (m_currentScreen + 1) << "of" << m_screenCount << "on page" << m_currentPage;
+    }
+
+    // Launch after a short delay so the ripple is seen and a swipe that starts
+    // on a button can still cancel it. Single-screen classic pages keep the
+    // original immediate launch-on-press.
+    void scheduleActivation(const QString &buttonId)
+    {
+        if (m_activationPending) return;
+        int delay = (m_config.theme.isTiles() && m_config.theme.animations) ? 160 : 0;
+        if (m_screenCount > 1) delay = qMax(delay, 150);
+        if (delay == 0) {
+            activateButton(buttonId);
+            return;
+        }
+        m_activationPending = true;
+        const quint64 token = ++m_activationToken;
+        QTimer::singleShot(delay, this, [this, buttonId, token]() {
+            if (token != m_activationToken) return;
+            m_activationPending = false;
+            activateButton(buttonId);
+        });
+    }
+
+    void cancelActivation()
+    {
+        ++m_activationToken;
+        m_activationPending = false;
+        for (const QPointer<TileButton> &tile : m_tiles) {
+            if (tile) tile->setDown(false);
+        }
+    }
 
     int tileHeaderHeight() const
     {
@@ -1087,6 +1504,9 @@ private:
         // Calculate available content area
         int availableWidth = screenWidth - scaledLeftMargin - scaledRightMargin;
         int availableHeight = screenHeight - scaledTopMargin - scaledBottomMargin - m_titleHeight;
+        if (screenCountFor(m_currentPage) > 1) {
+            availableHeight -= pagerHeight() + scaledMainSpacing;   // room for the pager
+        }
 
         // For grid layout, calculate button sizes to fill the grid
         if (m_config.layout.type == "grid") {
@@ -1229,6 +1649,7 @@ private:
         }
 
         m_currentPage = normalizedPage;
+        m_currentScreen = 0;
         refreshUI();
         return true;
     }
@@ -1241,6 +1662,7 @@ private:
             m_currentPage = "home";
         }
 
+        m_currentScreen = 0;
         refreshUI();
     }
 
@@ -1248,6 +1670,7 @@ private:
     {
         m_pageStack.clear();
         m_currentPage = "home";
+        m_currentScreen = 0;
         refreshUI();
     }
 
@@ -1527,6 +1950,8 @@ private:
 
             // Parse position
             QJsonObject pos = btnObj["position"].toObject();
+            btn.hasPosition = btnObj.contains("position");
+            btn.screen = pos["screen"].toInt(-1);
             btn.row = pos["row"].toInt(0);
             btn.column = pos["column"].toInt(0);
             btn.columnSpan = pos["column_span"].toInt(1);
@@ -1815,21 +2240,7 @@ private:
 
         QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
         applyMainLayoutMetrics(mainLayout);
-
-        // Create title section
-        QWidget *titleWidget = createTitleWidget();
-        if (titleWidget) {
-            mainLayout->addWidget(titleWidget);
-        }
-
-        // Create buttons layout - only for enabled buttons in UI
-        QLayout *buttonLayout = createButtonLayout();
-        if (buttonLayout) {
-            mainLayout->addLayout(buttonLayout);
-        }
-        if (m_config.theme.isTiles()) {
-            mainLayout->addStretch(1);
-        }
+        populateMainLayout(mainLayout);
 
         // Don't set minimum size - let it adapt to screen
         // setMinimumSize(m_config.windowWidth, m_config.windowHeight);
@@ -1924,7 +2335,7 @@ private:
         }
 
         if (m_config.layout.type == "grid") {
-            return createGridLayout(enabledButtons);
+            return createGridLayout();
         } else if (m_config.layout.type == "horizontal") {
             return createHorizontalLayout(enabledButtons);
         } else {
@@ -1932,15 +2343,25 @@ private:
         }
     }
 
-    QGridLayout* createGridLayout(const QList<ButtonConfig> &buttons)
+    QGridLayout* createGridLayout()
     {
         QGridLayout *gridLayout = new QGridLayout;
         gridLayout->setSpacing((int)(m_config.layout.spacing * m_scaleFactor));
 
-        for (const ButtonConfig &config : buttons) {
-            QPushButton *button = createButton(config);
-            gridLayout->addWidget(button, config.row, config.column,
-                                 config.rowSpan, config.columnSpan);
+        // Reserve every cell, so a screen with a partial last row or empty
+        // columns keeps its tiles where they are on a full screen
+        if (m_dynamicButtonWidth > 0 && m_dynamicButtonHeight > 0) {
+            for (int c = 0; c < m_config.layout.columns; ++c)
+                gridLayout->setColumnMinimumWidth(c, m_dynamicButtonWidth);
+            for (int r = 0; r < m_config.layout.rows; ++r)
+                gridLayout->setRowMinimumHeight(r, m_dynamicButtonHeight);
+        }
+
+        for (const GridPlacement &gp : gridPlacements(m_currentPage, nullptr)) {
+            if (gp.screen != m_currentScreen) continue;
+            QPushButton *button = createButton(gp.config);
+            gridLayout->addWidget(button, gp.row, gp.column,
+                                  qMax(1, gp.config.rowSpan), qMax(1, gp.config.columnSpan));
         }
 
         return gridLayout;
@@ -1993,17 +2414,11 @@ private:
             TileButton *tile = new TileButton(config, m_config.theme, missing);
             tile->setProperty("buttonId", config.id);
             tile->setFixedSize(buttonWidth, buttonHeight);
-            // Launch on press (as the classic buttons do), but let the ripple
-            // play briefly before the launcher hides or the page changes
+            // Launch on press (as the classic buttons do), delayed so the
+            // ripple is seen and a swipe can cancel it (scheduleActivation)
             QString buttonId = config.id;
-            int delay = m_config.theme.animations ? 160 : 0;
-            connect(tile, &QPushButton::pressed, this, [this, buttonId, delay]() {
-                if (m_activationPending) return;
-                m_activationPending = true;
-                QTimer::singleShot(delay, this, [this, buttonId]() {
-                    m_activationPending = false;
-                    activateButton(buttonId);
-                });
+            connect(tile, &QPushButton::pressed, this, [this, buttonId]() {
+                scheduleActivation(buttonId);
             });
             m_tiles.append(tile);
             return tile;
@@ -2085,7 +2500,10 @@ private:
 
         // Use pressed signal instead of clicked for reliable touch response
         // clicked fires on release which can miss short touches on touchscreens
-        connect(button, &QPushButton::pressed, this, &TouchAppLauncher::buttonClicked);
+        QString buttonId = config.id;
+        connect(button, &QPushButton::pressed, this, [this, buttonId]() {
+            scheduleActivation(buttonId);
+        });
 
         return button;
     }
@@ -2217,6 +2635,9 @@ int main(int argc, char *argv[])
         qDebug() << "  navigate <page-id>           # Navigate to page";
         qDebug() << "  back                         # Navigate to previous page";
         qDebug() << "  home                         # Navigate to home page";
+        qDebug() << "  get-screen                   # Current screen of the page, e.g. 1/2";
+        qDebug() << "  screen <n>                   # Show screen n (1-based) of the current page";
+        qDebug() << "  next-screen | prev-screen    # Step through the current page's screens";
         qDebug() << "  start-app <app-id>          # Start specific application";
         qDebug() << "  stop-app                    # Stop currently running application";
         qDebug() << "  get-running-app             # Get currently running app or 'none'";
