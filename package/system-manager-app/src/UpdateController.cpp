@@ -204,9 +204,15 @@ void UpdateController::applyResult(const QMap<QString, QString> &fields)
     for (int i = 0; i < m_components.size(); ++i) {
         QVariantMap existing = m_components[i].toMap();
         if (existing.value("board") == board) {
-            // An update result keeps what the check knew (the shipped version)
+            // An update result keeps what the check knew: the shipped version,
+            // and the image and variant name when the update line has none
+            // (a board left alone because it is current reports image=-)
             if (entry.value("shipped").toString() == QString::fromUtf8("—"))
                 entry["shipped"] = existing.value("shipped");
+            if (entry.value("image").toString().isEmpty() && !existing.value("image").toString().isEmpty()) {
+                entry["image"] = existing.value("image");
+                entry["name"] = existing.value("name");
+            }
             m_components[i] = entry;
             emit componentsChanged();
             return;
