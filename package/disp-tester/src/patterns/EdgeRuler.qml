@@ -3,80 +3,86 @@ import QtQuick 2.12
 // Edge ruler: finds active pixels lost (cropped or shifted) anywhere between
 // the source and the glass.
 //
-// A 1 px white frame sits on the outermost rows/columns. At the middle of each
-// edge, pixel column/row n (counted inward from that edge) carries a line
-// (n + 1) * step pixels long, labelled n. The shortest step still visible on
-// the panel is the first surviving column/row, so e.g. a left staircase
-// starting at "2" means columns 0 and 1 never reach the glass.
+// Frame: the outermost rows are white across the full width; the two
+// outermost columns on each side are solid colors from row 1 to row h-2
+// (left: red, green; right: blue, white). A macro photo of one edge shows
+// which source columns landed there: on a correct panel the left edge reads
+// red, green and the right edge blue, white. Red and green appearing after the
+// white column on the right means the line wrapped; blue, white, blue, white
+// means the last pixel pair was repeated.
+//
+// Staircases, inward of the frame: at the middle of each side, pixel column n
+// (counted from that edge, starting at 2) carries a line whose length grows by
+// one step per column, labelled n; top and bottom do the same for rows from 1.
+// The shortest step still visible is the first surviving column/row beyond
+// the frame, so a loss deeper than the frame can still be counted.
 PatternBase {
     patternName: "edge-ruler"
     backgroundColor: "black"
 
     readonly property int lines: 16
     readonly property int step: 14
+    readonly property int firstCol: 2     // side staircases start inside the colored columns
+    readonly property int firstRow: 1     // top/bottom staircases start inside the white row
     readonly property int w: width
     readonly property int h: height
     readonly property int midX: Math.floor(w / 2)
     readonly property int midY: Math.floor(h / 2)
 
-    // Frame on the outermost pixels. The two outermost columns on each side
-    // get distinct colors (left: red, green; right: blue, white) so a macro
-    // photo of one edge shows which source columns landed there, e.g. red and
-    // green appearing after the white column on the right means the line
-    // wrapped, white-white means the last pixel was repeated.
-    Rectangle { x: 0;     y: 0;     width: w; height: 1; color: "white" }
-    Rectangle { x: 0;     y: h - 1; width: w; height: 1; color: "white" }
-    Rectangle { x: 0;     y: 0;     width: 1; height: h; color: "#FF0000" }
-    Rectangle { x: 1;     y: 0;     width: 1; height: h; color: "#00FF00" }
-    Rectangle { x: w - 2; y: 0;     width: 1; height: h; color: "#0000FF" }
-    Rectangle { x: w - 1; y: 0;     width: 1; height: h; color: "white" }
+    // Frame on the outermost pixels
+    Rectangle { x: 0;     y: 0;     width: w; height: 1;     color: "white" }
+    Rectangle { x: 0;     y: h - 1; width: w; height: 1;     color: "white" }
+    Rectangle { x: 0;     y: 1;     width: 1; height: h - 2; color: "#FF0000" }
+    Rectangle { x: 1;     y: 1;     width: 1; height: h - 2; color: "#00FF00" }
+    Rectangle { x: w - 2; y: 1;     width: 1; height: h - 2; color: "#0000FF" }
+    Rectangle { x: w - 1; y: 1;     width: 1; height: h - 2; color: "white" }
 
-    // Left edge: column n, downward from the middle
+    // Left edge: column firstCol+i, downward from the middle
     Repeater {
         model: lines
         Item {
-            Rectangle { x: index; y: midY; width: 1; height: (index + 1) * step; color: "white" }
+            Rectangle { x: firstCol + index; y: midY; width: 1; height: (index + 1) * step; color: "white" }
             Text {
-                x: lines + 6; y: midY + (index + 1) * step - height / 2
-                text: index; color: "#FFD000"; font.pixelSize: 11
+                x: firstCol + lines + 6; y: midY + (index + 1) * step - height / 2
+                text: firstCol + index; color: "#FFD000"; font.pixelSize: 11
             }
         }
     }
 
-    // Right edge: column w-1-n, downward from the middle
+    // Right edge: column w-1-(firstCol+i), downward from the middle
     Repeater {
         model: lines
         Item {
-            Rectangle { x: w - 1 - index; y: midY; width: 1; height: (index + 1) * step; color: "white" }
+            Rectangle { x: w - 1 - firstCol - index; y: midY; width: 1; height: (index + 1) * step; color: "white" }
             Text {
-                x: w - lines - 6 - width; y: midY + (index + 1) * step - height / 2
-                text: index; color: "#FFD000"; font.pixelSize: 11
+                x: w - firstCol - lines - 6 - width; y: midY + (index + 1) * step - height / 2
+                text: firstCol + index; color: "#FFD000"; font.pixelSize: 11
             }
         }
     }
 
-    // Top edge: row n, rightward from the middle
+    // Top edge: row firstRow+i, rightward from the middle
     Repeater {
         model: lines
         Item {
-            Rectangle { x: midX; y: index; width: (index + 1) * step; height: 1; color: "white" }
+            Rectangle { x: midX; y: firstRow + index; width: (index + 1) * step; height: 1; color: "white" }
             Text {
-                x: midX + (index + 1) * step - width / 2; y: lines + 4
-                text: index; color: "#FFD000"; font.pixelSize: 11
-                visible: index % 2 === 0
+                x: midX + (index + 1) * step - width / 2; y: firstRow + lines + 4
+                text: firstRow + index; color: "#FFD000"; font.pixelSize: 11
+                visible: (firstRow + index) % 2 === 1
             }
         }
     }
 
-    // Bottom edge: row h-1-n, rightward from the middle
+    // Bottom edge: row h-1-(firstRow+i), rightward from the middle
     Repeater {
         model: lines
         Item {
-            Rectangle { x: midX; y: h - 1 - index; width: (index + 1) * step; height: 1; color: "white" }
+            Rectangle { x: midX; y: h - 1 - firstRow - index; width: (index + 1) * step; height: 1; color: "white" }
             Text {
-                x: midX + (index + 1) * step - width / 2; y: h - lines - 4 - height
-                text: index; color: "#FFD000"; font.pixelSize: 11
-                visible: index % 2 === 0
+                x: midX + (index + 1) * step - width / 2; y: h - firstRow - lines - 4 - height
+                text: firstRow + index; color: "#FFD000"; font.pixelSize: 11
+                visible: (firstRow + index) % 2 === 1
             }
         }
     }
@@ -91,6 +97,7 @@ PatternBase {
         color: "#A0A0A0"
         font.pixelSize: 20
         text: "EDGE RULER  " + w + " x " + h
-              + "\nshortest visible step = first column/row that reaches the glass"
+              + "\nedges: red, green | blue, white columns, white top and bottom rows"
+              + "\nshortest visible step = first column/row beyond the frame that reaches the glass"
     }
 }

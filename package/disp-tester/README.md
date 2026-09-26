@@ -34,11 +34,12 @@ A Qt5-based display pattern generator application designed for testing displays 
 - **blooming-detection**: Single pulsing pixel for blooming measurement
 - **cross-dimming**: 4 corner spots with pulsing animation for zone interference testing
 - **edge-ruler**: Finds active pixels lost (cropped or shifted) between the source and the glass.
-  A 1 px frame sits on the outermost pixels; the two outermost columns are colored (left: red,
-  green; right: blue, white). Near the middle of each edge, column/row *n* counted inward carries
-  a line (n+1)*14 px long labelled *n*, so the shortest step still visible is the first column/row
-  that reaches the panel. In a macro photo of an edge, the frame colors show which source columns
-  landed there: e.g. blue, white, blue, white on the right means the last pixel pair was repeated
+  The outermost rows are white across the full width; the two outermost columns on each side are
+  solid colors (left: red, green; right: blue, white). A macro photo of an edge shows which source
+  columns landed there: a correct panel reads red, green on the left and blue, white on the right;
+  blue, white, blue, white means the last pixel pair was repeated. Inward of the frame, a staircase
+  at the middle of each edge (columns from 2, rows from 1) grows one 14 px step per column/row and
+  is labelled with its index, so the shortest visible step counts a deeper loss
 
 ### **Custom Patterns**
 - **RGB patches**: Custom colors with `pattern rgb R G B` (values 0-255)
