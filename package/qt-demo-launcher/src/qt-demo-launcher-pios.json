@@ -769,33 +769,6 @@
           "/home/pi/test-reports"
         ],
         "working_directory": "/tmp"
-      },
-      {
-        "id": "calibration-tools-back",
-        "enabled": true,
-        "page": "calibration-tools",
-        "text": "Back",
-        "subtitle": "Return to home",
-        "icon": "/usr/share/qt-apps/icons/back.svg",
-        "action": "back",
-        "position": {
-          "row": 2,
-          "column": 2
-        },
-        "size": {
-          "width": 640,
-          "height": 200
-        },
-        "icon_size": {
-          "width": 100,
-          "height": 100
-        },
-        "icon_layout": "icon_top",
-        "font_size": 30,
-        "accent_color": "#94A3B8",
-        "background_color": "#2C3E50",
-        "hover_color": "#1A252F",
-        "border_radius": 20
       }
     ]
   }

@@ -321,7 +321,28 @@ public:
         m_elapsed.start();
     }
 
+    // Sub-pages: a round back button replaces the logo, like System Manager's
+    void setBackAction(std::function<void()> onBack)
+    {
+        m_onBack = onBack;
+        update();
+    }
+
 protected:
+    void mousePressEvent(QMouseEvent *event) override
+    {
+        if (m_onBack && m_backRect.adjusted(-12, -12, 12, 12).contains(event->localPos())) {
+            m_backDown = true;
+            update(m_backRect.toAlignedRect().adjusted(-2, -2, 2, 2));
+            // Brief press feedback, then navigate. The copy of the callback
+            // outlives this header, which the navigation deletes.
+            std::function<void()> cb = m_onBack;
+            QTimer::singleShot(120, [cb]() { cb(); });
+            return;
+        }
+        QWidget::mousePressEvent(event);
+    }
+
     void showEvent(QShowEvent *) override
     {
         if (m_theme.showClock) m_tick->start();
@@ -349,9 +370,28 @@ protected:
         qreal stripH = m_theme.colorBars ? qMax(4.0, qRound(H * 0.06) * 1.0) : 0;
         qreal bodyH = H - stripH - (stripH > 0 ? qRound(H * 0.14) : 0);
 
-        // Logo
+        // Back button (sub-pages) or logo
         qreal x = 0;
-        if (!m_logoPath.isEmpty()) {
+        if (m_onBack) {
+            // Same size and chevron as system-manager-app's back button:
+            // 76 px at 1920x720, scaled by min(width/1920, height/720)
+            qreal sc = 1.0;
+            if (QScreen *screen = QApplication::primaryScreen()) {
+                sc = qMin(screen->size().width() / 1920.0, screen->size().height() / 720.0);
+            }
+            const qreal d = qMin(bodyH, 76.0 * sc);
+            m_backRect = QRectF(0, (bodyH - d) / 2, d, d);
+            p.setPen(QPen(QColor(m_theme.cardBorderColor), 1.2));
+            p.setBrush(QColor(m_backDown ? m_theme.cardHoverColor : m_theme.cardColor));
+            p.drawEllipse(m_backRect);
+            const QRectF &b = m_backRect;
+            p.setPen(QPen(text, qMax(2.0, d * 0.06), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.setBrush(Qt::NoBrush);
+            p.drawPolyline(QPolygonF() << QPointF(b.left() + d * 0.56, b.top() + d * 0.32)
+                                       << QPointF(b.left() + d * 0.40, b.top() + d * 0.50)
+                                       << QPointF(b.left() + d * 0.56, b.top() + d * 0.68));
+            x = d + 28.0 * sc;   // same gap to the title as the app
+        } else if (!m_logoPath.isEmpty()) {
             QSize box(qRound(bodyH * 0.98), qRound(bodyH * 0.74));
             if (m_logo.isNull() || m_logoBox != box) {
                 m_logo = loadIcon(m_logoPath, box);
@@ -504,6 +544,9 @@ private:
     QString m_title;
     QString m_subtitle;
     QString m_logoPath;
+    std::function<void()> m_onBack;
+    QRectF m_backRect;
+    bool m_backDown = false;
     QPixmap m_logo;
     QSize m_logoBox;
     int m_port;
@@ -2353,8 +2396,12 @@ private:
                 subtitle = crumbs.join(QString::fromUtf8("  \u203A  "));
             }
             QString logo = m_config.title.layout == "text_only" ? QString() : m_config.title.logoPath;
-            return new LauncherHeader(m_config.theme, titleText, subtitle, logo,
-                                      m_networkPort, tileHeaderHeight());
+            LauncherHeader *header = new LauncherHeader(m_config.theme, titleText, subtitle, logo,
+                                                        m_networkPort, tileHeaderHeight());
+            if (m_currentPage != "home") {
+                header->setBackAction([this]() { navigateBack(); });
+            }
+            return header;
         }
 
         QWidget *titleWidget = new QWidget;
