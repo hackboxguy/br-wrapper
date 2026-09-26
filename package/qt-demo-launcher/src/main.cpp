@@ -562,6 +562,9 @@ protected:
 
         QRectF r = QRectF(rect()).adjusted(1.5, 1.5, -1.5, -1.5);
         const qreal h = r.height();
+        // Size unit: the height, but capped by the width so a tall tile
+        // (e.g. 3 rows on 1080 lines) doesn't grow text past its width
+        const qreal u = qMin(h, r.width() / 3.6);
 
         // Entrance: fade in while growing from 92%
         if (m_reveal < 1.0) {
@@ -577,7 +580,7 @@ protected:
         const QColor subtext(m_theme.subtextColor);
         const bool down = isDown();
         const bool hover = underMouse();
-        const qreal radius = qMin(h * 0.14, 28.0);
+        const qreal radius = qMin(u * 0.14, 28.0);
 
         QPainterPath card;
         card.addRoundedRect(r, radius, radius);
@@ -588,9 +591,9 @@ protected:
         p.save();
         p.setClipPath(card);
         // Accent stripe and a faint top sheen
-        qreal barW = qMax(4.0, h * 0.035);
+        qreal barW = qMax(4.0, u * 0.035);
         p.fillRect(QRectF(r.left(), r.top(), barW, h), m_accent);
-        p.fillRect(QRectF(r.left(), r.top(), r.width(), qMax(1.0, h * 0.008)), QColor(255, 255, 255, 18));
+        p.fillRect(QRectF(r.left(), r.top(), r.width(), qMax(1.0, u * 0.008)), QColor(255, 255, 255, 18));
         if (m_ripple >= 0) {
             qreal maxR = std::hypot(qMax(m_ripplePos.x(), r.width() - m_ripplePos.x()),
                                     qMax(m_ripplePos.y(), r.height() - m_ripplePos.y()));
@@ -607,10 +610,10 @@ protected:
         p.drawPath(card);
 
         // Icon badge
-        qreal x = r.left() + barW + h * 0.2;
+        qreal x = r.left() + barW + u * 0.2;
         bool hasIcon = !m_config.iconPath.isEmpty() && m_config.iconLayout != "text_only";
         if (hasIcon) {
-            qreal badge = h * 0.56;
+            qreal badge = u * 0.56;
             QRectF badgeRect(x, r.center().y() - badge / 2, badge, badge);
             QColor badgeFill = m_accent;
             badgeFill.setAlphaF(down ? 0.32 : 0.16);
@@ -629,37 +632,37 @@ protected:
                 p.drawPixmap(QPointF(badgeRect.center().x() - m_icon.width() / 2.0,
                                      badgeRect.center().y() - m_icon.height() / 2.0), m_icon);
             }
-            x = badgeRect.right() + h * 0.17;
+            x = badgeRect.right() + u * 0.17;
         }
 
         // Chevron for buttons that open a page
-        qreal textRight = r.right() - h * 0.18;
+        qreal textRight = r.right() - u * 0.18;
         if (m_config.action.toLower() == "navigate") {
-            qreal s = h * 0.09;
-            QPointF c(r.right() - h * 0.22, r.center().y());
-            p.setPen(QPen(m_accent, qMax(2.0, h * 0.025), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            qreal s = u * 0.09;
+            QPointF c(r.right() - u * 0.22, r.center().y());
+            p.setPen(QPen(m_accent, qMax(2.0, u * 0.025), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
             p.drawPolyline(QPolygonF() << QPointF(c.x() - s / 2, c.y() - s)
                                        << QPointF(c.x() + s / 2, c.y())
                                        << QPointF(c.x() - s / 2, c.y() + s));
-            textRight = c.x() - h * 0.2;
+            textRight = c.x() - u * 0.2;
         }
         qreal textW = qMax(10.0, textRight - x);
 
         // Title shrinks (to 70%) before it elides; subtitle just elides
-        int titlePx = qRound(h * 0.19);
+        int titlePx = qRound(u * 0.19);
         QFont titleFont = themeFont(m_theme, titlePx, QFont::DemiBold);
-        while (titlePx > h * 0.19 * 0.7 && QFontMetricsF(titleFont).horizontalAdvance(m_config.text) > textW) {
+        while (titlePx > u * 0.19 * 0.7 && QFontMetricsF(titleFont).horizontalAdvance(m_config.text) > textW) {
             titleFont.setPixelSize(--titlePx);
         }
         QFontMetricsF fmT(titleFont);
         QString title = fmT.elidedText(m_config.text, Qt::ElideRight, textW);
 
         QString sub = m_missing ? QString("Not installed") : m_config.subtitle;
-        QFont subFont = themeFont(m_theme, qRound(h * 0.12), QFont::Normal);
+        QFont subFont = themeFont(m_theme, qRound(u * 0.12), QFont::Normal);
         QFontMetricsF fmS(subFont);
         sub = fmS.elidedText(sub, Qt::ElideRight, textW);
 
-        qreal gap = h * 0.04;
+        qreal gap = u * 0.04;
         qreal blockH = fmT.height() + (sub.isEmpty() ? 0 : gap + fmS.height());
         qreal top = r.center().y() - blockH / 2;
         p.setFont(titleFont);
