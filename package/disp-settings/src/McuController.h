@@ -68,6 +68,13 @@ class McuController : public QObject
     Q_PROPERTY(QString buildDateTime READ buildDateTime NOTIFY buildDateTimeChanged)
     Q_PROPERTY(double backlightTemp READ backlightTemp NOTIFY backlightTempChanged)
     Q_PROPERTY(bool backlightTempValid READ backlightTempValid NOTIFY backlightTempValidChanged)
+    // False when the board says it has no backlight sensor (the 0x8000 sentinel,
+    // e.g. the OLED OTS panel), so the QML can drop the tile instead of "N/A".
+    Q_PROPERTY(bool backlightSensorPresent READ backlightSensorPresent NOTIFY backlightTempValidChanged)
+    // Vehicle supply (VBATT) monitor, REMOTE_DISP_OTS only; other boards read
+    // 0xFFFF there and vbattValid stays false.
+    Q_PROPERTY(bool vbattValid READ vbattValid NOTIFY vbattChanged)
+    Q_PROPERTY(double vbattVolts READ vbattVolts NOTIFY vbattChanged)
     Q_PROPERTY(bool versionAlert READ versionAlert NOTIFY firmwareStatusChanged)
     Q_PROPERTY(QString versionAlertReason READ versionAlertReason NOTIFY firmwareStatusChanged)
     Q_PROPERTY(bool updateAvailable READ updateAvailable NOTIFY firmwareStatusChanged)
@@ -98,6 +105,9 @@ public:
     QString buildDateTime() const { return m_buildDateTime; }
     double backlightTemp() const { return m_backlightTemp; }
     bool backlightTempValid() const { return m_backlightTempValid; }
+    bool backlightSensorPresent() const { return m_backlightSensorPresent; }
+    bool vbattValid() const { return m_vbattValid; }
+    double vbattVolts() const { return m_vbattVolts; }
     bool versionAlert() const { return m_versionAlert; }
     QString versionAlertReason() const { return m_versionAlertReason; }
     bool updateAvailable() const { return m_updateAvailable; }
@@ -114,6 +124,7 @@ signals:
     void buildDateTimeChanged();
     void backlightTempChanged();
     void backlightTempValidChanged();
+    void vbattChanged();
     void firmwareStatusChanged();
     void shortSerialChanged();
     void activeSlotChanged();
@@ -124,6 +135,8 @@ private:
     bool readRegister16(int fd, uint16_t reg, uint8_t *data, int len);
     void parseDeviceInfo(const uint8_t *data);
     void parseTemperature(const uint8_t *data);
+    void readVbatt(int fd);
+    void setVbatt(bool valid, double volts);
     // Tri-state: a read that did not work is not evidence of anything.
     enum Status { StatusUnknown, StatusOk, StatusNoBootloader, StatusUpdateAvailable };
     static const int STATUS_CONFIRMATIONS = 3;
@@ -156,6 +169,9 @@ private:
     QString m_buildDateTime;
     double m_backlightTemp;
     bool m_backlightTempValid;
+    bool m_backlightSensorPresent;
+    bool m_vbattValid;
+    double m_vbattVolts;
 
     QString m_referenceImage;
     QString m_referenceDir;

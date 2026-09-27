@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
+#include <linux/i2c.h>
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>
@@ -17,6 +18,9 @@
 #define REG_FW_VERSION      0x0000  // 2 bytes BCD: major, minor
 #define REG_BUILD_DATE      0x0002  // 6 bytes BCD: year_hi, year_lo, month, day, hour, minute
 #define REG_BL_TEMP         0x1002  // 2 bytes signed int16 BE, x10 degC
+#define REG_VBATT_MV        0x1006  // 2 bytes uint16 BE, millivolts (OTS only)
+#define BL_TEMP_NO_SENSOR   0x8000  // temperature sentinel: no calibrated sensor
+#define VBATT_NONE          0xFFFF  // boards without the monitor read 0xFF there
 #define REG_BL_PAGE         0xFF00  // bootloader page: 'B','L',proto,version,...
 #define REG_SLOT_A_INFO     0xFF20  // validity byte + first 32 header bytes
 #define REG_APP_SLOT        0xFF89  // running slot: 0x00 = A, 0x01 = B
@@ -51,6 +55,9 @@ McuController::McuController(QObject *parent)
     , m_readTemperature(true)
     , m_backlightTemp(0.0)
     , m_backlightTempValid(false)
+    , m_backlightSensorPresent(true)
+    , m_vbattValid(false)
+    , m_vbattVolts(0.0)
     , m_referencesLoaded(false)
     , m_candidateStatus(StatusUnknown)
     , m_candidateCount(0)
@@ -130,21 +137,27 @@ void McuController::closeI2c(int fd)
 
 bool McuController::readRegister16(int fd, uint16_t reg, uint8_t *data, int len)
 {
-    // 16-bit sub-addressing (EEPROM-style): write 2 address bytes, then read
+    // 16-bit sub-addressing (EEPROM-style): 2 address bytes, repeated start,
+    // read. One I2C_RDWR transaction, not write() then read(): als-dimmer polls
+    // the same MCU, and its address write landing between the two moved the
+    // register pointer, so this read returned als-dimmer's bytes (seen as a
+    // bogus backlight temperature on the OLED OTS panel).
     uint8_t regAddr[2] = {
         static_cast<uint8_t>((reg >> 8) & 0xFF),
         static_cast<uint8_t>(reg & 0xFF)
     };
+    struct i2c_msg msgs[2];
+    msgs[0].addr = static_cast<__u16>(m_i2cAddress);
+    msgs[0].flags = 0;
+    msgs[0].len = 2;
+    msgs[0].buf = regAddr;
+    msgs[1].addr = static_cast<__u16>(m_i2cAddress);
+    msgs[1].flags = I2C_M_RD;
+    msgs[1].len = static_cast<__u16>(len);
+    msgs[1].buf = data;
+    struct i2c_rdwr_ioctl_data xfer = { msgs, 2 };
 
-    if (write(fd, regAddr, 2) != 2) {
-        return false;
-    }
-
-    if (read(fd, data, len) != len) {
-        return false;
-    }
-
-    return true;
+    return ioctl(fd, I2C_RDWR, &xfer) == 2;
 }
 
 // Helper to format a BCD byte as two-digit hex string (e.g. 0x26 -> "26")
@@ -176,7 +189,17 @@ void McuController::parseDeviceInfo(const uint8_t *data)
 void McuController::parseTemperature(const uint8_t *data)
 {
     // Signed 16-bit big-endian, 0.1 degC resolution
-    int16_t raw = static_cast<int16_t>((data[0] << 8) | data[1]);
+    const uint16_t word = static_cast<uint16_t>((data[0] << 8) | data[1]);
+    if (word == BL_TEMP_NO_SENSOR) {
+        // The board has no (calibrated) backlight sensor: not a reading
+        if (m_backlightTempValid || m_backlightSensorPresent) {
+            m_backlightTempValid = false;
+            m_backlightSensorPresent = false;
+            emit backlightTempValidChanged();
+        }
+        return;
+    }
+    int16_t raw = static_cast<int16_t>(word);
     double temp = raw / 10.0;
 
     if (temp != m_backlightTemp) {
@@ -184,10 +207,36 @@ void McuController::parseTemperature(const uint8_t *data)
         emit backlightTempChanged();
     }
 
-    if (!m_backlightTempValid) {
+    if (!m_backlightTempValid || !m_backlightSensorPresent) {
         m_backlightTempValid = true;
+        m_backlightSensorPresent = true;
         emit backlightTempValidChanged();
     }
+}
+
+void McuController::setVbatt(bool valid, double volts)
+{
+    if (valid == m_vbattValid && (!valid || volts == m_vbattVolts))
+        return;
+    m_vbattValid = valid;
+    if (valid) m_vbattVolts = volts;
+    emit vbattChanged();
+}
+
+// Supply voltage is optional: a board without the monitor, or a read that did
+// not land, only hides the value -- it never marks the MCU unavailable.
+void McuController::readVbatt(int fd)
+{
+    uint8_t mv[2];
+    if (!readRegister16(fd, REG_VBATT_MV, mv, 2)) {
+        setVbatt(false, 0.0);
+        return;
+    }
+    const uint16_t millivolts = static_cast<uint16_t>((mv[0] << 8) | mv[1]);
+    if (millivolts == VBATT_NONE || millivolts == 0)
+        setVbatt(false, 0.0);
+    else
+        setVbatt(true, millivolts / 1000.0);
 }
 
 void McuController::setStatus(bool noBootloader, bool updateAvailable, const QString &reason)
@@ -514,6 +563,7 @@ void McuController::refresh()
             m_backlightTempValid = false;
             emit backlightTempValidChanged();
         }
+        setVbatt(false, 0.0);
         return;
     }
 
@@ -539,6 +589,7 @@ void McuController::refresh()
         } else {
             success = false;
         }
+        readVbatt(fd);
     }
 
     // Firmware status on every poll. A failed poll deliberately leaves the

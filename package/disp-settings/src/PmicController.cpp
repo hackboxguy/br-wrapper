@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <linux/i2c-dev.h>
+#include <linux/i2c.h>
 
 // Default MCU address for bridge (IOC)
 #define DEFAULT_MCU_ADDR        0x66
@@ -106,8 +107,19 @@ bool PmicController::readMcuReg16(int fd, uint16_t reg, uint8_t *data, int len)
         static_cast<uint8_t>((reg >> 8) & 0xFF),
         static_cast<uint8_t>(reg & 0xFF)
     };
-    if (write(fd, regAddr, 2) != 2) return false;
-    return read(fd, data, len) == len;
+    // One I2C_RDWR transaction (repeated start), so another master process
+    // polling the MCU cannot move the register pointer between address and read
+    struct i2c_msg msgs[2];
+    msgs[0].addr = static_cast<__u16>(m_mcuAddress);
+    msgs[0].flags = 0;
+    msgs[0].len = 2;
+    msgs[0].buf = regAddr;
+    msgs[1].addr = static_cast<__u16>(m_mcuAddress);
+    msgs[1].flags = I2C_M_RD;
+    msgs[1].len = static_cast<__u16>(len);
+    msgs[1].buf = data;
+    struct i2c_rdwr_ioctl_data xfer = { msgs, 2 };
+    return ioctl(fd, I2C_RDWR, &xfer) == 2;
 }
 
 bool PmicController::bridgeRead(int fd, uint8_t slave, uint8_t reg, uint8_t len, uint8_t *out)

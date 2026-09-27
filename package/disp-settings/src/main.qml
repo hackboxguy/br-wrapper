@@ -860,7 +860,7 @@ Window {
             Card {
                 id: healthCard
                 order: 1
-                title: "Temperatures"
+                title: mcu.available && mcu.vbattValid ? "Temperatures & supply" : "Temperatures"
                 icon: "health"
                 tint: "#FB923C"
                 x: 0
@@ -889,15 +889,26 @@ Window {
                         tone: !tempSensors.sensor2Available ? t.dim :
                                tempSensors.sensor2Healthy ? t.ok : t.bad
                     }
-                    // Backlight temperature (MCU 0x66)
+                    // Backlight temperature (MCU 0x66); boards without the sensor say so
                     SensorTile {
                         Layout.fillWidth: true
-                        visible: mcu.available
+                        visible: mcu.available && mcu.backlightSensorPresent
                         label: "Backlight"
                         valid: mcu.backlightTempValid
                         value: mcu.backlightTempValid ? mcu.backlightTemp.toFixed(1) + " °C" : "N/A"
                         caption: "MCU NTC"
                         tone: mcu.backlightTempValid ? t.ok : t.dim
+                    }
+                    // Vehicle supply (VBATT), OLED OTS display controller only
+                    SensorTile {
+                        Layout.fillWidth: true
+                        visible: mcu.available && mcu.vbattValid
+                        label: "Supply"
+                        caption: "VBATT"
+                        valid: true
+                        value: mcu.vbattVolts.toFixed(2) + " V"
+                        // 12 V vehicle supply: amber outside 9-16 V
+                        tone: mcu.vbattVolts >= 9.0 && mcu.vbattVolts <= 16.0 ? t.ok : t.warn
                     }
                 }
 
