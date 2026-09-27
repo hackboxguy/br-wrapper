@@ -326,6 +326,10 @@ void UpdateController::logLine(const QString &line)
     qDebug().noquote() << line;
     if (m_log.isOpen()) {
         QTextStream(&m_log) << QDateTime::currentDateTime().toString("HH:mm:ss ") << line << "\n";
+        // Every update ends in a power cut, often while the screen is dark and
+        // before writeback: without this the log's tail is lost as NUL bytes
+        m_log.flush();
+        ::fsync(m_log.handle());
     }
 }
 
