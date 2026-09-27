@@ -21,6 +21,14 @@ The app never opens the I²C bus itself. Everything goes through `update-iocs.sh
   services that share the bus, updates the display controller first and the 983HH second, and
   leaves the video stream up so this screen stays visible where the hardware allows it.
 
+Before the hold, the app estimates the time from the boards that need an update (about 25 s for
+the 983HH, 45 s for a display controller) and says so; the progress view repeats it. It also
+tells the user that the screen goes dark and stays dark: when a board restarts the panel loses
+its picture and only a power cycle brings it back (seen on the 17" OLED OTS; the video link
+itself recovers). So the user is told up front to wait twice the estimate, at least 2 minutes,
+and then switch the system off and on. The 983HH restart also resets the 983's I2C forwarding
+and interrupt setup, so touch does not work until that power cycle either.
+
 Per-board status comes from the script's `RESULT` lines; the outcome from its exit code:
 
 | Exit | Shown as | Offered next |

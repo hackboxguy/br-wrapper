@@ -56,6 +56,33 @@ Window {
         return m + ":" + (r < 10 ? "0" : "") + r
     }
 
+    // Rough time per board, from the rigs: flash + reset + wait for the new
+    // application to confirm. 983HH ~50 KiB at ~30 KiB/s + ~10 s confirm;
+    // the display controller is slower on its bus (~4 KiB/s measured).
+    readonly property var boardSeconds: ({ "983": 25 })
+    readonly property int displaySeconds: 45
+    readonly property int estimateSeconds: {
+        var total = 0
+        var list = updater.components
+        for (var i = 0; i < list.length; ++i) {
+            if (list[i].status !== "outdated") continue
+            total += boardSeconds[list[i].board] !== undefined ? boardSeconds[list[i].board] : displaySeconds
+        }
+        return total
+    }
+    // Frozen when the update starts: the statuses change while it runs
+    property int runEstimate: 0
+    // The panel goes dark when a board restarts and needs a power cycle to
+    // come back (the video link recovers, the panel does not); this is how
+    // long to wait before that power cycle: well past the estimate, so the
+    // script has finished or failed by then
+    readonly property int darkWaitMinutes: Math.max(2, Math.ceil(2 * estimateSeconds / 60))
+    function aboutText(sec) {
+        return sec < 50 ? "about " + (Math.ceil(sec / 10) * 10) + " seconds"
+             : sec < 90 ? "about a minute"
+             : "about " + Math.ceil(sec / 60) + " minutes"
+    }
+
     Item {
         anchors.fill: parent
         focus: true
@@ -397,10 +424,9 @@ Window {
                         visible: readyView.hasUpdate
                         width: parent.width
                         spacing: 8 * s
-                        Bullet { label: "Takes about half a minute." }
-                        Bullet { label: "Keep the system switched on until it finishes." }
-                        Bullet { label: "The screen may flicker while a board restarts." }
-                        Bullet { label: "Afterwards, switch the system off and on once." }
+                        Bullet { label: "Takes " + aboutText(estimateSeconds) + ". Keep the system switched on." }
+                        Bullet { label: "The screen goes dark during the update and stays dark. That is expected." }
+                        Bullet { label: "Wait " + darkWaitMinutes + " minutes, then switch the system off and on to finish." }
                     }
                 }
                 Column {   // ready: actions at the bottom
@@ -434,7 +460,7 @@ Window {
                             id: holdAnim
                             target: holdButton; property: "progress"
                             from: 0; to: 1; duration: 1500
-                            onFinished: if (holdButton.progress >= 1) updater.startUpdate()
+                            onFinished: if (holdButton.progress >= 1) { runEstimate = estimateSeconds; updater.startUpdate() }
                         }
                         MouseArea {
                             id: holdArea
@@ -474,6 +500,7 @@ Window {
                             }
                             Text {
                                 text: "Elapsed " + mmss(updater.elapsedSeconds)
+                                      + (runEstimate > 0 ? "  ·  usually done in " + aboutText(runEstimate) : "")
                                 color: t.sub
                                 font.family: t.font; font.pixelSize: 19 * s
                             }
