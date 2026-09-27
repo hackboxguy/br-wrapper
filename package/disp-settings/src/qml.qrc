@@ -1,5 +1,15 @@
 <RCC>
     <qresource prefix="/">
         <file>main.qml</file>
+        <file>icons/brightness.svg</file>
+        <file>icons/health.svg</file>
+        <file>icons/features.svg</file>
+        <file>icons/firmware.svg</file>
+        <file>icons/fpga.svg</file>
+        <file>icons/touch.svg</file>
+        <file>icons/privacy.svg</file>
+        <file>icons/dimming.svg</file>
+        <file>icons/pixelcomp.svg</file>
+        <file>icons/visionboost.svg</file>
     </qresource>
 </RCC>

@@ -3,6 +3,14 @@ import QtQuick.Window 2.12
 import QtQuick.Controls 2.12
 import QtQuick.Layouts 1.12
 
+// Display Settings. Same visual language as qt-demo-launcher's "tiles" theme and
+// System Manager: navy grid backdrop, header with back button and SMPTE bar strip,
+// cards with an accent stripe and icon badge. Colors are RGB565 steps like the
+// launcher's, so the 16bpp framebuffer shows them without dithering.
+//
+// One instance of every card; only their geometry depends on the screen:
+// 1920x720 (aspect > 2) gets three columns, 1920x1080 two columns with the
+// extra height. Sizes scale with s, designed at 1920x720.
 Window {
     id: window
     visible: true
@@ -10,7 +18,29 @@ Window {
     height: Screen.height
     title: "Display Settings"
     visibility: Window.FullScreen
-    color: "#1a1a2e"
+    color: t.bg
+
+    QtObject {
+        id: t
+        readonly property color bg: "#080C18"
+        readonly property color grid: "#101828"
+        readonly property color card: "#182030"
+        readonly property color tile: "#1C2638"
+        readonly property color cardPressed: "#202C40"
+        readonly property color border: "#283450"
+        readonly property color text: "#F0F4F8"
+        readonly property color sub: "#8894A8"
+        readonly property color dim: "#58647A"
+        readonly property color ok: "#34D399"
+        readonly property color warn: "#FBBF24"
+        readonly property color bad: "#F87171"
+        readonly property color info: "#38BDF8"
+        readonly property color accent: "#60A5FA"
+        readonly property string font: uiFont
+    }
+
+    // Designed at 1920x720; 1080-line panels keep the same sizes and use the height
+    readonly property real s: Math.min(width / 1920, height / 720)
 
     // Track if user is dragging the brightness slider
     property bool userDraggingBrightness: false
@@ -36,33 +66,35 @@ Window {
     property bool userPreferAdaptive: true
     property bool initialSyncDone: false
 
-    // Adaptive layout: use two columns on wide screens (aspect ratio > 2.0)
+    // Adaptive layout: three columns on wide screens (aspect ratio > 2.0)
     property bool wideScreen: Screen.width / Screen.height > 2.0
+
+    function withAlpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
 
     function absoluteNitsText() {
         if (dualDisplay.loadingSavedState || dualDisplay.busy) {
-            return "Nits: Loading...";
+            return "Loading…";
         }
         if (!alsDimmer.connected) {
-            return "Nits: ---";
+            return "— nits";
         }
         if (alsDimmer.absoluteBrightnessValid) {
-            return "Nits: " + alsDimmer.absoluteBrightnessNits.toFixed(1);
+            return alsDimmer.absoluteBrightnessNits.toFixed(1) + " nits";
         }
-        return alsDimmer.absoluteBrightnessCalibrated ? "Nits: ---" : "Nits: uncal";
+        return alsDimmer.absoluteBrightnessCalibrated ? "— nits" : "Not calibrated";
     }
 
     function absoluteNitsColor() {
         if (dualDisplay.loadingSavedState || dualDisplay.busy) {
-            return "#888888";
+            return t.sub;
         }
         if (!alsDimmer.connected) {
-            return "#888888";
+            return t.sub;
         }
         if (!alsDimmer.absoluteBrightnessValid && alsDimmer.absoluteBrightnessCalibrated) {
-            return "#888888";
+            return t.sub;
         }
-        return alsDimmer.absoluteBrightnessCalibrated ? "#27ae60" : "#e74c3c";
+        return alsDimmer.absoluteBrightnessCalibrated ? t.ok : t.bad;
     }
 
     function brightnessSliderFrom() {
@@ -99,10 +131,7 @@ Window {
         if (!dualDisplay.active || userDraggingBrightness) {
             return;
         }
-
-        var nits = dualDisplay.currentNits;
-        brightnessSlider.value = nits;
-        brightnessSliderWide.value = nits;
+        brightnessSlider.value = dualDisplay.currentNits;
     }
 
     function setDualDisplayAbsoluteMode(enabled) {
@@ -187,1424 +216,712 @@ Window {
         }
     }
 
-    // Header with title and exit button
-    Rectangle {
-        id: header
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        height: 60
-        color: "#16213e"
+    Item {
+        anchors.fill: parent
+        focus: true
+        Keys.onEscapePressed: Qt.quit()
+    }
 
-        RowLayout {
-            anchors.fill: parent
-            anchors.leftMargin: 20
-            anchors.rightMargin: 20
+    // ---- backdrop grid -----------------------------------------------------
+    Repeater {
+        model: Math.ceil(window.width / 48)
+        Rectangle { x: index * 48 + (window.width % 48) / 2; width: 1; height: window.height; color: t.grid }
+    }
+    Repeater {
+        model: Math.ceil(window.height / 48)
+        Rectangle { y: index * 48 + (window.height % 48) / 2; height: 1; width: window.width; color: t.grid }
+    }
 
-            Text {
-                text: "Display Settings"
-                font.pixelSize: 28
-                font.bold: true
-                color: "#ffffff"
-                Layout.alignment: Qt.AlignVCenter
-            }
-
-            Item { Layout.fillWidth: true }
-
-            // Connection status indicator
+    // ---- reusable pieces ---------------------------------------------------
+    component Pill: Rectangle {
+        id: pill
+        property string label
+        property color tint: t.sub
+        property bool dot: false
+        signal clicked()
+        height: 40 * s
+        width: pillRow.implicitWidth + 32 * s
+        radius: height / 2
+        color: pillArea.pressed ? withAlpha(tint, 0.28) : withAlpha(tint, 0.16)
+        border.color: withAlpha(tint, 0.45)
+        Behavior on color { ColorAnimation { duration: 200 } }
+        Row {
+            id: pillRow
+            anchors.centerIn: parent
+            spacing: 10 * s
             Rectangle {
-                width: 12
-                height: 12
-                radius: 6
-                color: alsDimmer.connected ? "#27ae60" : "#e74c3c"
-                Layout.alignment: Qt.AlignVCenter
-
-                ToolTip.visible: statusMouseArea.containsMouse
-                ToolTip.text: alsDimmer.connected ? "Connected to als-dimmer" : "Disconnected from als-dimmer"
-
-                MouseArea {
-                    id: statusMouseArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    onClicked: {
-                        if (!alsDimmer.connected) {
-                            alsDimmer.reconnect();
-                        }
-                    }
-                }
+                visible: pill.dot
+                anchors.verticalCenter: parent.verticalCenter
+                width: 10 * s; height: width; radius: width / 2
+                color: pill.tint
             }
-
             Text {
-                text: "v" + appVersion
-                font.pixelSize: 22
-                color: "#888888"
-                Layout.alignment: Qt.AlignVCenter
-                Layout.leftMargin: 10
+                text: pill.label
+                color: pill.tint
+                font.family: t.font; font.pixelSize: 18 * s; font.weight: Font.DemiBold
             }
+        }
+        MouseArea { id: pillArea; anchors.fill: parent; onClicked: pill.clicked() }
+    }
 
+    component ThemedSwitch: Switch {
+        id: sw
+        property color onColor: t.ok
+        property real trackWidth: 66 * s
+        property real trackHeight: 38 * s
+        padding: 0
+        implicitWidth: trackWidth
+        implicitHeight: trackHeight
+        indicator: Rectangle {
+            x: 0
+            y: (sw.height - height) / 2
+            width: sw.trackWidth; height: sw.trackHeight; radius: height / 2
+            color: sw.checked ? withAlpha(sw.onColor, 0.85) : "#2A3448"
+            border.color: sw.checked ? sw.onColor : t.border
+            opacity: sw.enabled ? 1.0 : 0.35
+            Behavior on color { ColorAnimation { duration: 160 } }
             Rectangle {
-                id: exitButton
-                Layout.preferredWidth: 80
-                Layout.preferredHeight: 40
-                Layout.alignment: Qt.AlignVCenter
-                radius: 5
-                color: exitMouseArea.pressed ? "#c0392b" : "#2c3e50"
+                x: sw.checked ? parent.width - width - 5 * s : 5 * s
+                y: 5 * s
+                width: parent.height - 10 * s; height: width; radius: width / 2
+                color: "#FFFFFF"
+                Behavior on x { NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+            }
+        }
+        contentItem: Item {}
+    }
 
-                Text {
-                    anchors.centerIn: parent
-                    text: "Exit"
-                    font.pixelSize: 24
-                    color: "#ffffff"
-                }
+    // A card: accent stripe, icon badge and title, then its content in a column.
+    component Card: Rectangle {
+        id: card
+        property string title
+        property string icon
+        property color tint: t.accent
+        property int order: 0
+        property bool centerBody: false
+        default property alias content: body.data
+        property alias headerRight: rightSlot.data
+        readonly property real pad: 20 * s
+        readonly property real headH: 40 * s
+        implicitHeight: pad + headH + 12 * s + body.implicitHeight + pad
+        radius: 18 * s
+        color: t.card
+        border.color: t.border
+        opacity: 0
 
-                MouseArea {
-                    id: exitMouseArea
-                    anchors.fill: parent
-                    // Trigger quit on press for 100% reliability (no release event needed)
-                    onPressed: {
-                        console.log("Exit button pressed - quitting");
-                        Qt.quit();
-                    }
-                }
+        transform: Translate { id: shift; y: 16 * s }
+        SequentialAnimation {
+            running: true
+            PauseAnimation { duration: 60 + card.order * 70 }
+            ParallelAnimation {
+                NumberAnimation { target: card; property: "opacity"; to: 1; duration: 320; easing.type: Easing.OutCubic }
+                NumberAnimation { target: shift; property: "y"; to: 0; duration: 380; easing.type: Easing.OutCubic }
+            }
+        }
+
+        Rectangle {   // accent stripe
+            x: 0; y: 0; width: 6 * s; height: parent.height; radius: 3 * s
+            color: card.tint
+        }
+        Rectangle {   // icon badge
+            id: badge
+            x: card.pad + 6 * s; y: card.pad
+            width: card.headH; height: width; radius: 12 * s
+            color: withAlpha(card.tint, 0.16)
+            border.color: withAlpha(card.tint, 0.45)
+            Image {
+                anchors.centerIn: parent
+                width: parent.width * 0.62; height: width
+                sourceSize: Qt.size(width, height)
+                source: "qrc:/icons/" + card.icon + ".svg"
+            }
+        }
+        Text {
+            anchors.left: badge.right; anchors.leftMargin: 16 * s
+            anchors.right: rightSlot.left; anchors.rightMargin: 12 * s
+            anchors.verticalCenter: badge.verticalCenter
+            text: card.title
+            elide: Text.ElideRight
+            color: t.text
+            font.family: t.font; font.pixelSize: 24 * s; font.weight: Font.DemiBold
+        }
+        Row {
+            id: rightSlot
+            anchors.right: parent.right; anchors.rightMargin: card.pad
+            anchors.verticalCenter: badge.verticalCenter
+            spacing: 10 * s
+        }
+        Column {
+            id: body
+            x: card.pad + 6 * s
+            y: {
+                var top = card.pad + card.headH + 12 * s
+                if (!card.centerBody) return top
+                return top + Math.max(0, (card.height - top - card.pad - implicitHeight) / 2)
+            }
+            width: card.width - x - card.pad
+            spacing: 12 * s
+        }
+    }
+
+    // Key/value pairs, one or two pairs per row
+    component KeyValues: GridLayout {
+        id: kv
+        property var pairs: []
+        property int pairColumns: 1
+        property real keyWidth: 130 * s
+        width: parent ? parent.width : 0
+        columns: pairColumns * 2
+        columnSpacing: 14 * s
+        rowSpacing: 6 * s
+        Repeater {
+            model: kv.pairs.length * 2
+            Text {
+                readonly property var pair: kv.pairs[Math.floor(index / 2)]
+                readonly property bool isKey: index % 2 === 0
+                Layout.preferredWidth: isKey ? kv.keyWidth : -1
+                Layout.fillWidth: !isKey
+                Layout.minimumWidth: isKey ? kv.keyWidth : 40 * s
+                text: pair ? (isKey ? pair.k : pair.v) : ""
+                elide: Text.ElideRight
+                color: isKey ? t.sub : (pair && pair.v === "N/A" ? t.dim : t.text)
+                font.family: t.font
+                font.pixelSize: (isKey ? 16 : 18) * s
+                font.weight: isKey ? Font.Normal : Font.Medium
             }
         }
     }
 
-    // Main content area - adaptive layout based on screen aspect ratio
-    Item {
-        id: contentArea
-        anchors.top: header.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.margins: 20
+    component SensorTile: Rectangle {
+        id: st
+        property string label
+        property string value
+        property string caption
+        property bool valid: false
+        property color tone: t.dim
+        height: 84 * s
+        radius: 14 * s
+        color: t.tile
+        border.color: t.border
+        Column {
+            anchors.left: parent.left; anchors.leftMargin: 16 * s
+            anchors.right: parent.right; anchors.rightMargin: 12 * s
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 2 * s
+            Row {
+                spacing: 8 * s
+                Rectangle {
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 10 * s; height: width; radius: width / 2
+                    color: st.tone
+                }
+                Text {
+                    // the caption only where the tile has room for it (1080-line layout)
+                    text: st.label + (st.caption !== "" && st.width > 240 * s ? "  ·  " + st.caption : "")
+                    color: t.sub
+                    font.family: t.font; font.pixelSize: 16 * s
+                }
+            }
+            Text {
+                text: st.value
+                color: st.valid ? t.text : t.dim
+                font.family: t.font; font.pixelSize: 28 * s; font.weight: Font.Bold
+            }
+        }
+    }
 
-        // Two-column layout for wide screens (aspect ratio > 2.0)
-        RowLayout {
+    component Chip: Rectangle {
+        property string label
+        property color tint: t.sub
+        property bool lit: false
+        height: 30 * s
+        width: chipText.implicitWidth + 20 * s
+        radius: 8 * s
+        color: withAlpha(tint, lit ? 0.2 : 0.08)
+        border.color: withAlpha(tint, lit ? 0.7 : 0.35)
+        Text {
+            id: chipText
+            anchors.centerIn: parent
+            text: parent.label
+            color: parent.lit ? parent.tint : t.sub
+            font.family: t.font; font.pixelSize: 14 * s; font.weight: Font.Bold
+        }
+    }
+
+    component FeatureTile: Rectangle {
+        id: tile
+        property string title
+        property string icon
+        property color tint: t.accent
+        property bool on: false
+        property bool available: false
+        property string note
+        signal toggled(bool checked)
+        Layout.fillWidth: true
+        Layout.preferredHeight: 62 * s
+        radius: 14 * s
+        color: tileArea.pressed && available ? t.cardPressed : t.tile
+        border.color: on && available ? withAlpha(tint, 0.6) : t.border
+        Behavior on border.color { ColorAnimation { duration: 200 } }
+
+        MouseArea {
+            id: tileArea
             anchors.fill: parent
-            spacing: 20
-            visible: wideScreen
+            onClicked: if (tile.available) tile.toggled(!tile.on)
+        }
+        Rectangle {
+            id: tileBadge
+            x: 10 * s; anchors.verticalCenter: parent.verticalCenter
+            width: 38 * s; height: width; radius: 10 * s
+            color: withAlpha(tile.tint, tile.available ? 0.18 : 0.07)
+            Image {
+                anchors.centerIn: parent
+                width: parent.width * 0.62; height: width
+                sourceSize: Qt.size(width, height)
+                source: "qrc:/icons/" + tile.icon + ".svg"
+                opacity: tile.available ? 1.0 : 0.35
+            }
+        }
+        Column {
+            anchors.left: tileBadge.right; anchors.leftMargin: 10 * s
+            anchors.right: tileSwitch.visible ? tileSwitch.left : parent.right
+            anchors.rightMargin: 8 * s
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 1 * s
+            Text {
+                width: parent.width; elide: Text.ElideRight
+                text: tile.title
+                color: tile.available ? t.text : t.sub
+                font.family: t.font; font.pixelSize: 16 * s; font.weight: Font.DemiBold
+            }
+            Text {
+                width: parent.width; elide: Text.ElideRight
+                text: tile.note !== "" ? tile.note : (tile.on ? "On" : "Off")
+                color: tile.note !== "" ? t.dim : (tile.on ? tile.tint : t.sub)
+                font.family: t.font; font.pixelSize: 14 * s
+            }
+        }
+        ThemedSwitch {
+            id: tileSwitch
+            anchors.right: parent.right; anchors.rightMargin: 12 * s
+            anchors.verticalCenter: parent.verticalCenter
+            // A feature that cannot be switched shows why instead of a dead toggle
+            visible: tile.available
+            trackWidth: 58 * s; trackHeight: 34 * s
+            onColor: tile.tint
+            enabled: tile.available
+            onClicked: tile.toggled(checked)
+        }
+        Binding {
+            target: tileSwitch
+            property: "checked"
+            value: tile.on
+        }
+    }
 
-            // Left column: Brightness + Temperature
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: 15
+    component VersionRow: Item {
+        id: vr
+        property string name
+        property string version
+        property string slot
+        property string date
+        property string serial
+        property bool alert: false
+        property string alertReason
+        width: parent ? parent.width : 0
+        height: 44 * s
+        Column {
+            anchors.left: parent.left
+            anchors.right: verText.left; anchors.rightMargin: 12 * s
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 1 * s
+            Text {
+                width: parent.width; elide: Text.ElideRight
+                text: vr.name
+                color: t.text
+                font.family: t.font; font.pixelSize: 17 * s; font.weight: Font.Medium
+            }
+            Text {
+                width: parent.width; elide: Text.ElideRight
+                text: vr.alert && vr.alertReason !== "" ? vr.alertReason
+                      : vr.date + (vr.serial !== "" ? "   ·   " + vr.serial : "")
+                color: vr.alert ? t.bad : t.dim
+                font.family: t.font; font.pixelSize: 14 * s
+            }
+        }
+        Text {
+            id: verText
+            anchors.right: slotChip.visible ? slotChip.left : parent.right
+            anchors.rightMargin: slotChip.visible ? 10 * s : 0
+            anchors.verticalCenter: parent.verticalCenter
+            text: vr.version !== "" ? vr.version : "—"
+            color: vr.alert ? t.bad : t.text
+            font.family: t.font; font.pixelSize: 22 * s; font.weight: Font.Bold
+        }
+        Chip {
+            id: slotChip
+            visible: vr.slot !== ""
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            label: "slot " + vr.slot
+            tint: t.accent
+            lit: true
+        }
+    }
 
-                // Brightness Section
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: pmic.available ? 150 : 180
-                    color: "#0f3460"
-                    radius: 10
+    // ---- page ----------------------------------------------------------------
+    Item {
+        id: page
+        anchors.fill: parent
+        anchors.leftMargin: 40 * s; anchors.rightMargin: 40 * s
+        anchors.topMargin: 22 * s; anchors.bottomMargin: 24 * s
 
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 15
-                        spacing: 10
+        // Header: back, title, status
+        Item {
+            id: header
+            width: parent.width
+            height: 96 * s
 
-                        RowLayout {
-                            Layout.fillWidth: true
-
-                            Text {
-                                text: "Brightness Control"
-                                font.pixelSize: 22
-                                font.bold: true
-                                color: "#ffffff"
-                            }
-
-                            Item { Layout.fillWidth: true }
-
-                            // Mode indicator
-                            Rectangle {
-                                width: modeTextWide.width + 20
-                                height: 32
-                                radius: 16
-                                color: alsDimmer.mode === "auto" ? "#27ae60" :
-                                       alsDimmer.mode === "manual_temporary" ? "#f39c12" : "#3498db"
-
-                                Text {
-                                    id: modeTextWide
-                                    anchors.centerIn: parent
-                                    text: alsDimmer.mode === "auto" ? "AUTO" :
-                                          alsDimmer.mode === "manual_temporary" ? "TEMP" : "MANUAL"
-                                    font.pixelSize: 16
-                                    font.bold: true
-                                    color: "#ffffff"
-                                }
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 15
-
-                            Text {
-                                text: "Brightness:"
-                                font.pixelSize: 22
-                                color: "#cccccc"
-                                Layout.preferredWidth: 140
-                            }
-
-                            Slider {
-                                id: brightnessSliderWide
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 48
-                                from: brightnessSliderFrom()
-                                to: brightnessSliderTo()
-                                value: 50
-                                enabled: !dualDisplay.loadingSavedState && !dualDisplay.busy &&
-                                         (dualDisplay.targetActive || alsDimmer.connected)
-                                stepSize: brightnessSliderStep()
-
-                                Binding {
-                                    target: brightnessSliderWide
-                                    property: "value"
-                                    value: dualDisplay.currentNits
-                                    when: dualDisplay.active && !userDraggingBrightness
-                                }
-
-                                Binding {
-                                    target: brightnessSliderWide
-                                    property: "value"
-                                    value: brightnessSlider.value
-                                    when: !dualDisplay.targetActive && !userDraggingBrightness
-                                }
-
-                                background: Rectangle {
-                                    x: brightnessSliderWide.leftPadding
-                                    y: brightnessSliderWide.topPadding + brightnessSliderWide.availableHeight / 2 - height / 2
-                                    width: brightnessSliderWide.availableWidth
-                                    height: 12
-                                    radius: 6
-                                    color: "#2c3e50"
-
-                                    Rectangle {
-                                        width: brightnessSliderWide.visualPosition * parent.width
-                                        height: parent.height
-                                        color: brightnessSliderWide.enabled ? "#3498db" : "#555555"
-                                        radius: 6
-                                    }
-                                }
-
-                                handle: Rectangle {
-                                    x: brightnessSliderWide.leftPadding + brightnessSliderWide.visualPosition * (brightnessSliderWide.availableWidth - width)
-                                    y: brightnessSliderWide.topPadding + brightnessSliderWide.availableHeight / 2 - height / 2
-                                    width: 40
-                                    height: 40
-                                    radius: 20
-                                    color: brightnessSliderWide.pressed ? "#2980b9" : (brightnessSliderWide.enabled ? "#3498db" : "#555555")
-                                    border.color: "#ffffff"
-                                    border.width: 3
-                                }
-
-                                onPressedChanged: {
-                                    userDraggingBrightness = pressed;
-                                    if (!pressed) {
-                                        setBrightnessFromSlider(value);
-                                        if (!dualDisplay.targetActive) {
-                                            brightnessSetCooldown = true;
-                                            brightnessCooldownTimer.restart();
-                                        }
-                                    }
-                                    brightnessSlider.value = value;
-                                }
-
-                                onMoved: {
-                                    setBrightnessFromSlider(value);
-                                    brightnessSlider.value = value;
-                                }
-                            }
-
-                            Text {
-                                text: brightnessSliderText(brightnessSliderWide.value)
-                                font.pixelSize: 22
-                                font.bold: true
-                                color: "#ffffff"
-                                Layout.preferredWidth: dualDisplay.targetActive ? 110 : 50
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 15
-
-                            Text {
-                                text: "Adaptive Mode:"
-                                font.pixelSize: 22
-                                color: "#cccccc"
-                                Layout.preferredWidth: 170
-                            }
-
-                            Switch {
-                                id: adaptiveSwitchWide
-                                checked: userPreferAdaptive
-                                enabled: alsDimmer.connected && !dualDisplay.loadingSavedState &&
-                                         !dualDisplay.targetActive && !dualDisplay.busy
-
-                                indicator: Rectangle {
-                                    implicitWidth: 60
-                                    implicitHeight: 32
-                                    x: adaptiveSwitchWide.leftPadding
-                                    y: parent.height / 2 - height / 2
-                                    radius: 16
-                                    color: adaptiveSwitchWide.checked ? "#27ae60" : "#2c3e50"
-                                    opacity: adaptiveSwitchWide.enabled ? 1.0 : 0.5
-
-                                    Rectangle {
-                                        x: adaptiveSwitchWide.checked ? parent.width - width - 2 : 2
-                                        y: 2
-                                        width: 28
-                                        height: 28
-                                        radius: 14
-                                        color: "#ffffff"
-
-                                        Behavior on x {
-                                            NumberAnimation { duration: 150 }
-                                        }
-                                    }
-                                }
-
-                                onClicked: {
-                                    userPreferAdaptive = checked;
-                                    alsDimmer.setAdaptiveMode(checked);
-                                }
-                            }
-
-                            Text {
-                                text: "Dual Display Mode:"
-                                visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
-                                font.pixelSize: 20
-                                color: "#cccccc"
-                                Layout.leftMargin: 15
-                                Layout.preferredWidth: 205
-                            }
-
-                            Switch {
-                                id: dualAbsoluteSwitchWide
-                                visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
-                                checked: dualDisplay.targetActive
-                                enabled: alsDimmer.connected && dualDisplay.hardwareAvailable &&
-                                         !dualDisplay.loadingSavedState && !dualDisplay.busy
-
-                                indicator: Rectangle {
-                                    implicitWidth: 60
-                                    implicitHeight: 32
-                                    x: dualAbsoluteSwitchWide.leftPadding
-                                    y: parent.height / 2 - height / 2
-                                    radius: 16
-                                    color: dualAbsoluteSwitchWide.checked ? "#27ae60" : "#2c3e50"
-                                    opacity: dualAbsoluteSwitchWide.enabled ? 1.0 : 0.5
-
-                                    Rectangle {
-                                        x: dualAbsoluteSwitchWide.checked ? parent.width - width - 2 : 2
-                                        y: 2
-                                        width: 28
-                                        height: 28
-                                        radius: 14
-                                        color: "#ffffff"
-
-                                        Behavior on x {
-                                            NumberAnimation { duration: 150 }
-                                        }
-                                    }
-                                }
-
-                                onClicked: {
-                                    setDualDisplayAbsoluteMode(checked);
-                                }
-                            }
-
-                            Item { Layout.fillWidth: true }
-
-                            Text {
-                                text: "ALS: " + (alsDimmer.connected ? alsDimmer.luxValue.toFixed(1) + " lux" : "---")
-                                font.pixelSize: 22
-                                color: "#888888"
-                            }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 15
-
-                            Item { Layout.preferredWidth: 185 }
-
-                            Text {
-                                text: absoluteNitsText()
-                                font.pixelSize: 22
-                                font.bold: true
-                                color: absoluteNitsColor()
-                                Layout.preferredWidth: 190
-                                elide: Text.ElideRight
-                                maximumLineCount: 1
-                            }
-
-                            Item { Layout.fillWidth: true }
-
-                            Text {
-                                text: "Zone: " + (alsDimmer.connected ? alsDimmer.zone : "---")
-                                font.pixelSize: 22
-                                color: "#888888"
-                            }
-                        }
+            Rectangle {
+                id: backButton
+                width: 76 * s; height: width; radius: width / 2
+                anchors.verticalCenter: parent.verticalCenter
+                color: backArea.pressed ? t.cardPressed : t.card
+                border.color: t.border
+                Canvas {
+                    anchors.fill: parent
+                    onPaint: {
+                        var ctx = getContext("2d")
+                        ctx.reset()
+                        ctx.strokeStyle = t.text
+                        ctx.lineWidth = Math.max(2, width * 0.06)
+                        ctx.lineCap = "round"; ctx.lineJoin = "round"
+                        ctx.beginPath()
+                        ctx.moveTo(width * 0.56, height * 0.32)
+                        ctx.lineTo(width * 0.40, height * 0.5)
+                        ctx.lineTo(width * 0.56, height * 0.68)
+                        ctx.stroke()
                     }
                 }
-
-                // Temperature Section
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    Layout.minimumHeight: pmic.available ? 130 : 150
-                    color: "#0f3460"
-                    radius: 10
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 15
-                        spacing: 8
-
-                        Text {
-                            text: "Temperature Sensors"
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 15
-
-                            Text {
-                                text: "Sensor 1:"
-                                font.pixelSize: 24
-                                color: "#888888"
-                                Layout.preferredWidth: 110
-                            }
-
-                            Text {
-                                text: tempSensors.sensor1Available ? tempSensors.sensor1Temp.toFixed(1) + " °C" : "N/A"
-                                font.pixelSize: 24
-                                font.bold: true
-                                color: tempSensors.sensor1Available && tempSensors.sensor1Healthy ? "#ffffff" : "#666666"
-                                Layout.preferredWidth: 100
-                            }
-
-                            Rectangle {
-                                width: 14
-                                height: 14
-                                radius: 7
-                                color: !tempSensors.sensor1Available ? "#555555" :
-                                       tempSensors.sensor1Healthy ? "#27ae60" : "#e74c3c"
-
-                                ToolTip.visible: sensor1MouseAreaWide.containsMouse
-                                ToolTip.text: !tempSensors.sensor1Available ? "Sensor not detected" :
-                                              tempSensors.sensor1Healthy ? "Sensor healthy" : "Sensor error"
-
-                                MouseArea {
-                                    id: sensor1MouseAreaWide
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                }
-                            }
-
-                            Text {
-                                text: tempSensors.sensor1Id ? "(" + tempSensors.sensor1Id + ")" : ""
-                                font.pixelSize: 16
-                                color: "#555555"
-                                visible: tempSensors.sensor1Available
-                            }
-
-                            Item { Layout.fillWidth: true }
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 15
-
-                            Text {
-                                text: "Sensor 2:"
-                                font.pixelSize: 24
-                                color: "#888888"
-                                Layout.preferredWidth: 110
-                            }
-
-                            Text {
-                                text: tempSensors.sensor2Available ? tempSensors.sensor2Temp.toFixed(1) + " °C" : "N/A"
-                                font.pixelSize: 24
-                                font.bold: true
-                                color: tempSensors.sensor2Available && tempSensors.sensor2Healthy ? "#ffffff" : "#666666"
-                                Layout.preferredWidth: 100
-                            }
-
-                            Rectangle {
-                                width: 14
-                                height: 14
-                                radius: 7
-                                color: !tempSensors.sensor2Available ? "#555555" :
-                                       tempSensors.sensor2Healthy ? "#27ae60" : "#e74c3c"
-
-                                ToolTip.visible: sensor2MouseAreaWide.containsMouse
-                                ToolTip.text: !tempSensors.sensor2Available ? "Sensor not detected" :
-                                              tempSensors.sensor2Healthy ? "Sensor healthy" : "Sensor error"
-
-                                MouseArea {
-                                    id: sensor2MouseAreaWide
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                }
-                            }
-
-                            Text {
-                                text: tempSensors.sensor2Id ? "(" + tempSensors.sensor2Id + ")" : ""
-                                font.pixelSize: 16
-                                color: "#555555"
-                                visible: tempSensors.sensor2Available
-                            }
-
-                            Item { Layout.fillWidth: true }
-                        }
-
-                        // Backlight Temperature Row (MCU 0x66)
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 15
-                            visible: mcu.available
-
-                            Text {
-                                text: "Backlight:"
-                                font.pixelSize: 24
-                                color: "#888888"
-                                Layout.preferredWidth: 110
-                            }
-
-                            Text {
-                                text: mcu.backlightTempValid ? mcu.backlightTemp.toFixed(1) + " °C" : "N/A"
-                                font.pixelSize: 24
-                                font.bold: true
-                                color: mcu.backlightTempValid ? "#ffffff" : "#666666"
-                                Layout.preferredWidth: 100
-                            }
-
-                            Rectangle {
-                                width: 14
-                                height: 14
-                                radius: 7
-                                color: mcu.backlightTempValid ? "#27ae60" : "#555555"
-
-                                ToolTip.visible: blTempMouseAreaWide.containsMouse
-                                ToolTip.text: mcu.backlightTempValid ? "MCU backlight NTC" : "MCU not available"
-
-                                MouseArea {
-                                    id: blTempMouseAreaWide
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                }
-                            }
-
-                            Text {
-                                text: "(MCU NTC)"
-                                font.pixelSize: 16
-                                color: "#555555"
-                            }
-
-                            Item { Layout.fillWidth: true }
-                        }
-                    }
-                }
-
-                // RTQ6749 PMIC Section (visible only when IOC MCU reachable)
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 120
-                    visible: pmic.available
-                    color: "#0f3460"
-                    radius: 10
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 6
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 10
-
-                            Text {
-                                text: "RTQ6749 PMIC"
-                                font.pixelSize: 20
-                                font.bold: true
-                                color: "#ffffff"
-                            }
-
-                            Item { Layout.fillWidth: true }
-
-                            Rectangle {
-                                width: 12
-                                height: 12
-                                radius: 6
-                                color: pmic.statusOk ? "#27ae60" : "#e74c3c"
-                            }
-
-                            Text {
-                                text: pmic.faultSummary
-                                font.pixelSize: 16
-                                font.bold: true
-                                color: pmic.statusOk ? "#27ae60" : "#e74c3c"
-                            }
-                        }
-
-                        // Channels row
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            Text { text: "Channels:"; font.pixelSize: 16; color: "#888888"; Layout.preferredWidth: 110 }
-
-                            Repeater {
-                                model: [
-                                    { label: "PAVDD", on: pmic.chPavdd, fault: pmic.faultPavdd },
-                                    { label: "NAVDD", on: pmic.chNavdd, fault: pmic.faultNavdd },
-                                    { label: "VGH",   on: pmic.chVgh,   fault: pmic.faultVgh },
-                                    { label: "VGL",   on: pmic.chVgl,   fault: pmic.faultVgl },
-                                    { label: "VCOM",  on: pmic.chVcom,  fault: false },
-                                    { label: "RESET", on: pmic.chReset, fault: false }
-                                ]
-                                delegate: Rectangle {
-                                    implicitWidth: chText.implicitWidth + 14
-                                    implicitHeight: 24
-                                    radius: 4
-                                    color: modelData.fault ? "#5c1a1a"
-                                           : modelData.on ? "#1a5c3a" : "#1a2a3a"
-                                    border.color: modelData.fault ? "#e74c3c"
-                                                  : modelData.on ? "#27ae60" : "#666666"
-                                    border.width: 1
-                                    Text {
-                                        id: chText
-                                        anchors.centerIn: parent
-                                        text: modelData.label
-                                        font.pixelSize: 14
-                                        font.bold: true
-                                        color: (modelData.fault || modelData.on) ? "#ffffff" : "#888888"
-                                    }
-                                }
-                            }
-
-                            Item { Layout.fillWidth: true }
-                        }
-
-                        // Protections row
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
-
-                            Text { text: "Protections:"; font.pixelSize: 16; color: "#888888"; Layout.preferredWidth: 110 }
-
-                            Repeater {
-                                model: [
-                                    { label: "OTP", on: pmic.protOtp },
-                                    { label: "UVP", on: pmic.protUvp },
-                                    { label: "SCP", on: pmic.protScp }
-                                ]
-                                delegate: Rectangle {
-                                    implicitWidth: prText.implicitWidth + 14
-                                    implicitHeight: 24
-                                    radius: 4
-                                    color: modelData.on ? "#1a5c3a" : "#3a3a1a"
-                                    border.color: modelData.on ? "#27ae60" : "#888800"
-                                    border.width: 1
-                                    Text {
-                                        id: prText
-                                        anchors.centerIn: parent
-                                        text: modelData.label
-                                        font.pixelSize: 14
-                                        font.bold: true
-                                        color: modelData.on ? "#ffffff" : "#cccc88"
-                                    }
-                                }
-                            }
-
-                            Item { Layout.fillWidth: true }
-                        }
+                MouseArea {
+                    id: backArea
+                    anchors.fill: parent
+                    // Quit on press: a release event is not guaranteed on every touch panel
+                    onPressed: {
+                        console.log("Back pressed - quitting");
+                        Qt.quit();
                     }
                 }
             }
-
-            // Right column: FPGA + TDDI
-            ColumnLayout {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                spacing: 15
-
-                // FPGA Info Section
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 160
-                    color: "#0f3460"
-                    radius: 10
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 5
-
-                        RowLayout {
-                            Layout.fillWidth: true
-
-                            Text {
-                                text: "FPGA Information"
-                                font.pixelSize: 20
-                                font.bold: true
-                                color: "#ffffff"
-                            }
-
-                            Item { Layout.fillWidth: true }
-
-                            Rectangle {
-                                width: 12
-                                height: 12
-                                radius: 6
-                                color: fpga.connected ? "#27ae60" : "#e74c3c"
-
-                                ToolTip.visible: fpgaStatusMouseAreaWide.containsMouse
-                                ToolTip.text: fpga.connected ? "FPGA I2C connected" : "FPGA I2C disconnected"
-
-                                MouseArea {
-                                    id: fpgaStatusMouseAreaWide
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: fpga.refresh()
-                                }
-                            }
-                        }
-
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: 2
-                            columnSpacing: 15
-                            rowSpacing: 3
-
-                            Text { text: "Firmware Version:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.firmwareVersion : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-
-                            Text { text: "Build Date:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: !fpga.connected ? "N/A" : (fpga.buildTimeValid ? fpga.buildDateTime : fpga.buildDate); font.pixelSize: 18; color: "#ffffff" }
-
-                            Text { text: "Firmware ID:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.firmwareId : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-
-                            Text { text: "Board Type:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.boardType : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-
-                            Text { text: "Display:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: fpga.connected ? fpga.displaySize + " " + fpga.displayResolution : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-                        }
-                    }
+            Column {
+                anchors.left: backButton.right; anchors.leftMargin: 28 * s
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 4 * s
+                Text {
+                    text: "Display Settings"
+                    color: t.text
+                    font.family: t.font; font.pixelSize: 36 * s; font.weight: Font.Bold
                 }
-
-                // FPGA Settings Section (compact for wide layout)
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 75
-                    color: "#0f3460"
-                    radius: 10
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 8
-
-                        Text {
-                            text: "FPGA:"
-                            font.pixelSize: 16
-                            font.bold: true
-                            color: "#ffffff"
-                        }
-
-                        Text {
-                            text: "Privacy"
-                            font.pixelSize: 14
-                            color: "#666666"
-                        }
-                        Switch {
-                            checked: false
-                            enabled: false
-                            scale: 0.7
-                        }
-
-                        Text {
-                            text: "Dimming"
-                            font.pixelSize: 14
-                            color: fpga.localDimmingSupported ? "#cccccc" : "#666666"
-                        }
-                        Switch {
-                            id: localDimmingSwitchWide
-                            enabled: fpga.connected && fpga.localDimmingSupported
-                            scale: 0.7
-                            onClicked: fpga.setLocalDimming(checked)
-
-                            Binding {
-                                target: localDimmingSwitchWide
-                                property: "checked"
-                                value: fpga.localDimmingEnabled
-                            }
-                        }
-
-                        Text {
-                            text: "PixelComp"
-                            font.pixelSize: 14
-                            color: (fpga.pixelCompSupported && fpga.localDimmingEnabled) ? "#cccccc" : "#666666"
-                        }
-                        Switch {
-                            id: pixelCompSwitchWide
-                            // Pixel compensation only meaningful while local dimming is on
-                            enabled: fpga.connected && fpga.pixelCompSupported && fpga.localDimmingEnabled
-                            scale: 0.7
-                            onClicked: fpga.setPixelCompensation(checked)
-
-                            Binding {
-                                target: pixelCompSwitchWide
-                                property: "checked"
-                                value: fpga.pixelCompEnabled
-                            }
-                        }
-
-                        Text {
-                            text: "VisionBoost"
-                            font.pixelSize: 14
-                            color: "#666666"
-                        }
-                        Switch {
-                            checked: false
-                            enabled: false
-                            scale: 0.7
-                        }
-
-                        Item { Layout.fillWidth: true }
-                    }
+                Text {
+                    text: "Home  ›  Display Settings"
+                    color: t.sub
+                    font.family: t.font; font.pixelSize: 19 * s
                 }
-
-                // Version Info Row (compact for wide layout)
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: (mcu.available || hh983.available)
-                                            ? Math.max(120, Screen.height * 0.17)
-                                            : Math.max(65, Screen.height * 0.09)
-                    color: "#0f3460"
-                    radius: 8
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 12
-                        anchors.topMargin: 6
-                        anchors.bottomMargin: 6
-                        spacing: 6
-
-                        // Line 1: OS + App
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: Screen.width * 0.01
-
-                            Text { text: "OS:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
-                            Text { text: osVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
-                            Text { text: "(" + osBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
-
-                            Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 4; Layout.bottomMargin: 4; color: "#333333" }
-
-                            Text { text: "App:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888" }
-                            Text { text: swVersion; font.pixelSize: Math.max(16, Screen.height * 0.024); color: "#ffffff" }
-                            Text { text: "(" + swBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666" }
-
-                            Item { Layout.fillWidth: true }
-                        }
-
-                        // Line 2: IOC + HH983 (only visible if any MCU is detected)
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: Screen.width * 0.01
-                            visible: mcu.available || hh983.available
-
-                            Text { text: "IOC:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888"; visible: mcu.available }
-                            Text { text: mcu.firmwareVersion + (mcu.activeSlot !== "" ? "/" + mcu.activeSlot : ""); font.pixelSize: Math.max(16, Screen.height * 0.024); color: mcu.versionAlert ? "#e74c3c" : "#ffffff"; visible: mcu.available
-                                   ToolTip.visible: mcu.versionAlert && hoverIocA.hovered; ToolTip.text: mcu.versionAlertReason
-                                   HoverHandler { id: hoverIocA } }
-                            Text { text: "(" + mcu.buildDateTime.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: mcu.available
-                                   ToolTip.visible: hoverDateIocA.hovered; ToolTip.text: mcu.buildDateTime
-                                   HoverHandler { id: hoverDateIocA } }
-                            Text { text: mcu.shortSerial; font.pixelSize: Math.max(11, Screen.height * 0.0165); color: "#5dade2"
-                                   visible: mcu.available && mcu.shortSerial !== "" }
-
-                            Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 4; Layout.bottomMargin: 4; color: "#333333"; visible: mcu.available && hh983.available }
-
-                            Text { text: "HH983:"; font.pixelSize: Math.max(16, Screen.height * 0.024); font.bold: true; color: "#888888"; visible: hh983.available }
-                            Text { text: hh983.firmwareVersion + (hh983.activeSlot !== "" ? "/" + hh983.activeSlot : ""); font.pixelSize: Math.max(16, Screen.height * 0.024); color: hh983.versionAlert ? "#e74c3c" : "#ffffff"; visible: hh983.available
-                                   ToolTip.visible: hh983.versionAlert && hoverHhA.hovered; ToolTip.text: hh983.versionAlertReason
-                                   HoverHandler { id: hoverHhA } }
-                            Text { text: "(" + hh983.buildDateTime.substring(0, 10) + ")"; font.pixelSize: Math.max(13, Screen.height * 0.02); color: "#666666"; visible: hh983.available
-                                   ToolTip.visible: hoverDateHhA.hovered; ToolTip.text: hh983.buildDateTime
-                                   HoverHandler { id: hoverDateHhA } }
-                            Text { text: hh983.shortSerial; font.pixelSize: Math.max(11, Screen.height * 0.0165); color: "#5dade2"
-                                   visible: hh983.available && hh983.shortSerial !== "" }
-
-                            Item { Layout.fillWidth: true }
-                        }
-                    }
+            }
+            Row {
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                spacing: 14 * s
+                Pill {
+                    dot: true
+                    label: alsDimmer.connected ? "Dimming service" : "Dimming service offline"
+                    tint: alsDimmer.connected ? t.ok : t.bad
+                    onClicked: if (!alsDimmer.connected) alsDimmer.reconnect()
                 }
-
-                // TDDI Info Section
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true  // Take remaining space
-                    color: "#0f3460"
-                    radius: 10
-
-                    ColumnLayout {
-                        anchors.fill: parent
-                        anchors.margins: 12
-                        spacing: 5
-
-                        RowLayout {
-                            Layout.fillWidth: true
-
-                            Text {
-                                text: "Touch Controller (TDDI)"
-                                font.pixelSize: 20
-                                font.bold: true
-                                color: "#ffffff"
-                            }
-
-                            Item { Layout.fillWidth: true }
-
-                            Rectangle {
-                                width: 12
-                                height: 12
-                                radius: 6
-                                color: tddi.available ? "#27ae60" : "#e74c3c"
-
-                                ToolTip.visible: tddiStatusMouseAreaWide.containsMouse
-                                ToolTip.text: tddi.available ? "TDDI info available" : "TDDI info not available"
-
-                                MouseArea {
-                                    id: tddiStatusMouseAreaWide
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    onClicked: tddi.refresh()
-                                }
-                            }
-                        }
-
-                        GridLayout {
-                            Layout.fillWidth: true
-                            columns: 2
-                            columnSpacing: 15
-                            rowSpacing: 3
-
-                            Text { text: "IC Type:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: tddi.available && tddi.icType ? tddi.icType : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-
-                            Text { text: "FW Version:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: tddi.available && tddi.fwVersion ? tddi.fwVersion : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-
-                            Text { text: "Display Config:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: tddi.available && tddi.displayConfig ? tddi.displayConfig : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-
-                            Text { text: "Touch Config:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: tddi.available && tddi.touchConfig ? tddi.touchConfig : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-
-                            Text { text: "Customer:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: tddi.available && tddi.customer ? tddi.customer : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-
-                            Text { text: "Project:"; font.pixelSize: 18; color: "#888888" }
-                            Text { text: tddi.available && tddi.project ? tddi.project : "N/A"; font.pixelSize: 18; color: "#ffffff" }
-                        }
-                    }
-                }
+                Pill { label: "v" + appVersion; tint: t.sub }
             }
         }
 
-        // Single-column layout for normal screens (original layout)
-        ColumnLayout {
-            anchors.fill: parent
-            spacing: 15
-            visible: !wideScreen
+        // SMPTE 75% bars, as on the home screen
+        Row {
+            id: strip
+            anchors.top: header.bottom; anchors.topMargin: 12 * s
+            width: parent.width
+            Repeater {
+                model: ["#C0C0C0", "#C0C000", "#00C0C0", "#00C000", "#C000C0", "#C00000", "#0000C0"]
+                Rectangle { width: strip.width / 7; height: 6 * s; color: modelData }
+            }
+        }
 
-            // Brightness Section
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 210
-                color: "#0f3460"
-                radius: 10
+        // ---- cards -----------------------------------------------------------
+        Item {
+            id: board
+            anchors.top: strip.bottom; anchors.topMargin: 20 * s
+            anchors.left: parent.left; anchors.right: parent.right
+            anchors.bottom: parent.bottom
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 15
-                    spacing: 10
+            readonly property real gap: 18 * s
+            // wide: three columns; tall: two
+            readonly property real w0: wideScreen ? (width - 2 * gap) * 0.335 : (width - gap) * 0.53
+            readonly property real w1: wideScreen ? (width - 2 * gap) * 0.35 : width - gap - w0
+            readonly property real w2: wideScreen ? width - 2 * gap - w0 - w1 : 0
+            readonly property real x1: w0 + gap
+            readonly property real x2: w0 + w1 + 2 * gap
 
-                    RowLayout {
-                        Layout.fillWidth: true
+            // ---- Brightness ----------------------------------------------------
+            Card {
+                id: brightnessCard
+                order: 0
+                title: "Brightness"
+                icon: "brightness"
+                tint: t.warn
+                centerBody: true
+                x: 0; y: 0
+                width: board.w0
+                height: board.height - healthCard.height - board.gap
+                        - (wideScreen ? 0 : fpgaCard.height + board.gap)
 
-                        Text {
-                            text: "Brightness Control"
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
-                        }
+                headerRight: [
+                    Pill {
+                        label: alsDimmer.mode === "auto" ? "Auto" :
+                               alsDimmer.mode === "manual_temporary" ? "Temporary" : "Manual"
+                        tint: alsDimmer.mode === "auto" ? t.ok :
+                              alsDimmer.mode === "manual_temporary" ? t.warn : t.accent
+                    }
+                ]
 
-                        Item { Layout.fillWidth: true }
+                // Readout
+                Row {
+                    spacing: 20 * s
+                    Text {
+                        text: brightnessSliderText(brightnessSlider.value)
+                        color: t.text
+                        font.family: t.font; font.pixelSize: 56 * s; font.weight: Font.Bold
+                    }
+                    Text {
+                        anchors.baseline: parent.children[0].baseline
+                        text: absoluteNitsText()
+                        color: absoluteNitsColor()
+                        font.family: t.font; font.pixelSize: 24 * s; font.weight: Font.DemiBold
+                    }
+                }
 
-                        // Mode indicator
+                Slider {
+                    id: brightnessSlider
+                    width: parent.width
+                    height: 48 * s  // Touch-friendly height
+                    from: brightnessSliderFrom()
+                    to: brightnessSliderTo()
+                    value: 50  // Initial default, will be set on connect
+                    enabled: !dualDisplay.loadingSavedState && !dualDisplay.busy &&
+                             (dualDisplay.targetActive || alsDimmer.connected)
+                    stepSize: brightnessSliderStep()
+                    padding: 0
+                    leftPadding: 24 * s; rightPadding: 24 * s
+
+                    Binding {
+                        target: brightnessSlider
+                        property: "value"
+                        value: dualDisplay.currentNits
+                        when: dualDisplay.active && !userDraggingBrightness
+                    }
+
+                    // Only sync from controller in auto mode
+                    // In manual mode, slider stays where user put it (no binding)
+                    Binding {
+                        target: brightnessSlider
+                        property: "value"
+                        value: alsDimmer.brightness
+                        when: !dualDisplay.targetActive && !userDraggingBrightness && alsDimmer.mode === "auto"
+                    }
+
+                    background: Rectangle {
+                        x: brightnessSlider.leftPadding
+                        y: brightnessSlider.topPadding + brightnessSlider.availableHeight / 2 - height / 2
+                        width: brightnessSlider.availableWidth
+                        height: 14 * s
+                        radius: height / 2
+                        color: "#2A3448"
+
                         Rectangle {
-                            width: modeText.width + 20
-                            height: 32
-                            radius: 16
-                            color: alsDimmer.mode === "auto" ? "#27ae60" :
-                                   alsDimmer.mode === "manual_temporary" ? "#f39c12" : "#3498db"
-
-                            Text {
-                                id: modeText
-                                anchors.centerIn: parent
-                                text: alsDimmer.mode === "auto" ? "AUTO" :
-                                      alsDimmer.mode === "manual_temporary" ? "TEMP" : "MANUAL"
-                                font.pixelSize: 16
-                                font.bold: true
-                                color: "#ffffff"
+                            width: Math.max(parent.height, brightnessSlider.visualPosition * parent.width)
+                            height: parent.height
+                            radius: height / 2
+                            opacity: brightnessSlider.enabled ? 1.0 : 0.35
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0.0; color: "#B45309" }
+                                GradientStop { position: 1.0; color: t.warn }
                             }
                         }
                     }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 15
+                    handle: Rectangle {
+                        x: brightnessSlider.leftPadding + brightnessSlider.visualPosition * (brightnessSlider.availableWidth) - width / 2
+                        y: brightnessSlider.topPadding + brightnessSlider.availableHeight / 2 - height / 2
+                        width: 44 * s
+                        height: width
+                        radius: width / 2
+                        color: "#FFFFFF"
+                        border.color: brightnessSlider.enabled ? t.warn : t.dim
+                        border.width: 4 * s
+                        scale: brightnessSlider.pressed ? 1.12 : 1.0
+                        Behavior on scale { NumberAnimation { duration: 120 } }
+                    }
 
-                        Text {
-                            text: "Brightness:"
-                            font.pixelSize: 22
-                            color: "#cccccc"
-                            Layout.preferredWidth: 140
-                        }
-
-                        Slider {
-                            id: brightnessSlider
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: 48  // Touch-friendly height
-                            from: brightnessSliderFrom()
-                            to: brightnessSliderTo()
-                            value: 50  // Initial default, will be set on connect
-                            enabled: !dualDisplay.loadingSavedState && !dualDisplay.busy &&
-                                     (dualDisplay.targetActive || alsDimmer.connected)
-                            stepSize: brightnessSliderStep()
-
-                            Binding {
-                                target: brightnessSlider
-                                property: "value"
-                                value: dualDisplay.currentNits
-                                when: dualDisplay.active && !userDraggingBrightness
+                    onPressedChanged: {
+                        userDraggingBrightness = pressed;
+                        if (!pressed) {
+                            // Final update on release
+                            setBrightnessFromSlider(value);
+                            // Start cooldown to ignore brightness feedback briefly
+                            if (!dualDisplay.targetActive) {
+                                brightnessSetCooldown = true;
+                                brightnessCooldownTimer.restart();
                             }
-
-                            // Only sync from controller in auto mode
-                            // In manual mode, slider stays where user put it (no binding)
-                            Binding {
-                                target: brightnessSlider
-                                property: "value"
-                                value: alsDimmer.brightness
-                                when: !dualDisplay.targetActive && !userDraggingBrightness && alsDimmer.mode === "auto"
-                            }
-
-                            background: Rectangle {
-                                x: brightnessSlider.leftPadding
-                                y: brightnessSlider.topPadding + brightnessSlider.availableHeight / 2 - height / 2
-                                width: brightnessSlider.availableWidth
-                                height: 12
-                                radius: 6
-                                color: "#2c3e50"
-
-                                Rectangle {
-                                    width: brightnessSlider.visualPosition * parent.width
-                                    height: parent.height
-                                    color: brightnessSlider.enabled ? "#3498db" : "#555555"
-                                    radius: 6
-                                }
-                            }
-
-                            handle: Rectangle {
-                                x: brightnessSlider.leftPadding + brightnessSlider.visualPosition * (brightnessSlider.availableWidth - width)
-                                y: brightnessSlider.topPadding + brightnessSlider.availableHeight / 2 - height / 2
-                                width: 40
-                                height: 40
-                                radius: 20
-                                color: brightnessSlider.pressed ? "#2980b9" : (brightnessSlider.enabled ? "#3498db" : "#555555")
-                                border.color: "#ffffff"
-                                border.width: 3
-                            }
-
-                            onPressedChanged: {
-                                userDraggingBrightness = pressed;
-                                if (!pressed) {
-                                    // Final update on release
-                                    setBrightnessFromSlider(value);
-                                    // Start cooldown to ignore brightness feedback briefly
-                                    if (!dualDisplay.targetActive) {
-                                        brightnessSetCooldown = true;
-                                        brightnessCooldownTimer.restart();
-                                    }
-                                }
-                            }
-
-                            onMoved: {
-                                // Responsive updates while dragging
-                                setBrightnessFromSlider(value);
-                            }
-                        }
-
-                        Text {
-                            text: brightnessSliderText(brightnessSlider.value)
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
-                            Layout.preferredWidth: dualDisplay.targetActive ? 110 : 50
                         }
                     }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 15
+                    onMoved: {
+                        // Responsive updates while dragging
+                        setBrightnessFromSlider(value);
+                    }
+                }
 
-                        Text {
-                            text: "Adaptive Mode:"
-                            font.pixelSize: 22
-                            color: "#cccccc"
-                            Layout.preferredWidth: 170
-                        }
+                // Modes and ambient light
+                Item {
+                    width: parent.width
+                    height: 48 * s
 
-                        Switch {
+                    Row {
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 14 * s
+
+                        ThemedSwitch {
                             id: adaptiveSwitch
+                            anchors.verticalCenter: parent.verticalCenter
                             checked: userPreferAdaptive
                             enabled: alsDimmer.connected && !dualDisplay.loadingSavedState &&
                                      !dualDisplay.targetActive && !dualDisplay.busy
-
-                            indicator: Rectangle {
-                                implicitWidth: 60
-                                implicitHeight: 32
-                                x: adaptiveSwitch.leftPadding
-                                y: parent.height / 2 - height / 2
-                                radius: 16
-                                color: adaptiveSwitch.checked ? "#27ae60" : "#2c3e50"
-                                opacity: adaptiveSwitch.enabled ? 1.0 : 0.5
-
-                                Rectangle {
-                                    x: adaptiveSwitch.checked ? parent.width - width - 2 : 2
-                                    y: 2
-                                    width: 28
-                                    height: 28
-                                    radius: 14
-                                    color: "#ffffff"
-
-                                    Behavior on x {
-                                        NumberAnimation { duration: 150 }
-                                    }
-                                }
-                            }
-
                             onClicked: {
                                 userPreferAdaptive = checked;
                                 alsDimmer.setAdaptiveMode(checked);
                             }
                         }
-
                         Text {
-                            text: "Dual Display Mode:"
-                            visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
-                            font.pixelSize: 20
-                            color: "#cccccc"
-                            Layout.leftMargin: 15
-                            Layout.preferredWidth: 205
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Adaptive"
+                            color: adaptiveSwitch.enabled ? t.text : t.sub
+                            font.family: t.font; font.pixelSize: 19 * s; font.weight: Font.Medium
                         }
 
-                        Switch {
+                        Item { width: 10 * s; height: 1; visible: dualAbsoluteSwitch.visible }
+
+                        ThemedSwitch {
                             id: dualAbsoluteSwitch
+                            anchors.verticalCenter: parent.verticalCenter
                             visible: dualDisplay.hardwareAvailable || dualDisplay.targetActive
                             checked: dualDisplay.targetActive
+                            onColor: t.info
                             enabled: alsDimmer.connected && dualDisplay.hardwareAvailable &&
                                      !dualDisplay.loadingSavedState && !dualDisplay.busy
-
-                            indicator: Rectangle {
-                                implicitWidth: 60
-                                implicitHeight: 32
-                                x: dualAbsoluteSwitch.leftPadding
-                                y: parent.height / 2 - height / 2
-                                radius: 16
-                                color: dualAbsoluteSwitch.checked ? "#27ae60" : "#2c3e50"
-                                opacity: dualAbsoluteSwitch.enabled ? 1.0 : 0.5
-
-                                Rectangle {
-                                    x: dualAbsoluteSwitch.checked ? parent.width - width - 2 : 2
-                                    y: 2
-                                    width: 28
-                                    height: 28
-                                    radius: 14
-                                    color: "#ffffff"
-
-                                    Behavior on x {
-                                        NumberAnimation { duration: 150 }
-                                    }
-                                }
-                            }
-
                             onClicked: {
                                 setDualDisplayAbsoluteMode(checked);
                             }
                         }
-
-                        Item { Layout.fillWidth: true }
-
                         Text {
-                            text: "ALS: " + (alsDimmer.connected ? alsDimmer.luxValue.toFixed(1) + " lux" : "---")
-                            font.pixelSize: 22
-                            color: "#888888"
+                            anchors.verticalCenter: parent.verticalCenter
+                            visible: dualAbsoluteSwitch.visible
+                            text: "Dual display"
+                            color: dualAbsoluteSwitch.enabled ? t.text : t.sub
+                            font.family: t.font; font.pixelSize: 19 * s; font.weight: Font.Medium
                         }
                     }
 
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 15
-
-                        Item { Layout.preferredWidth: 185 }
-
-                        Text {
-                            text: absoluteNitsText()
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: absoluteNitsColor()
-                            Layout.preferredWidth: 190
-                            elide: Text.ElideRight
-                            maximumLineCount: 1
+                    Row {
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 10 * s
+                        Chip {
+                            label: alsDimmer.connected ? alsDimmer.luxValue.toFixed(1) + " lux" : "— lux"
+                            tint: t.warn
+                            lit: alsDimmer.connected
                         }
-
-                        Item { Layout.fillWidth: true }
-
-                        Text {
-                            text: "Zone: " + (alsDimmer.connected ? alsDimmer.zone : "---")
-                            font.pixelSize: 22
-                            color: "#888888"
+                        Chip {
+                            label: alsDimmer.connected ? alsDimmer.zone : "—"
+                            tint: t.info
+                            lit: alsDimmer.connected
                         }
                     }
                 }
             }
 
-            // Temperature Section
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: mcu.available ? 190 : 150
-                color: "#0f3460"
-                radius: 10
+            // ---- Temperatures and panel power --------------------------------
+            Card {
+                id: healthCard
+                order: 1
+                title: "Temperatures"
+                icon: "health"
+                tint: "#FB923C"
+                x: 0
+                y: brightnessCard.height + board.gap
+                width: board.w0
+                height: implicitHeight
 
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 15
-                    spacing: 8
-
-                    Text {
-                        text: "Temperature Sensors"
-                        font.pixelSize: 22
-                        font.bold: true
-                        color: "#ffffff"
-                    }
-
-                    // Sensor 1 Row
-                    RowLayout {
+                RowLayout {
+                    width: parent.width
+                    spacing: 12 * s
+                    SensorTile {
                         Layout.fillWidth: true
-                        spacing: 15
-
-                        Text {
-                            text: "Sensor 1:"
-                            font.pixelSize: 24
-                            color: "#888888"
-                            Layout.preferredWidth: 110
-                        }
-
-                        Text {
-                            text: tempSensors.sensor1Available ? tempSensors.sensor1Temp.toFixed(1) + " °C" : "N/A"
-                            font.pixelSize: 24
-                            font.bold: true
-                            color: tempSensors.sensor1Available && tempSensors.sensor1Healthy ? "#ffffff" : "#666666"
-                            Layout.preferredWidth: 100
-                        }
-
-                        // Sensor 1 Health LED
-                        Rectangle {
-                            width: 14
-                            height: 14
-                            radius: 7
-                            color: !tempSensors.sensor1Available ? "#555555" :
-                                   tempSensors.sensor1Healthy ? "#27ae60" : "#e74c3c"
-
-                            ToolTip.visible: sensor1MouseArea.containsMouse
-                            ToolTip.text: !tempSensors.sensor1Available ? "Sensor not detected" :
-                                          tempSensors.sensor1Healthy ? "Sensor healthy" : "Sensor error (CRC fail or comm issue)"
-
-                            MouseArea {
-                                id: sensor1MouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                            }
-                        }
-
-                        Text {
-                            text: tempSensors.sensor1Id ? "(" + tempSensors.sensor1Id + ")" : ""
-                            font.pixelSize: 16
-                            color: "#555555"
-                            visible: tempSensors.sensor1Available
-                        }
-
-                        Item { Layout.fillWidth: true }
+                        label: "Sensor 1"
+                        valid: tempSensors.sensor1Available
+                        value: tempSensors.sensor1Available ? tempSensors.sensor1Temp.toFixed(1) + " °C" : "N/A"
+                        caption: tempSensors.sensor1Available && tempSensors.sensor1Id ? tempSensors.sensor1Id : ""
+                        tone: !tempSensors.sensor1Available ? t.dim :
+                               tempSensors.sensor1Healthy ? t.ok : t.bad
                     }
-
-                    // Sensor 2 Row
-                    RowLayout {
+                    SensorTile {
                         Layout.fillWidth: true
-                        spacing: 15
-
-                        Text {
-                            text: "Sensor 2:"
-                            font.pixelSize: 24
-                            color: "#888888"
-                            Layout.preferredWidth: 110
-                        }
-
-                        Text {
-                            text: tempSensors.sensor2Available ? tempSensors.sensor2Temp.toFixed(1) + " °C" : "N/A"
-                            font.pixelSize: 24
-                            font.bold: true
-                            color: tempSensors.sensor2Available && tempSensors.sensor2Healthy ? "#ffffff" : "#666666"
-                            Layout.preferredWidth: 100
-                        }
-
-                        // Sensor 2 Health LED
-                        Rectangle {
-                            width: 14
-                            height: 14
-                            radius: 7
-                            color: !tempSensors.sensor2Available ? "#555555" :
-                                   tempSensors.sensor2Healthy ? "#27ae60" : "#e74c3c"
-
-                            ToolTip.visible: sensor2MouseArea.containsMouse
-                            ToolTip.text: !tempSensors.sensor2Available ? "Sensor not detected" :
-                                          tempSensors.sensor2Healthy ? "Sensor healthy" : "Sensor error (CRC fail or comm issue)"
-
-                            MouseArea {
-                                id: sensor2MouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                            }
-                        }
-
-                        Text {
-                            text: tempSensors.sensor2Id ? "(" + tempSensors.sensor2Id + ")" : ""
-                            font.pixelSize: 16
-                            color: "#555555"
-                            visible: tempSensors.sensor2Available
-                        }
-
-                        Item { Layout.fillWidth: true }
+                        label: "Sensor 2"
+                        valid: tempSensors.sensor2Available
+                        value: tempSensors.sensor2Available ? tempSensors.sensor2Temp.toFixed(1) + " °C" : "N/A"
+                        caption: tempSensors.sensor2Available && tempSensors.sensor2Id ? tempSensors.sensor2Id : ""
+                        tone: !tempSensors.sensor2Available ? t.dim :
+                               tempSensors.sensor2Healthy ? t.ok : t.bad
                     }
-
-                    // Backlight Temperature Row (MCU 0x66)
-                    RowLayout {
+                    // Backlight temperature (MCU 0x66)
+                    SensorTile {
                         Layout.fillWidth: true
-                        spacing: 15
                         visible: mcu.available
-
-                        Text {
-                            text: "Backlight:"
-                            font.pixelSize: 24
-                            color: "#888888"
-                            Layout.preferredWidth: 110
-                        }
-
-                        Text {
-                            text: mcu.backlightTempValid ? mcu.backlightTemp.toFixed(1) + " °C" : "N/A"
-                            font.pixelSize: 24
-                            font.bold: true
-                            color: mcu.backlightTempValid ? "#ffffff" : "#666666"
-                            Layout.preferredWidth: 100
-                        }
-
-                        Rectangle {
-                            width: 14
-                            height: 14
-                            radius: 7
-                            color: mcu.backlightTempValid ? "#27ae60" : "#555555"
-
-                            ToolTip.visible: blTempMouseArea.containsMouse
-                            ToolTip.text: mcu.backlightTempValid ? "MCU backlight NTC" : "MCU not available"
-
-                            MouseArea {
-                                id: blTempMouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                            }
-                        }
-
-                        Text {
-                            text: "(MCU NTC)"
-                            font.pixelSize: 16
-                            color: "#555555"
-                        }
-
-                        Item { Layout.fillWidth: true }
+                        label: "Backlight"
+                        valid: mcu.backlightTempValid
+                        value: mcu.backlightTempValid ? mcu.backlightTemp.toFixed(1) + " °C" : "N/A"
+                        caption: "MCU NTC"
+                        tone: mcu.backlightTempValid ? t.ok : t.dim
                     }
                 }
-            }
 
-            // RTQ6749 PMIC Section (visible only when IOC MCU reachable)
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 140
-                visible: pmic.available
-                color: "#0f3460"
-                radius: 10
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 15
-                    spacing: 8
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-
+                // RTQ6749 PMIC (only when the IOC MCU is reachable)
+                Item {
+                    visible: pmic.available
+                    width: parent.width
+                    height: pmicFlow.height
+                    Flow {
+                        id: pmicFlow
+                        width: parent.width
+                        spacing: 6 * s
                         Text {
-                            text: "RTQ6749 PMIC"
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
+                            height: 30 * s
+                            verticalAlignment: Text.AlignVCenter
+                            text: "Panel power"
+                            color: t.sub
+                            font.family: t.font; font.pixelSize: 15 * s
                         }
-
-                        Item { Layout.fillWidth: true }
-
-                        Rectangle {
-                            width: 14
-                            height: 14
-                            radius: 7
-                            color: pmic.statusOk ? "#27ae60" : "#e74c3c"
+                        Chip {
+                            label: pmic.faultSummary
+                            tint: pmic.statusOk ? t.ok : t.bad
+                            lit: true
                         }
-
-                        Text {
-                            text: pmic.faultSummary
-                            font.pixelSize: 18
-                            font.bold: true
-                            color: pmic.statusOk ? "#27ae60" : "#e74c3c"
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        Text { text: "Channels:"; font.pixelSize: 18; color: "#888888"; Layout.preferredWidth: 130 }
-
                         Repeater {
                             model: [
                                 { label: "PAVDD", on: pmic.chPavdd, fault: pmic.faultPavdd },
@@ -1614,463 +931,200 @@ Window {
                                 { label: "VCOM",  on: pmic.chVcom,  fault: false },
                                 { label: "RESET", on: pmic.chReset, fault: false }
                             ]
-                            delegate: Rectangle {
-                                implicitWidth: chTextN.implicitWidth + 18
-                                implicitHeight: 28
-                                radius: 4
-                                color: modelData.fault ? "#5c1a1a"
-                                       : modelData.on ? "#1a5c3a" : "#1a2a3a"
-                                border.color: modelData.fault ? "#e74c3c"
-                                              : modelData.on ? "#27ae60" : "#666666"
-                                border.width: 1
-                                Text {
-                                    id: chTextN
-                                    anchors.centerIn: parent
-                                    text: modelData.label
-                                    font.pixelSize: 15
-                                    font.bold: true
-                                    color: (modelData.fault || modelData.on) ? "#ffffff" : "#888888"
-                                }
+                            delegate: Chip {
+                                label: modelData.label
+                                tint: modelData.fault ? t.bad : t.ok
+                                lit: modelData.fault || modelData.on
                             }
                         }
-
-                        Item { Layout.fillWidth: true }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        Text { text: "Protections:"; font.pixelSize: 18; color: "#888888"; Layout.preferredWidth: 130 }
-
                         Repeater {
                             model: [
                                 { label: "OTP", on: pmic.protOtp },
                                 { label: "UVP", on: pmic.protUvp },
                                 { label: "SCP", on: pmic.protScp }
                             ]
-                            delegate: Rectangle {
-                                implicitWidth: prTextN.implicitWidth + 18
-                                implicitHeight: 28
-                                radius: 4
-                                color: modelData.on ? "#1a5c3a" : "#3a3a1a"
-                                border.color: modelData.on ? "#27ae60" : "#888800"
-                                border.width: 1
-                                Text {
-                                    id: prTextN
-                                    anchors.centerIn: parent
-                                    text: modelData.label
-                                    font.pixelSize: 15
-                                    font.bold: true
-                                    color: modelData.on ? "#ffffff" : "#cccc88"
-                                }
-                            }
-                        }
-
-                        Item { Layout.fillWidth: true }
-                    }
-                }
-            }
-
-            // FPGA Info Section
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 200
-                color: "#0f3460"
-                radius: 10
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 15
-                    spacing: 8
-
-                    RowLayout {
-                        Layout.fillWidth: true
-
-                        Text {
-                            text: "FPGA Information"
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        // FPGA connection status
-                        Rectangle {
-                            width: 12
-                            height: 12
-                            radius: 6
-                            color: fpga.connected ? "#27ae60" : "#e74c3c"
-
-                            ToolTip.visible: fpgaStatusMouseArea.containsMouse
-                            ToolTip.text: fpga.connected ? "FPGA I2C connected" : "FPGA I2C disconnected"
-
-                            MouseArea {
-                                id: fpgaStatusMouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onClicked: fpga.refresh()
-                            }
-                        }
-                    }
-
-                    GridLayout {
-                        Layout.fillWidth: true
-                        columns: 4
-                        columnSpacing: 30
-                        rowSpacing: 5
-
-                        Text { text: "Firmware Version:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.firmwareVersion : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Build Date:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: !fpga.connected ? "N/A" : (fpga.buildTimeValid ? fpga.buildDateTime : fpga.buildDate); font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Firmware ID:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.firmwareId : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Board Type:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.boardType : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Display Size:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.displaySize : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Display Resolution:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: fpga.connected ? fpga.displayResolution : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-                    }
-                }
-            }
-
-            // FPGA Settings Section
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 110
-                color: "#0f3460"
-                radius: 10
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 10
-                    spacing: 5
-
-                    Text {
-                        text: "FPGA Settings"
-                        font.pixelSize: 20
-                        font.bold: true
-                        color: "#ffffff"
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 30
-
-                        RowLayout {
-                            spacing: 10
-                            Text {
-                                text: "Privacy Mode:"
-                                font.pixelSize: 20
-                                // TODO: Re-enable after testing: fpga.connected ? "#cccccc" : "#666666"
-                                color: "#666666"
-                            }
-                            Switch {
-                                id: privacySwitch
-                                // TODO: Re-enable after testing: fpga.privacyMode
-                                checked: false
-                                // TODO: Re-enable after testing: fpga.connected
-                                enabled: false
-
-                                indicator: Rectangle {
-                                    implicitWidth: 60
-                                    implicitHeight: 32
-                                    radius: 16
-                                    // TODO: Re-enable after testing: privacySwitch.checked ? "#27ae60" : "#2c3e50"
-                                    color: "#1a1a2e"
-                                    opacity: 0.5
-
-                                    Rectangle {
-                                        x: 2
-                                        y: 2
-                                        width: 28
-                                        height: 28
-                                        radius: 14
-                                        color: "#666666"
-                                    }
-                                }
-
-                                onClicked: {
-                                    // TODO: Re-enable after testing
-                                    // fpga.setPrivacyMode(checked);
-                                }
-                            }
-                            Text {
-                                text: "(Disabled)"
-                                font.pixelSize: 16
-                                color: "#666666"
-                            }
-                        }
-
-                        RowLayout {
-                            spacing: 10
-                            Text {
-                                text: "Local Dimming:"
-                                font.pixelSize: 20
-                                color: fpga.localDimmingSupported ? "#cccccc" : "#666666"
-                            }
-                            Switch {
-                                id: localDimmingSwitch
-                                enabled: fpga.connected && fpga.localDimmingSupported
-                                onClicked: fpga.setLocalDimming(checked)
-
-                                Binding {
-                                    target: localDimmingSwitch
-                                    property: "checked"
-                                    value: fpga.localDimmingEnabled
-                                }
-
-                                indicator: Rectangle {
-                                    implicitWidth: 60
-                                    implicitHeight: 32
-                                    radius: 16
-                                    color: localDimmingSwitch.checked ? "#27ae60" : "#2c3e50"
-                                    opacity: localDimmingSwitch.enabled ? 1.0 : 0.5
-
-                                    Rectangle {
-                                        x: localDimmingSwitch.checked ? parent.width - width - 2 : 2
-                                        y: 2
-                                        width: 28
-                                        height: 28
-                                        radius: 14
-                                        color: localDimmingSwitch.enabled ? "#ffffff" : "#666666"
-                                        Behavior on x { NumberAnimation { duration: 150 } }
-                                    }
-                                }
-                            }
-                            Text {
-                                text: fpga.localDimmingSupported ? "" : "(N/A)"
-                                font.pixelSize: 16
-                                color: "#666666"
-                            }
-                        }
-
-                        RowLayout {
-                            spacing: 10
-                            Text {
-                                text: "Pixel Compensation:"
-                                font.pixelSize: 20
-                                color: (fpga.pixelCompSupported && fpga.localDimmingEnabled) ? "#cccccc" : "#666666"
-                            }
-                            Switch {
-                                id: pixelCompSwitch
-                                // Pixel compensation only meaningful while local dimming is on
-                                enabled: fpga.connected && fpga.pixelCompSupported && fpga.localDimmingEnabled
-                                onClicked: fpga.setPixelCompensation(checked)
-
-                                Binding {
-                                    target: pixelCompSwitch
-                                    property: "checked"
-                                    value: fpga.pixelCompEnabled
-                                }
-
-                                indicator: Rectangle {
-                                    implicitWidth: 60
-                                    implicitHeight: 32
-                                    radius: 16
-                                    color: pixelCompSwitch.checked ? "#27ae60" : "#2c3e50"
-                                    opacity: pixelCompSwitch.enabled ? 1.0 : 0.5
-
-                                    Rectangle {
-                                        x: pixelCompSwitch.checked ? parent.width - width - 2 : 2
-                                        y: 2
-                                        width: 28
-                                        height: 28
-                                        radius: 14
-                                        color: pixelCompSwitch.enabled ? "#ffffff" : "#666666"
-                                        Behavior on x { NumberAnimation { duration: 150 } }
-                                    }
-                                }
-                            }
-                            Text {
-                                text: fpga.pixelCompSupported ? "" : "(N/A)"
-                                font.pixelSize: 16
-                                color: "#666666"
-                            }
-                        }
-
-                        RowLayout {
-                            spacing: 10
-                            Text {
-                                text: "Vision Booster:"
-                                font.pixelSize: 20
-                                color: "#666666"
-                            }
-                            Switch {
-                                id: visionBoostSwitch
-                                checked: false
-                                enabled: false
-
-                                indicator: Rectangle {
-                                    implicitWidth: 60
-                                    implicitHeight: 32
-                                    radius: 16
-                                    color: "#1a1a2e"
-                                    opacity: 0.5
-
-                                    Rectangle {
-                                        x: 2
-                                        y: 2
-                                        width: 28
-                                        height: 28
-                                        radius: 14
-                                        color: "#666666"
-                                    }
-                                }
-                            }
-                            Text {
-                                text: "(Disabled)"
-                                font.pixelSize: 16
-                                color: "#666666"
+                            delegate: Chip {
+                                label: modelData.label
+                                tint: modelData.on ? t.ok : t.warn
+                                lit: true
                             }
                         }
                     }
                 }
             }
 
-            // Version Info Row
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: Math.max(44, Screen.height * 0.04)
-                color: "#0f3460"
-                radius: 8
+            // ---- Panel features (FPGA) ---------------------------------------
+            Card {
+                id: featuresCard
+                order: 2
+                title: "Panel features"
+                icon: "features"
+                tint: "#A78BFA"
+                x: board.x1; y: 0
+                width: board.w1
+                height: implicitHeight
 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 15
-                    anchors.rightMargin: 15
-                    spacing: Screen.width * 0.012
+                GridLayout {
+                    width: parent.width
+                    columns: 2
+                    columnSpacing: 12 * s
+                    rowSpacing: 12 * s
 
-                    Text { text: "OS:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888" }
-                    Text { text: osVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff" }
-                    Text { text: "(" + osBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"
-                           ToolTip.visible: hoverOsB.hovered; ToolTip.text: osBuildDate
-                           HoverHandler { id: hoverOsB } }
-
-                    Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 8; Layout.bottomMargin: 8; color: "#333333" }
-
-                    Text { text: "App:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888" }
-                    Text { text: swVersion; font.pixelSize: Math.max(14, Screen.height * 0.02); color: "#ffffff" }
-                    Text { text: "(" + swBuildDate.substring(0, 10) + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"
-                           ToolTip.visible: hoverSwB.hovered; ToolTip.text: swBuildDate
-                           HoverHandler { id: hoverSwB } }
-
-                    Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 8; Layout.bottomMargin: 8; color: "#333333"; visible: mcu.available }
-
-                    Text { text: "IOC:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888"; visible: mcu.available }
-                    Text { text: mcu.firmwareVersion + (mcu.activeSlot !== "" ? "/" + mcu.activeSlot : ""); font.pixelSize: Math.max(14, Screen.height * 0.02); color: mcu.versionAlert ? "#e74c3c" : "#ffffff"; visible: mcu.available
-                           ToolTip.visible: mcu.versionAlert && hoverIocB.hovered; ToolTip.text: mcu.versionAlertReason
-                           HoverHandler { id: hoverIocB } }
-                    Text { text: "(" + mcu.buildDateTime.substring(0, 10) + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"; visible: mcu.available
-                           ToolTip.visible: hoverDateIocB.hovered; ToolTip.text: mcu.buildDateTime
-                           HoverHandler { id: hoverDateIocB } }
-                    Text { text: mcu.shortSerial; font.pixelSize: Math.max(11, Screen.height * 0.0135); color: "#5dade2"
-                           visible: mcu.available && mcu.shortSerial !== "" }
-
-                    Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: 8; Layout.bottomMargin: 8; color: "#333333"; visible: hh983.available }
-
-                    Text { text: "HH983:"; font.pixelSize: Math.max(14, Screen.height * 0.02); font.bold: true; color: "#888888"; visible: hh983.available }
-                    Text { text: hh983.firmwareVersion + (hh983.activeSlot !== "" ? "/" + hh983.activeSlot : ""); font.pixelSize: Math.max(14, Screen.height * 0.02); color: hh983.versionAlert ? "#e74c3c" : "#ffffff"; visible: hh983.available
-                           ToolTip.visible: hh983.versionAlert && hoverHhB.hovered; ToolTip.text: hh983.versionAlertReason
-                           HoverHandler { id: hoverHhB } }
-                    Text { text: "(" + hh983.buildDateTime.substring(0, 10) + ")"; font.pixelSize: Math.max(12, Screen.height * 0.016); color: "#666666"; visible: hh983.available
-                           ToolTip.visible: hoverDateHhB.hovered; ToolTip.text: hh983.buildDateTime
-                           HoverHandler { id: hoverDateHhB } }
-                    Text { text: hh983.shortSerial; font.pixelSize: Math.max(11, Screen.height * 0.0135); color: "#5dade2"
-                           visible: hh983.available && hh983.shortSerial !== "" }
-
-                    Item { Layout.fillWidth: true }
-                }
-            }
-
-            // TDDI Info Section
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.preferredHeight: 220
-                color: "#0f3460"
-                radius: 10
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 15
-                    spacing: 8
-
-                    RowLayout {
-                        Layout.fillWidth: true
-
-                        Text {
-                            text: "Touch Controller (TDDI)"
-                            font.pixelSize: 22
-                            font.bold: true
-                            color: "#ffffff"
-                        }
-
-                        Item { Layout.fillWidth: true }
-
-                        // TDDI availability status
-                        Rectangle {
-                            width: 12
-                            height: 12
-                            radius: 6
-                            color: tddi.available ? "#27ae60" : "#e74c3c"
-
-                            ToolTip.visible: tddiStatusMouseArea.containsMouse
-                            ToolTip.text: tddi.available ? "TDDI info available" : "TDDI info not available"
-
-                            MouseArea {
-                                id: tddiStatusMouseArea
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                onClicked: tddi.refresh()
-                            }
-                        }
+                    FeatureTile {
+                        title: "Privacy"
+                        icon: "privacy"
+                        tint: "#A78BFA"
+                        // TODO: Re-enable after testing: fpga.privacyMode / fpga.setPrivacyMode()
+                        on: false
+                        available: false
+                        note: "Disabled"
                     }
-
-                    GridLayout {
-                        Layout.fillWidth: true
-                        columns: 4
-                        columnSpacing: 30
-                        rowSpacing: 5
-
-                        Text { text: "IC Type:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: tddi.available && tddi.icType ? tddi.icType : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "FW Version:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: tddi.available && tddi.fwVersion ? tddi.fwVersion : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Display Config:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: tddi.available && tddi.displayConfig ? tddi.displayConfig : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Touch Config:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: tddi.available && tddi.touchConfig ? tddi.touchConfig : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Customer:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: tddi.available && tddi.customer ? tddi.customer : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Project:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: tddi.available && tddi.project ? tddi.project : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Panel Version:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: tddi.available && tddi.panelVersion ? tddi.panelVersion : "N/A"; font.pixelSize: 22; color: "#ffffff" }
-
-                        Text { text: "Config Date:"; font.pixelSize: 22; color: "#888888" }
-                        Text { text: tddi.available && tddi.configDate ? tddi.configDate : "N/A"; font.pixelSize: 22; color: "#ffffff" }
+                    FeatureTile {
+                        title: "Local dimming"
+                        icon: "dimming"
+                        tint: t.ok
+                        on: fpga.localDimmingEnabled
+                        available: fpga.connected && fpga.localDimmingSupported
+                        note: !fpga.connected ? "FPGA not connected"
+                              : !fpga.localDimmingSupported ? "Not supported" : ""
+                        onToggled: fpga.setLocalDimming(checked)
+                    }
+                    FeatureTile {
+                        title: "Pixel compensation"
+                        icon: "pixelcomp"
+                        tint: t.info
+                        on: fpga.pixelCompEnabled
+                        // Pixel compensation only meaningful while local dimming is on
+                        available: fpga.connected && fpga.pixelCompSupported && fpga.localDimmingEnabled
+                        note: !fpga.connected ? "FPGA not connected"
+                              : !fpga.pixelCompSupported ? "Not supported"
+                              : !fpga.localDimmingEnabled ? "Needs local dimming" : ""
+                        onToggled: fpga.setPixelCompensation(checked)
+                    }
+                    FeatureTile {
+                        title: "Vision booster"
+                        icon: "visionboost"
+                        tint: t.warn
+                        on: false
+                        available: false
+                        note: "Disabled"
                     }
                 }
             }
 
-            // Spacer to fill remaining space
-            Item {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
+            // ---- Firmware versions -----------------------------------------------
+            Card {
+                id: firmwareCard
+                order: 3
+                title: "Firmware"
+                icon: "firmware"
+                tint: t.accent
+                x: board.x1
+                y: featuresCard.height + board.gap
+                width: board.w1
+                height: wideScreen ? board.height - featuresCard.height - board.gap : implicitHeight
+
+                VersionRow {
+                    name: "OS image"
+                    version: osVersion
+                    date: osBuildDate.substring(0, 10)
+                }
+                VersionRow {
+                    name: "Applications"
+                    version: swVersion
+                    date: swBuildDate.substring(0, 10)
+                }
+                VersionRow {
+                    visible: mcu.available
+                    name: "Display controller"
+                    version: mcu.firmwareVersion
+                    slot: mcu.activeSlot
+                    date: mcu.buildDateTime.substring(0, 10)
+                    serial: mcu.shortSerial
+                    alert: mcu.versionAlert
+                    alertReason: mcu.versionAlertReason
+                }
+                VersionRow {
+                    visible: hh983.available
+                    name: "983HH serializer"
+                    version: hh983.firmwareVersion
+                    slot: hh983.activeSlot
+                    date: hh983.buildDateTime.substring(0, 10)
+                    serial: hh983.shortSerial
+                    alert: hh983.versionAlert
+                    alertReason: hh983.versionAlertReason
+                }
+            }
+
+            // ---- FPGA ------------------------------------------------------------
+            Card {
+                id: fpgaCard
+                order: 4
+                title: "FPGA"
+                icon: "fpga"
+                tint: t.ok
+                x: wideScreen ? board.x2 : 0
+                y: wideScreen ? 0 : healthCard.y + healthCard.height + board.gap
+                width: wideScreen ? board.w2 : board.w0
+                height: implicitHeight
+
+                headerRight: [
+                    Pill {
+                        dot: true
+                        label: fpga.connected ? "Connected" : "Not connected"
+                        tint: fpga.connected ? t.ok : t.bad
+                        onClicked: fpga.refresh()
+                    }
+                ]
+
+                KeyValues {
+                    keyWidth: 150 * s
+                    pairColumns: 1
+                    pairs: [
+                        { k: "Firmware version", v: fpga.connected ? fpga.firmwareVersion : "N/A" },
+                        { k: "Build date", v: !fpga.connected ? "N/A" : (fpga.buildTimeValid ? fpga.buildDateTime : fpga.buildDate) },
+                        { k: "Firmware ID", v: fpga.connected ? fpga.firmwareId : "N/A" },
+                        { k: "Board type", v: fpga.connected ? fpga.boardType : "N/A" },
+                        { k: "Display", v: fpga.connected ? fpga.displaySize + "  " + fpga.displayResolution : "N/A" }
+                    ]
+                }
+            }
+
+            // ---- Touch controller ------------------------------------------------
+            Card {
+                id: touchCard
+                order: 5
+                title: "Touch controller"
+                icon: "touch"
+                tint: t.info
+                x: wideScreen ? board.x2 : board.x1
+                y: wideScreen ? fpgaCard.height + board.gap : firmwareCard.y + firmwareCard.height + board.gap
+                width: wideScreen ? board.w2 : board.w1
+                height: board.height - y
+
+                headerRight: [
+                    Pill {
+                        dot: true
+                        label: tddi.available ? "Available" : "Not available"
+                        tint: tddi.available ? t.ok : t.bad
+                        onClicked: tddi.refresh()
+                    }
+                ]
+
+                KeyValues {
+                    keyWidth: 104 * s
+                    pairColumns: 2
+                    pairs: [
+                        { k: "IC type", v: tddi.available && tddi.icType ? tddi.icType : "N/A" },
+                        { k: "Firmware", v: tddi.available && tddi.fwVersion ? tddi.fwVersion : "N/A" },
+                        { k: "Display cfg", v: tddi.available && tddi.displayConfig ? tddi.displayConfig : "N/A" },
+                        { k: "Touch cfg", v: tddi.available && tddi.touchConfig ? tddi.touchConfig : "N/A" },
+                        { k: "Customer", v: tddi.available && tddi.customer ? tddi.customer : "N/A" },
+                        { k: "Project", v: tddi.available && tddi.project ? tddi.project : "N/A" },
+                        { k: "Panel", v: tddi.available && tddi.panelVersion ? tddi.panelVersion : "N/A" },
+                        { k: "Config date", v: tddi.available && tddi.configDate ? tddi.configDate : "N/A" }
+                    ]
+                }
             }
         }
     }
@@ -2078,6 +1132,6 @@ Window {
     Component.onCompleted: {
         console.log("disp-settings UI loaded");
         console.log("Screen size:", Screen.width, "x", Screen.height);
-        console.log("Aspect ratio:", (Screen.width / Screen.height).toFixed(2), "- using", wideScreen ? "two-column" : "single-column", "layout");
+        console.log("Aspect ratio:", (Screen.width / Screen.height).toFixed(2), "- using", wideScreen ? "three-column" : "two-column", "layout");
     }
 }

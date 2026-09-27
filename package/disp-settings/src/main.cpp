@@ -5,6 +5,7 @@
 #include <QCoreApplication>
 #include <QDebug>
 #include <QScreen>
+#include <QFontDatabase>
 #include <QFile>
 #include <QFileInfo>
 #include <QTextStream>
@@ -162,6 +163,9 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
 
     // Expose application info and controllers to QML
+    // Same face as qt-demo-launcher and System Manager when it is installed
+    const bool haveRoboto = QFontDatabase().families().contains("Roboto");
+    engine.rootContext()->setContextProperty("uiFont", haveRoboto ? QString("Roboto") : QString());
     engine.rootContext()->setContextProperty("appVersion", app.applicationVersion());
     engine.rootContext()->setContextProperty("osVersion", osVersion);
     engine.rootContext()->setContextProperty("osBuildDate", osBuildDate);
