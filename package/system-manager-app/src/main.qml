@@ -31,7 +31,12 @@ Window {
 
     // Designed at 1920x720; 1080-line panels keep the same sizes
     readonly property real s: Math.min(width / 1920, height / 720)
-    readonly property bool busy: updater.state === "updating"
+    // Nothing may be left while an update runs. An image install ends in the
+    // engine's reboot; only a dry run's stand-in leaves the app on "arming".
+    readonly property bool busy: updater.state === "updating" || imageUpdate.state === "installing"
+                                 || (imageUpdate.state === "arming" && !imageUpdate.dryRun)
+    // "firmware" or "image"; main.cpp opens the image section when it has news
+    property string section: initialSection
 
     function tone(name) {
         switch (name) {
@@ -241,6 +246,74 @@ Window {
         }
     }
 
+    // Same shape as ComponentCard, with free text: the image section's cards
+    component ImageCard: Rectangle {
+        id: ic
+        property string icon: "sdcard"
+        property string title
+        property string subtitle
+        property string note
+        property color noteTone: t.sub
+        property string pillLabel
+        property color tone: t.sub
+        width: parent ? parent.width : 0
+        height: 150 * s
+        radius: 18 * s
+        color: t.card
+        border.color: t.border
+
+        Rectangle {   // accent stripe
+            x: 0; y: 0; width: 6 * s; height: parent.height; radius: 3 * s
+            color: ic.tone
+        }
+        Rectangle {   // icon badge
+            id: icBadge
+            x: 36 * s; anchors.verticalCenter: parent.verticalCenter
+            width: 84 * s; height: width; radius: 22 * s
+            color: withAlpha(ic.tone, 0.16)
+            border.color: withAlpha(ic.tone, 0.45)
+            Image {
+                anchors.centerIn: parent
+                width: parent.width * 0.6; height: width
+                sourceSize: Qt.size(width, height)
+                source: "qrc:/icons/" + ic.icon + ".svg"
+            }
+        }
+        Column {
+            anchors.left: icBadge.right; anchors.leftMargin: 28 * s
+            anchors.right: icPill.left; anchors.rightMargin: 20 * s
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 6 * s
+            Text {
+                width: parent.width; elide: Text.ElideRight
+                text: ic.title
+                color: t.text
+                font.family: t.font; font.pixelSize: 28 * s; font.weight: Font.DemiBold
+            }
+            Text {
+                width: parent.width; elide: Text.ElideMiddle
+                visible: text !== ""
+                text: ic.subtitle
+                color: t.sub
+                font.family: t.font; font.pixelSize: 18 * s
+            }
+            Text {
+                width: parent.width; elide: Text.ElideRight
+                visible: text !== ""
+                text: ic.note
+                color: ic.noteTone
+                font.family: t.font; font.pixelSize: 18 * s
+            }
+        }
+        Pill {
+            id: icPill
+            anchors.right: parent.right; anchors.rightMargin: 28 * s
+            anchors.verticalCenter: parent.verticalCenter
+            label: ic.pillLabel
+            tint: ic.tone
+        }
+    }
+
     // ---- page ----------------------------------------------------------------
     Item {
         id: page
@@ -276,7 +349,7 @@ Window {
                         ctx.stroke()
                     }
                 }
-                MouseArea { id: backArea; anchors.fill: parent; enabled: !win.busy; onClicked: updater.quitApp() }
+                MouseArea { id: backArea; anchors.fill: parent; enabled: !win.busy; onClicked: if (!win.busy) updater.quitApp() }
             }
             Column {
                 anchors.left: backButton.right; anchors.leftMargin: 28 * s
@@ -288,17 +361,95 @@ Window {
                     font.family: t.font; font.pixelSize: 36 * s; font.weight: Font.Bold
                 }
                 Text {
-                    text: "Home  ›  System Manager  ›  Firmware"
+                    text: "Home  ›  System Manager  ›  " + (win.section === "image" ? "System image" : "Firmware")
                     color: t.sub
                     font.family: t.font; font.pixelSize: 19 * s
                 }
             }
+            // Sections: fixed while either kind of update runs
+            Rectangle {
+                id: sectionSwitch
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                width: sectionRow.width + 12 * s; height: 60 * s
+                radius: height / 2
+                color: t.card
+                border.color: t.border
+                opacity: win.busy ? 0.4 : 1.0
+                Rectangle {   // the selection, sliding between the two
+                    y: 6 * s; height: parent.height - 12 * s; radius: height / 2
+                    x: 6 * s + (win.section === "image" ? sectionSwitch.firmwareTab.width : 0)
+                    width: win.section === "image" ? sectionSwitch.imageTab.width : sectionSwitch.firmwareTab.width
+                    color: withAlpha(t.accent, 0.22)
+                    border.color: withAlpha(t.accent, 0.7)
+                    Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                    Behavior on width { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
+                }
+                Row {
+                    id: sectionRow
+                    x: 6 * s
+                    anchors.verticalCenter: parent.verticalCenter
+                    Repeater {
+                        model: [{ key: "firmware", label: "Firmware" }, { key: "image", label: "System image" }]
+                        Item {
+                            id: tab
+                            objectName: modelData.key + "Tab"
+                            width: tabText.implicitWidth + 56 * s; height: 48 * s
+                            Text {
+                                id: tabText
+                                anchors.centerIn: parent
+                                text: modelData.label
+                                color: win.section === modelData.key ? t.text : t.sub
+                                font.family: t.font; font.pixelSize: 20 * s; font.weight: Font.DemiBold
+                            }
+                            // image updates flag themselves on the tab too
+                            Rectangle {
+                                visible: modelData.key === "image" && win.section !== "image"
+                                         && (imageUpdate.scanState === "ready" || imageUpdate.lastOutcome === "fallback")
+                                anchors.right: parent.right; anchors.rightMargin: 14 * s
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 10 * s; height: width; radius: width / 2
+                                color: imageUpdate.lastOutcome === "fallback" ? t.bad : t.warn
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                enabled: !win.busy
+                                onClicked: win.section = modelData.key
+                            }
+                            Component.onCompleted: {
+                                if (modelData.key === "firmware") sectionSwitch.firmwareTab = tab
+                                else sectionSwitch.imageTab = tab
+                            }
+                        }
+                    }
+                }
+                property Item firmwareTab: Item { width: 0 }
+                property Item imageTab: Item { width: 0 }
+            }
+
             Row {
                 anchors.right: parent.right
                 anchors.verticalCenter: parent.verticalCenter
                 spacing: 14 * s
                 Pill { visible: updater.dryRun; label: "DRY RUN"; tint: t.info }
                 Pill {
+                    visible: win.section === "image"
+                    label: !imageUpdate.supported ? "Not available"
+                           : imageUpdate.state === "installing" ? "Installing"
+                           : imageUpdate.state === "arming" ? "Rebooting"
+                           : imageUpdate.state === "failed" ? "Update failed"
+                           : imageUpdate.lastOutcome === "fallback" ? "Rolled back"
+                           : imageUpdate.lastOutcome === "candidate-armed" ? "Verifying"
+                           : imageUpdate.scanState === "ready" ? "Update on USB"
+                           : "Image " + imageUpdate.runningVersion
+                    tint: !imageUpdate.supported ? t.sub
+                          : imageUpdate.state === "installing" || imageUpdate.state === "arming" ? t.info
+                          : imageUpdate.state === "failed" || imageUpdate.lastOutcome === "fallback" ? t.bad
+                          : imageUpdate.lastOutcome === "candidate-armed" ? t.info
+                          : imageUpdate.scanState === "ready" ? t.warn : t.ok
+                }
+                Pill {
+                    visible: win.section === "firmware"
                     label: updater.summary
                     tint: updater.state === "checking" ? t.sub
                           : updater.state === "updating" ? t.info
@@ -321,9 +472,368 @@ Window {
             }
         }
 
+        // ==== System image section (pi-ab-update) =============================
+        // USB polling and scans run only while this section is on screen
+        Binding { target: imageUpdate; property: "active"; value: win.section === "image" }
+
+        Item {
+            id: imageSection
+            visible: win.section === "image"
+            anchors.top: strip.bottom; anchors.topMargin: 26 * s
+            anchors.left: parent.left; anchors.right: parent.right
+            anchors.bottom: parent.bottom
+
+            readonly property var offer: imageUpdate.offered
+            readonly property string offerTitle: offer.version
+                ? "Image " + offer.version + "  (" + offer.variant + ", " + offer.boards + ")" : ""
+
+            // An image without the A/B engine: this, and nothing else
+            Rectangle {
+                visible: !imageUpdate.supported
+                anchors.fill: parent; anchors.topMargin: 34 * s
+                radius: 22 * s
+                color: t.card; border.color: t.border
+                Column {
+                    anchors.centerIn: parent
+                    spacing: 16 * s
+                    ResultIcon { anchors.horizontalCenter: parent.horizontalCenter; tint: t.sub; glyph: "info" }
+                    Text {
+                        anchors.horizontalCenter: parent.horizontalCenter
+                        text: "This image does not support in-system updates"
+                        color: t.text
+                        font.family: t.font; font.pixelSize: 28 * s; font.weight: Font.DemiBold
+                    }
+                }
+            }
+
+            // ---- left: what runs, and what the stick offers -------------------
+            Column {
+                id: imageLeft
+                visible: imageUpdate.supported
+                width: parent.width * 0.58
+                spacing: 18 * s
+
+                Text {
+                    text: "SYSTEM IMAGE"
+                    color: t.sub
+                    font.family: t.font; font.pixelSize: 16 * s; font.weight: Font.DemiBold
+                    font.letterSpacing: 2 * s
+                }
+
+                ImageCard {
+                    icon: "sdcard"
+                    title: "Image " + (imageUpdate.runningVersion || "unknown")
+                    subtitle: "Running from slot " + (imageUpdate.slot || "?")
+                              + (imageUpdate.variant ? "   ·   " + imageUpdate.variant : "")
+                    note: imageUpdate.lastOutcomeText
+                    noteTone: imageUpdate.lastOutcome === "fallback" ? t.bad
+                              : imageUpdate.lastOutcome === "candidate-armed" ? t.info : t.ok
+                    pillLabel: imageUpdate.lastOutcome === "fallback" ? "Rolled back"
+                               : imageUpdate.lastOutcome === "candidate-armed" ? "Verifying"
+                               : imageUpdate.lastOutcome === "committed" ? "Committed" : "Running"
+                    tone: imageUpdate.lastOutcome === "fallback" ? t.bad
+                          : imageUpdate.lastOutcome === "candidate-armed" ? t.info : t.ok
+                }
+
+                ImageCard {
+                    readonly property string st: imageUpdate.scanState
+                    readonly property bool hasOffer: st === "ready" || st === "same-version" || st === "one"
+                    icon: "usb"
+                    title: hasOffer ? imageSection.offerTitle : "USB stick"
+                    subtitle: hasOffer
+                              ? imageSection.offer.size + "   ·   " + imageSection.offer.path + "  on  " + imageSection.offer.device
+                              : st === "scanning" || st === "idle" ? "Looking at the USB stick…"
+                              : st === "nostick" ? "No USB stick"
+                              : st === "none" ? "No update bundle on the stick"
+                              : st === "nested" ? "The bundle is inside a folder"
+                              : st === "many" ? "More than one bundle on the stick"
+                              : "The stick could not be scanned"
+                    note: st === "ready" || st === "same-version" ? "Signed with this device's release key"
+                          : imageUpdate.scanDetail
+                    noteTone: st === "ready" || st === "same-version" ? t.ok
+                              : st === "one" || st === "error" ? t.bad : t.sub
+                    pillLabel: st === "ready" ? "Update available"
+                               : st === "same-version" ? "Already running"
+                               : st === "one" ? "Not installable"
+                               : st === "scanning" || st === "idle" ? "Scanning"
+                               : st === "nostick" ? "No stick"
+                               : st === "many" ? "Refused"
+                               : st === "error" ? "Error" : "No bundle"
+                    tone: st === "ready" ? t.warn
+                          : st === "same-version" ? t.ok
+                          : st === "one" || st === "many" || st === "error" ? t.bad : t.sub
+                }
+            }
+
+            // ---- right: what can be done now ------------------------------------
+            Rectangle {
+                id: imagePanel
+                visible: imageUpdate.supported
+                anchors.top: imageLeft.top; anchors.topMargin: 34 * s
+                anchors.right: parent.right
+                anchors.left: imageLeft.right; anchors.leftMargin: 30 * s
+                anchors.bottom: parent.bottom
+                radius: 22 * s
+                color: t.card
+                border.color: t.border
+
+                readonly property string st: imageUpdate.scanState
+                readonly property bool idle: imageUpdate.state === "idle"
+                readonly property bool verifying: imageUpdate.lastOutcome === "candidate-armed"
+
+                Item {
+                    anchors.fill: parent
+                    anchors.margins: 34 * s
+
+                    // Looking at the stick
+                    Column {
+                        visible: imagePanel.idle && !imagePanel.verifying
+                                 && (imagePanel.st === "scanning" || imagePanel.st === "idle")
+                        anchors.centerIn: parent
+                        width: parent.width
+                        spacing: 22 * s
+                        Spinner { anchors.horizontalCenter: parent.horizontalCenter }
+                        Text {
+                            width: parent.width; horizontalAlignment: Text.AlignHCenter
+                            text: "Looking at the USB stick"
+                            color: t.text
+                            font.family: t.font; font.pixelSize: 28 * s; font.weight: Font.DemiBold
+                        }
+                    }
+
+                    // Idle: the offer, or why there is none
+                    Column {
+                        id: imageIdleView
+                        visible: imagePanel.idle && (imagePanel.verifying
+                                 || (imagePanel.st !== "scanning" && imagePanel.st !== "idle"))
+                        width: parent.width
+                        spacing: 18 * s
+                        readonly property bool offerReady: imagePanel.st === "ready" && !imagePanel.verifying
+
+                        Row {
+                            spacing: 22 * s
+                            ResultIcon {
+                                tint: imagePanel.verifying ? t.info
+                                      : imageIdleView.offerReady ? t.warn
+                                      : imagePanel.st === "same-version" ? t.ok
+                                      : imagePanel.st === "one" || imagePanel.st === "many" || imagePanel.st === "error" ? t.bad
+                                      : t.sub
+                                glyph: imagePanel.verifying ? "info"
+                                       : imageIdleView.offerReady ? "update"
+                                       : imagePanel.st === "same-version" ? "check"
+                                       : imagePanel.st === "one" || imagePanel.st === "many" || imagePanel.st === "error" ? "bad"
+                                       : "info"
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: imageIdleView.width - 100 * s
+                                wrapMode: Text.WordWrap
+                                text: imagePanel.verifying ? "The previous update is being verified"
+                                      : imageIdleView.offerReady ? "Install image " + imageSection.offer.version
+                                      : imagePanel.st === "same-version" ? "Already running this version"
+                                      : imagePanel.st === "nostick" ? "No USB stick"
+                                      : imagePanel.st === "none" ? "No update bundle on the stick"
+                                      : imagePanel.st === "nested" ? "Move the bundle to the top of the stick"
+                                      : imagePanel.st === "many" ? "More than one bundle — leave exactly one on the stick"
+                                      : imagePanel.st === "one" ? "This bundle cannot be installed"
+                                      : "The stick could not be scanned"
+                                color: t.text
+                                font.family: t.font; font.pixelSize: 30 * s; font.weight: Font.DemiBold
+                            }
+                        }
+                        Text {
+                            visible: !imageIdleView.offerReady
+                            width: parent.width; wrapMode: Text.WordWrap
+                            text: imagePanel.verifying ? "Wait a minute and come back. The new image commits itself once it has run healthy for 30 seconds."
+                                  : imagePanel.st === "same-version" ? "The stick carries " + imageSection.offer.version + ", which this system already runs."
+                                  : imagePanel.st === "nostick" ? "Plug in a USB stick (FAT32 or exFAT) that holds one .mpupdate bundle at its top level."
+                                  : imagePanel.st === "none" ? "Copy one .mpupdate bundle to the top level of the stick."
+                                  : imagePanel.st === "many" ? "The installer refuses to choose between bundles. Remove all but one, then scan again."
+                                  : imageUpdate.scanDetail
+                            color: t.sub
+                            font.family: t.font; font.pixelSize: 20 * s
+                        }
+                        Column {
+                            visible: imageIdleView.offerReady
+                            width: parent.width
+                            spacing: 8 * s
+                            Bullet { label: "Replaces " + (imageUpdate.runningVersion || "the running image") + " in the other slot. Allow about 5 minutes." }
+                            Bullet { label: "Keep the power on while it writes. A power cut is safe, but the update then has to be repeated." }
+                            Bullet { label: "The device restarts by itself; the screen goes dark during the restart." }
+                        }
+                    }
+                    Column {   // idle: actions at the bottom
+                        visible: imageIdleView.visible
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        spacing: 16 * s
+
+                        // Hold to confirm: a stray tap must not start an image update
+                        Rectangle {
+                            id: imageHold
+                            visible: imageUpdate.canInstall
+                            width: parent.width; height: 96 * s; radius: 22 * s
+                            color: withAlpha(t.accent, 0.18)
+                            border.color: t.accent; border.width: 2
+                            clip: true
+                            property real progress: 0
+                            Rectangle {
+                                width: parent.width * parent.progress; height: parent.height
+                                radius: parent.radius
+                                color: t.accent
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                text: imageHoldArea.pressed ? "Keep holding…"
+                                      : (imageUpdate.dryRun ? "Hold to run a dry install" : "Hold to install")
+                                color: imageHold.progress > 0.5 ? "#081018" : t.text
+                                font.family: t.font; font.pixelSize: 26 * s; font.weight: Font.Bold
+                            }
+                            NumberAnimation {
+                                id: imageHoldAnim
+                                target: imageHold; property: "progress"
+                                from: 0; to: 1; duration: 1500
+                                onFinished: if (imageHold.progress >= 1) imageUpdate.startInstall()
+                            }
+                            MouseArea {
+                                id: imageHoldArea
+                                anchors.fill: parent
+                                onPressed: imageHoldAnim.restart()
+                                onReleased: if (imageHold.progress < 1) { imageHoldAnim.stop(); imageHold.progress = 0 }
+                                onCanceled: { imageHoldAnim.stop(); imageHold.progress = 0 }
+                            }
+                            Connections {
+                                target: imageUpdate
+                                function onStateChanged() { imageHold.progress = 0 }
+                            }
+                        }
+                        ActionButton {
+                            width: parent.width
+                            label: "Scan again"
+                            onClicked: imageUpdate.rescan()
+                        }
+                    }
+
+                    // Installing
+                    Column {
+                        visible: imageUpdate.state === "installing"
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width
+                        spacing: 22 * s
+                        Row {
+                            spacing: 22 * s
+                            Spinner {}
+                            Column {
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4 * s
+                                Text {
+                                    text: "Installing image " + (imageSection.offer.version || "")
+                                    color: t.text
+                                    font.family: t.font; font.pixelSize: 30 * s; font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    text: imageUpdate.phaseText + "   ·   " + imageUpdate.percent + "%   ·   " + mmss(imageUpdate.elapsedSeconds)
+                                    color: t.sub
+                                    font.family: t.font; font.pixelSize: 19 * s
+                                }
+                            }
+                        }
+                        Rectangle {   // determinate: the engine's own progress
+                            width: parent.width; height: 14 * s; radius: height / 2
+                            color: withAlpha(t.accent, 0.18)
+                            Rectangle {
+                                width: Math.max(parent.height, parent.width * imageUpdate.percent / 100)
+                                height: parent.height; radius: height / 2
+                                color: t.accent
+                                Behavior on width { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
+                            }
+                        }
+                        Flow {
+                            width: parent.width
+                            spacing: 12 * s
+                            Pill { label: "Keep the power on"; tint: t.warn }
+                            Pill { label: "Leave the USB stick in"; tint: t.warn }
+                        }
+                    }
+
+                    // Armed: the engine reboots by itself
+                    Column {
+                        visible: imageUpdate.state === "arming"
+                        anchors.centerIn: parent
+                        width: parent.width
+                        spacing: 22 * s
+                        Spinner { anchors.horizontalCenter: parent.horizontalCenter }
+                        Text {
+                            width: parent.width; horizontalAlignment: Text.AlignHCenter
+                            text: "Rebooting into the new image…"
+                            color: t.text
+                            font.family: t.font; font.pixelSize: 30 * s; font.weight: Font.DemiBold
+                        }
+                        Text {
+                            width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                            text: imageUpdate.dryRun ? "Dry run: a real device would restart now."
+                                  : "The screen goes dark while the device restarts. It comes back by itself."
+                            color: t.sub
+                            font.family: t.font; font.pixelSize: 20 * s
+                        }
+                    }
+                    ActionButton {
+                        visible: imageUpdate.state === "arming" && imageUpdate.dryRun
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        label: "Back to home"
+                        onClicked: updater.quitApp()
+                    }
+
+                    // Failed
+                    Column {
+                        visible: imageUpdate.state === "failed"
+                        width: parent.width
+                        spacing: 18 * s
+                        Row {
+                            spacing: 22 * s
+                            ResultIcon { tint: imageUpdate.failureClass === "" ? t.info : t.bad; glyph: imageUpdate.failureClass === "" ? "info" : "bad" }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: imagePanel.width - 170 * s
+                                wrapMode: Text.WordWrap
+                                text: imageUpdate.outcomeTitle
+                                color: t.text
+                                font.family: t.font; font.pixelSize: 30 * s; font.weight: Font.DemiBold
+                            }
+                        }
+                        Text {
+                            width: parent.width; wrapMode: Text.WordWrap
+                            text: imageUpdate.outcomeDetail
+                            color: t.sub
+                            font.family: t.font; font.pixelSize: 20 * s
+                        }
+                    }
+                    Column {
+                        visible: imageUpdate.state === "failed"
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        spacing: 16 * s
+                        ActionButton {
+                            width: parent.width
+                            primary: true
+                            label: "Back to home"
+                            onClicked: updater.quitApp()
+                        }
+                        ActionButton {
+                            width: parent.width
+                            label: imageUpdate.canRetry ? "Scan again and retry" : "Scan again"
+                            onClicked: imageUpdate.acknowledgeFailure()
+                        }
+                    }
+                }
+            }
+        }
+
         // ---- left: components --------------------------------------------
         Column {
             id: components
+            visible: win.section === "firmware"
             anchors.top: strip.bottom; anchors.topMargin: 26 * s
             anchors.left: parent.left
             width: parent.width * 0.58
@@ -360,6 +870,7 @@ Window {
         // ---- right: what can be done now ---------------------------------
         Rectangle {
             id: panel
+            visible: win.section === "firmware"
             anchors.top: components.top; anchors.topMargin: 34 * s
             anchors.right: parent.right
             anchors.left: components.right; anchors.leftMargin: 30 * s

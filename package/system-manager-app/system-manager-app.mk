@@ -17,6 +17,7 @@ endef
 define SYSTEM_MANAGER_APP_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/system-manager-app $(TARGET_DIR)/usr/bin/system-manager-app
 	$(INSTALL) -D -m 0755 $(@D)/system-update-check.sh $(TARGET_DIR)/usr/bin/system-update-check.sh
+	$(INSTALL) -D -m 0755 $(@D)/system-image-scan.sh $(TARGET_DIR)/usr/bin/system-image-scan.sh
 endef
 
 $(eval $(generic-package))

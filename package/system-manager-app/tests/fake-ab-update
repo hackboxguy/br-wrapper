@@ -1,0 +1,76 @@
+#!/bin/bash
+# fake-ab-update - stands in for pi-ab-update's /usr/local/bin/ab-update on a PC,
+# so System Manager's "System image" section can be watched end to end without
+# hardware. It never touches a disk: `install` only writes the progress file
+# through the engine's phases, the way ab-system-update publishes them.
+#
+#   --active-version   FAKE_AB_VERSION             (default 02.05)
+#   --active-slot      FAKE_AB_SLOT                (default A)
+#   --state            state= from $AB_RUNTIME_DIR/status, else an error
+#   --progress         $AB_RUNTIME_DIR/progress, else an error
+#   install usb|--file=PATH
+#       phases validating, scanning, preparing, writing 0..99, checking,
+#       boot-files, then FAKE_AB_END (default arming; or failed-<class>, e.g.
+#       failed-integrity). FAKE_AB_STEP seconds per step (default 0.4).
+#       FAKE_AB_FAIL_AT=<phase> ends in FAKE_AB_END as soon as that phase is
+#       reached. "arming" is followed by "reboot" - here just a line of output.
+#   FAKE_AB_BUSY=1 makes install refuse like a second concurrent install.
+set -euo pipefail
+runtime=${AB_RUNTIME_DIR:-/tmp/fake-ab-update/run}
+progress=$runtime/progress
+
+publish() { # $1=phase $2=percent, atomically like the engine
+    mkdir -p "$runtime"
+    local tmp; tmp=$(mktemp "$runtime/.progress.XXXXXX")
+    printf 'phase=%s\nprogress=%s\n' "$1" "$2" > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$progress"
+}
+
+step=${FAKE_AB_STEP:-0.4}
+end=${FAKE_AB_END:-arming}
+fail_at=${FAKE_AB_FAIL_AT:-}
+reach() { # $1=phase $2=percent
+    publish "$1" "$2"
+    echo "[fake-ab-update] phase=$1 progress=$2"
+    if [ -n "$fail_at" ] && [ "$1" = "$fail_at" ] && [ "$end" != arming ]; then
+        publish "$end" 0
+        echo "[ERROR] fake failure at $1: $end" >&2
+        exit 1
+    fi
+    sleep "$step"
+}
+
+case "${1:-status}" in
+    --active-version) echo "${FAKE_AB_VERSION:-02.05}" ;;
+    --active-slot)    echo "${FAKE_AB_SLOT:-A}" ;;
+    --state|--update-state)
+        [ -f "$runtime/status" ] && awk -F= '$1 == "state" { print $2 }' "$runtime/status" \
+            || { echo '[ERROR] no update state recorded' >&2; exit 1; } ;;
+    --progress)
+        [ -f "$progress" ] && cat "$progress" || { echo '[ERROR] no update has run' >&2; exit 1; } ;;
+    install)
+        case "${2:-}" in usb|--file=*) ;; *) echo '[ERROR] install needs a source' >&2; exit 1 ;; esac
+        if [ -n "${FAKE_AB_BUSY:-}" ]; then
+            echo '[ERROR] another system update is already in progress' >&2
+            exit 1
+        fi
+        rm -f "$progress"
+        reach validating 0
+        reach scanning 0
+        reach preparing 0
+        for p in 0 8 17 26 35 44 53 62 71 80 89 95 99; do reach writing "$p"; done
+        reach checking 99
+        reach boot-files 99
+        if [ "$end" = arming ]; then
+            publish arming 100
+            echo '[SUCCESS] payload verified; slot B is armed for one candidate boot'
+            echo '[fake-ab-update] reboot "0 tryboot" (not really)'
+            exit 0
+        fi
+        publish "$end" 0
+        echo "[ERROR] fake failure: $end" >&2
+        exit 1
+        ;;
+    *) echo "[fake-ab-update] $*" ;;
+esac

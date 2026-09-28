@@ -8,5 +8,7 @@
         <file>icons/warn.svg</file>
         <file>icons/info.svg</file>
         <file>icons/update.svg</file>
+        <file>icons/sdcard.svg</file>
+        <file>icons/usb.svg</file>
     </qresource>
 </RCC>

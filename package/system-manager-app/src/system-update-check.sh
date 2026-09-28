@@ -1,26 +1,67 @@
 #!/bin/sh
 # system-update-check.sh - one line for the launcher's System Manager badge.
 #
-# Prints "Update available" when a board carries firmware other than the image
-# this system ships (update-iocs.sh --check --image-dir, read-only: register
-# reads and a file read, no reset, no effect on the display), and nothing
-# otherwise. qt-demo-launcher runs it through the button's "badge_command"
-# after start-up and each time an app exits, so it never runs while System
-# Manager is updating; the lock file covers a manual run on top of that.
+# The launcher shows one line, so this prints the most important of:
+#   Update rolled back    the last system image update fell back (pi-ab-update
+#                         status says fallback)
+#   Update available      a board carries firmware other than the image this
+#                         system ships (update-iocs.sh --check, read-only)
+#   Image update on USB   a stick carries exactly one signed image bundle of a
+#                         version other than the running one (system-image-scan.sh,
+#                         read-only; it also refreshes /run/system-manager/last-scan)
+# and nothing otherwise. qt-demo-launcher runs it through the button's
+# "badge_command" after start-up and each time an app exits, so it never runs
+# while System Manager is updating; the lock file covers a manual run on top.
 #
-# Paths follow the install layout, like system-manager-app: the update tool
-# beside this script, the images in ../share/sp6bins/firmware/bios-bin.
+# Paths follow the install layout, like system-manager-app: the tools beside
+# this script, the images in ../share/sp6bins/firmware/bios-bin.
 HERE=$(cd -- "$(dirname -- "$0")" && pwd)
 TOOL=${UPDATE_IOCS:-$HERE/update-iocs.sh}
 DIR=${IMAGE_DIR:-$(dirname "$HERE")/share/sp6bins/firmware/bios-bin}
+SCAN=${SYSTEM_IMAGE_SCAN:-$HERE/system-image-scan.sh}
+AB_UPDATE=${AB_UPDATE:-/usr/local/bin/ab-update}
+AB_CONF=${AB_UPDATE_CONFIG:-/usr/lib/pi-ab-update/ab-update.conf}
+LOCK=/tmp/system-update.lock
 
-[ -e /tmp/system-update.lock ] && exit 0
-[ -x "$TOOL" ] && [ -d "$DIR" ] || exit 0
-
-if [ "$(id -u)" -eq 0 ]; then
-    out=$(timeout 60 "$TOOL" --check --image-dir "$DIR" 2>/dev/null)
-else
-    out=$(sudo -n timeout 60 "$TOOL" --check --image-dir "$DIR" 2>/dev/null)
+# An update is running - unless the process that took the lock is gone (an
+# image update ends in a reboot, which can leave the lock on a persistent /tmp)
+if [ -e "$LOCK" ]; then
+    pid=$(cat "$LOCK" 2>/dev/null)
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && exit 0
 fi
-echo "$out" | grep -q "^RESULT .*status=outdated" && echo "Update available"
+
+as_root() {
+    if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo -n "$@"; fi
+}
+
+# 1. A system image update that fell back
+if [ -x "$AB_UPDATE" ]; then
+    rundir=$(awk 'index($0, "AB_RUNTIME_DIR=") == 1 { v = substr($0, 16) } END { print v }' "$AB_CONF" 2>/dev/null)
+    [ -n "$rundir" ] || rundir=/run/ab-update
+    if grep -qx 'state=fallback' "$rundir/status" 2>/dev/null; then
+        echo "Update rolled back"
+        exit 0
+    fi
+fi
+
+# 2. Board firmware
+if [ -x "$TOOL" ] && [ -d "$DIR" ]; then
+    out=$(as_root timeout 60 "$TOOL" --check --image-dir "$DIR" 2>/dev/null)
+    if echo "$out" | grep -q "^RESULT .*status=outdated"; then
+        echo "Update available"
+        exit 0
+    fi
+fi
+
+# 3. A system image on a USB stick
+if [ -x "$AB_UPDATE" ] && [ -x "$SCAN" ]; then
+    out=$(as_root timeout 60 "$SCAN" 2>/dev/null)
+    echo "$out" | awk '
+        /^BUNDLE / { n++; for (i = 2; i <= NF; i++) { split($i, kv, "="); b[kv[1]] = kv[2] } }
+        /^SUMMARY / { for (i = 2; i <= NF; i++) { split($i, kv, "="); s[kv[1]] = kv[2] } }
+        END {
+            if (n == 1 && s["layout"] == "ab" && b["signature"] == "ok" && b["version"] != s["running"])
+                print "Image update on USB"
+        }'
+fi
 exit 0

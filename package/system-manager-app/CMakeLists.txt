@@ -14,6 +14,8 @@ add_executable(system-manager-app
     src/main.cpp
     src/UpdateController.cpp
     src/UpdateController.h
+    src/SystemImageController.cpp
+    src/SystemImageController.h
     src/qml.qrc
 )
 
@@ -36,6 +38,8 @@ install(TARGETS system-manager-app
 
 # The launcher's System Manager badge (qt-demo-launcher "badge_command")
 install(PROGRAMS src/system-update-check.sh DESTINATION ${CMAKE_INSTALL_BINDIR})
+# The System image section's USB scanner (run with sudo -n; read-only)
+install(PROGRAMS src/system-image-scan.sh DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 message(STATUS "system-manager-app: configured")
 message(STATUS "  Install binary + badge check to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")

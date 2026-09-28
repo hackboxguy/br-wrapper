@@ -5,10 +5,12 @@ TARGET = system-manager-app
 
 SOURCES += \
     main.cpp \
-    UpdateController.cpp
+    UpdateController.cpp \
+    SystemImageController.cpp
 
 HEADERS += \
-    UpdateController.h
+    UpdateController.h \
+    SystemImageController.h
 
 RESOURCES += qml.qrc
 
