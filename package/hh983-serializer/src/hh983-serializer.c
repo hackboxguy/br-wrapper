@@ -1693,10 +1693,17 @@ static bool hh983_fpd_retrain(struct hh983_data *data)
 	hh983_route_tddi(data);
 	hh983_route_fpga(data);
 
-	/* The digital reset also resets the DP RX, which re-trains with the
-	 * source and posts SINK video events.  Clear them so the existing
-	 * NO_VIDEO/VIDEO_DETECT path (which pulses the display-board reset)
-	 * does not fire on a re-train we caused. */
+	/* The digital reset also resets the DP RX: the video stream to the
+	 * 988 stays empty until the source re-trains (HW 2026-09-28: "FPD-Link
+	 * locked but no video in stream" after a reset).  Toggle HPD, as
+	 * hh983_recover_link() does, so the source re-reads EDID and re-trains
+	 * -- without the display-board GPIO reset.  Then clear the SINK events
+	 * this causes so the existing NO_VIDEO/VIDEO_DETECT path (which does
+	 * pulse the display-board reset) does not fire on our own re-train. */
+	hh983_apb_write(client, APB_LINK_ENABLE, 0x00);
+	msleep(200);
+	hh983_apb_write(client, APB_LINK_ENABLE, 0x01);
+	msleep(500);
 	hh983_clear_dp_events(data);
 	data->recovery_cooldown = 5;
 
