@@ -297,6 +297,15 @@ static int link_retrain_max = 10;
 module_param(link_retrain_max, int, 0644);
 MODULE_PARM_DESC(link_retrain_max, "Mode 1: maximum re-train attempts per link loss (default: 10)");
 
+/* Re-train tuning (bench, 2026-09-28): the 983 digital reset also resets the
+ * DP RX and the video stays empty until the DP source re-trains. */
+static int link_retrain_reset = 2;
+module_param(link_retrain_reset, int, 0644);
+MODULE_PARM_DESC(link_retrain_reset, "Mode 1 re-train: 2=escalate: first attempt of a loss without reset, later ones with the 983 digital reset (default); 1=always reset; 0=never reset");
+static int link_retrain_hpd_ms = 200;
+module_param(link_retrain_hpd_ms, int, 0644);
+MODULE_PARM_DESC(link_retrain_hpd_ms, "Mode 1 re-train: HPD low time in ms after the re-train (default 200; 0 = no HPD toggle)");
+
 static int force_retrain;
 module_param(force_retrain, int, 0644);
 MODULE_PARM_DESC(force_retrain, "Mode 1: write 1 to run one FPD-Link re-train at the next poll (test hook; reads back 0 once done)");
@@ -1672,8 +1681,15 @@ static bool hh983_fpd_retrain(struct hh983_data *data)
 	dev_notice(&client->dev, "FPD-Link re-train #%d (attempt %d of this loss)\n",
 		   link_retrain_count, data->fpd_attempts + 1);
 
-	hh983_write_reg(client, SER_RESET_CTL, SER_DIGITAL_RESET_0);   /* self-clearing, keeps registers */
-	msleep(100);
+	/* The 983 digital reset also resets the DP RX: the video stays empty
+	 * until the DP source re-trains, and an HPD pulse (tried 0.2 to 4 s)
+	 * does not make the rig's HDMI-to-DP converter do that (HW 2026-09-28).
+	 * So the first attempt of a loss goes without it. */
+	if (link_retrain_reset == 1 ||
+	    (link_retrain_reset == 2 && data->fpd_attempts > 0)) {
+		hh983_write_reg(client, SER_RESET_CTL, SER_DIGITAL_RESET_0);   /* self-clearing, keeps registers */
+		msleep(100);
+	}
 	hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
 	msleep(10);
 
@@ -1700,10 +1716,12 @@ static bool hh983_fpd_retrain(struct hh983_data *data)
 	 * -- without the display-board GPIO reset.  Then clear the SINK events
 	 * this causes so the existing NO_VIDEO/VIDEO_DETECT path (which does
 	 * pulse the display-board reset) does not fire on our own re-train. */
-	hh983_apb_write(client, APB_LINK_ENABLE, 0x00);
-	msleep(200);
-	hh983_apb_write(client, APB_LINK_ENABLE, 0x01);
-	msleep(500);
+	if (link_retrain_hpd_ms > 0) {
+		hh983_apb_write(client, APB_LINK_ENABLE, 0x00);
+		msleep(min(link_retrain_hpd_ms, 10000));
+		hh983_apb_write(client, APB_LINK_ENABLE, 0x01);
+		msleep(500);
+	}
 	hh983_clear_dp_events(data);
 	data->recovery_cooldown = 5;
 
