@@ -8,6 +8,14 @@
 #include <QFontDatabase>
 #include <QProcess>
 #include <QStorageInfo>
+#include <QQuickWindow>
+#include <QTimer>
+#include <QElapsedTimer>
+#include <QDebug>
+#include <QWindow>
+#include <QScreen>
+#include <QPixmap>
+#include <QImage>
 #include <signal.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -18,9 +26,15 @@
 // A key of pi-ab-update's board config, parsed the way the engine parses it
 // (never sourced): the engine's paths are the board's to choose, and the
 // README warns that a board may move its runtime directory.
+static QString abConfigPath()
+{
+    const QByteArray env = qgetenv("AB_UPDATE_CONFIG");   // the engine's own test seam
+    return env.isEmpty() ? QString("/usr/lib/pi-ab-update/ab-update.conf") : QString::fromLocal8Bit(env);
+}
+
 static QString abConfigValue(const QString &key)
 {
-    QFile f("/usr/lib/pi-ab-update/ab-update.conf");
+    QFile f(abConfigPath());
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
     QString value;
     while (!f.atEnd()) {
@@ -44,26 +58,31 @@ static void dropStaleLock(const QString &path)
     if (pid <= 0 || ::kill(pid_t(pid), 0) != 0) QFile::remove(path);
 }
 
-// Where logs go. On the A/B images / is an overlay on RAM and only /data
-// survives a reboot - and both kinds of update end in a power cycle or a
-// reboot, which is exactly when the log is wanted. /data holds one directory
-// per app, owned by pi; this app's is created once (sudo -n, as the app does
-// for everything that needs root). Elsewhere: <prefix>/usr/logs, as before.
-static QString logRoot(const QString &prefix)
+// The app's own durable directory: logs, last-install, acknowledged-fallback.
+// On the A/B images / is an overlay on RAM and only /data survives a reboot -
+// and both kinds of update end in a power cycle or a reboot, which is exactly
+// when the log is wanted. The image's data skeleton creates
+// /data/system-manager (pi-owned); on images built before that, the app
+// creates it once - without sudo first, then with sudo -n. Single-slot images
+// have no /data and keep <prefix>/usr, i.e. logs in <prefix>/usr/logs.
+// SYSTEM_MANAGER_DATA overrides it (tests; the badge script honours it too).
+static QString dataRoot(const QString &prefix)
 {
+    const QByteArray env = qgetenv("SYSTEM_MANAGER_DATA");
+    if (!env.isEmpty()) return QString::fromLocal8Bit(env);
     const QString dataDir = "/data/system-manager";
+    auto usable = [&]() { return QFileInfo(dataDir).isDir() && QFileInfo(dataDir).isWritable(); };
+    if (usable()) return dataDir;
     QStorageInfo data("/data");
-    if (data.isValid() && data.rootPath() == "/data" && !data.isReadOnly()) {
-        if (!QFileInfo(dataDir).isWritable() && ::geteuid() != 0) {
+    if (!QFileInfo(dataDir).exists() && data.isValid() && data.rootPath() == "/data" && !data.isReadOnly()) {
+        if (!QDir().mkpath(dataDir) && ::geteuid() != 0) {
             QProcess::execute("sudo", {"-n", "install", "-d", "-m", "0755",
                                        "-o", QString::number(::getuid()), "-g", QString::number(::getgid()),
                                        dataDir});
-        } else if (!QFileInfo(dataDir).exists()) {
-            QDir().mkpath(dataDir);
         }
-        if (QFileInfo(dataDir).isDir() && QFileInfo(dataDir).isWritable()) return dataDir + "/logs";
+        if (usable()) return dataDir;
     }
-    return QDir(prefix).filePath("usr/logs");
+    return QDir(prefix).filePath("usr");
 }
 
 // System Manager for the display rig. Its firmware section shows which firmware
@@ -82,7 +101,8 @@ int main(int argc, char *argv[])
     const QString binDir = QCoreApplication::applicationDirPath();
     const QString prefix = QFileInfo(binDir).absolutePath();
 
-    const QString logs = logRoot(prefix);
+    const QString data = dataRoot(prefix);
+    const QString logs = QDir(data).filePath("logs");
     const QString abManifest = abConfigValue("AB_MANIFEST");
     const QString abRuntime = abConfigValue("AB_RUNTIME_DIR");
 
@@ -117,6 +137,14 @@ int main(int argc, char *argv[])
     QCommandLineOption autoInstallOpt("auto-install",
                                       "Automated validation: install the image a scan offers, once, without the "
                                       "hold. Never used by the launcher button.");
+    QCommandLineOption systemctlOpt("systemctl", "systemctl to ask about the engine's health units (test seam).",
+                                    "path", "systemctl");
+    QCommandLineOption shotOpt("screenshot",
+                               "Grab the window to <file> once the shown section has its first result, then quit "
+                               "(docs, and QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software checks).", "file");
+    QCommandLineOption shotDelayOpt("screenshot-delay", "Milliseconds between the first result and the grab.",
+                                    "ms", "1200");
+    QCommandLineOption sizeOpt("window-size", "Window size WxH instead of full screen (with --screenshot).", "WxH");
     QCommandLineOption sectionOpt("section", "Section to open first: firmware or image.", "name");
     parser.addOption(toolOpt);
     parser.addOption(imageOpt);
@@ -131,6 +159,10 @@ int main(int argc, char *argv[])
     parser.addOption(imageLogOpt);
     parser.addOption(autoInstallOpt);
     parser.addOption(sectionOpt);
+    parser.addOption(systemctlOpt);
+    parser.addOption(shotOpt);
+    parser.addOption(sizeOpt);
+    parser.addOption(shotDelayOpt);
     parser.process(app);
 
     const QString lockFile = "/tmp/system-update.lock";
@@ -157,6 +189,9 @@ int main(int argc, char *argv[])
     imageOptions.lockFile = lockFile;
     imageOptions.dryRun = parser.isSet(dryRunOpt);
     imageOptions.autoInstall = parser.isSet(autoInstallOpt);
+    imageOptions.abConfig = abConfigPath();
+    imageOptions.systemctl = parser.value(systemctlOpt);
+    imageOptions.ackFile = QDir(data).filePath("acknowledged-fallback");
 
     SystemImageController imageController(imageOptions);
 
@@ -175,6 +210,44 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("uiFont", haveRoboto ? QString("Roboto") : QString());
     engine.load(QUrl(QStringLiteral("qrc:/main.qml")));
     if (engine.rootObjects().isEmpty()) return 1;
+    auto *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+
+    const QStringList size = parser.value(sizeOpt).split('x');
+    if (window && size.size() == 2 && size[0].toInt() > 0 && size[1].toInt() > 0) {
+        window->setVisibility(QWindow::Windowed);
+        window->resize(size[0].toInt(), size[1].toInt());
+    }
+
+    // --screenshot: wait for the first result of the section on screen, give
+    // it a moment to settle, grab, quit. 20 s at most.
+    if (window && parser.isSet(shotOpt)) {
+        const QString file = parser.value(shotOpt);
+        const int delay = qMax(0, parser.value(shotDelayOpt).toInt());
+        auto *poll = new QTimer(&app);
+        auto *started = new QElapsedTimer;
+        started->start();
+        QObject::connect(poll, &QTimer::timeout, &app, [=, &app, &controller, &imageController]() {
+            const QString shown = window->property("section").toString();
+            const bool ready = shown == "image"
+                ? (!imageController.supported()
+                   || (imageController.scanState() != "idle" && imageController.scanState() != "scanning"))
+                : controller.state() != "checking";
+            if (!ready && started->elapsed() < 20000) return;
+            poll->stop();
+            QTimer::singleShot(delay, &app, [=]() {
+                // The scene graph's own grab, else the platform's (offscreen +
+                // the software backend renders into a backing store, which only
+                // the screen grab reaches)
+                QImage image = window->grabWindow();
+                if (image.isNull() && window->screen())
+                    image = window->screen()->grabWindow(window->winId()).toImage();
+                const bool ok = !image.isNull() && image.save(file);
+                qInfo().noquote() << (ok ? "screenshot saved:" : "screenshot FAILED:") << file;
+                QCoreApplication::exit(ok ? 0 : 1);
+            });
+        });
+        poll->start(200);
+    }
 
     controller.check();
     return app.exec();

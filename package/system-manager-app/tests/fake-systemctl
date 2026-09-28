@@ -1,0 +1,17 @@
+#!/bin/sh
+# fake-systemctl - the two questions System Manager's preflight asks, answered
+# from the environment instead of systemd (--systemctl <this>):
+#   FAKE_DOWN="unit ..."          these answer is-active with "failed" (exit 3)
+#   FAKE_RESTARTED="unit=n ..."   NRestarts per unit (default 0)
+case "$1" in
+    is-active)
+        for u in ${FAKE_DOWN:-}; do [ "$u" = "$2" ] && { echo failed; exit 3; }; done
+        echo active ;;
+    show)
+        unit=$(eval echo "\${$#}")   # the last argument
+        for p in ${FAKE_RESTARTED:-}; do
+            [ "${p%%=*}" = "$unit" ] && { echo "${p#*=}"; exit 0; }
+        done
+        echo 0 ;;
+    *) echo "fake-systemctl: $*" >&2; exit 1 ;;
+esac

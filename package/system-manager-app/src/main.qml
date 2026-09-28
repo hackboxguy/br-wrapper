@@ -254,6 +254,7 @@ Window {
         property string subtitle
         property string note
         property color noteTone: t.sub
+        property string warning          // amber, e.g. the install preflight
         property string pillLabel
         property color tone: t.sub
         width: parent ? parent.width : 0
@@ -303,6 +304,13 @@ Window {
                 text: ic.note
                 color: ic.noteTone
                 font.family: t.font; font.pixelSize: 18 * s
+            }
+            Text {
+                width: parent.width; elide: Text.ElideRight
+                visible: text !== ""
+                text: ic.warning
+                color: t.warn
+                font.family: t.font; font.pixelSize: 18 * s; font.weight: Font.DemiBold
             }
         }
         Pill {
@@ -552,6 +560,8 @@ Window {
                           : imageUpdate.scanDetail
                     noteTone: st === "ready" || st === "same-version" ? t.ok
                               : st === "one" || st === "error" ? t.bad : t.sub
+                    // preflight: the engine would not keep the new image
+                    warning: st === "ready" ? imageUpdate.preflightWarning : ""
                     pillLabel: st === "ready" ? "Update available"
                                : st === "same-version" ? "Already running"
                                : st === "one" ? "Not installable"
@@ -657,9 +667,9 @@ Window {
                             visible: imageIdleView.offerReady
                             width: parent.width
                             spacing: 8 * s
-                            Bullet { label: "Replaces " + (imageUpdate.runningVersion || "the running image") + " in the other slot. Allow about 5 minutes." }
-                            Bullet { label: "Keep the power on while it writes. A power cut is safe, but the update then has to be repeated." }
-                            Bullet { label: "The device restarts by itself; the screen goes dark during the restart." }
+                            Bullet { label: "Replaces " + (imageUpdate.runningVersion || "the running image") + " in the other slot; takes about 5 minutes." }
+                            Bullet { label: "Keep the power on: a power cut is safe, but means starting over." }
+                            Bullet { label: "The device restarts by itself; the screen goes dark meanwhile." }
                         }
                     }
                     Column {   // idle: actions at the bottom
@@ -672,7 +682,7 @@ Window {
                         Rectangle {
                             id: imageHold
                             visible: imageUpdate.canInstall
-                            width: parent.width; height: 96 * s; radius: 22 * s
+                            width: parent.width; height: 88 * s; radius: 22 * s
                             color: withAlpha(t.accent, 0.18)
                             border.color: t.accent; border.width: 2
                             clip: true
@@ -709,6 +719,7 @@ Window {
                         }
                         ActionButton {
                             width: parent.width
+                            height: 72 * s
                             label: "Scan again"
                             onClicked: imageUpdate.rescan()
                         }

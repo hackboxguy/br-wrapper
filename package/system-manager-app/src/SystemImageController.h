@@ -57,6 +57,11 @@ class SystemImageController : public QObject
     Q_PROPERTY(QString outcomeDetail READ outcomeDetail NOTIFY stateChanged)
     Q_PROPERTY(bool canRetry READ canRetry NOTIFY stateChanged)
     Q_PROPERTY(bool canInstall READ canInstall NOTIFY scanChanged)
+    // UI-side preflight: the engine commits a candidate only if every
+    // AB_HEALTH_UNITS unit stays active with no restarts. When one already is
+    // not, say so on the offer - and still allow the install, as the engine
+    // does (someone recovering a device needs exactly that). Empty when fine.
+    Q_PROPERTY(QString preflightWarning READ preflightWarning NOTIFY preflightChanged)
     Q_PROPERTY(bool dryRun READ dryRun CONSTANT)
     // The section sets this while it is on screen: USB polling runs only then
     Q_PROPERTY(bool active READ active WRITE setActive NOTIFY activeChanged)
@@ -70,6 +75,9 @@ public:
         QString logDir;          // one log per install run
         QString stateFile;       // what this app last started to install (for the outcome line)
         QString lockFile;        // shared with the firmware section and the badge
+        QString abConfig;        // the engine's board config (AB_HEALTH_UNITS)
+        QString systemctl = "systemctl";   // seam for tests
+        QString ackFile;         // acknowledged-fallback: the badge stops repeating a seen fallback
         bool dryRun = false;
         bool autoInstall = false;   // automated validation only: install once a scan offers one
     };
@@ -96,6 +104,7 @@ public:
     QString outcomeDetail() const { return m_outcomeDetail; }
     bool canRetry() const { return m_canRetry; }
     bool canInstall() const;
+    QString preflightWarning() const { return m_preflightWarning; }
     bool dryRun() const { return m_options.dryRun; }
     bool active() const { return m_active; }
     void setActive(bool active);
@@ -114,10 +123,13 @@ signals:
     void stateChanged();
     void progressChanged();
     void activeChanged();
+    void preflightChanged();
 
 private:
     void readRunningImage();
     void readStatus();
+    void runPreflight();
+    void acknowledgeFallback();
     QString runQuick(const QString &program, const QStringList &args, int timeoutMs) const;
     QStringList sudoWrap(QString &program, QStringList args) const;
     void pollUsb();
@@ -168,6 +180,8 @@ private:
     QTimer m_usbTimer;       // 2 s, while the section is visible and idle
     QTimer m_progressTimer;  // 500 ms, while installing
     QTimer m_statusTimer;    // 5 s, while the running image is a candidate
+    QTimer m_preflightTimer; // 5 s, while the section is visible
+    QString m_preflightWarning;
 };
 
 #endif // SYSTEMIMAGECONTROLLER_H

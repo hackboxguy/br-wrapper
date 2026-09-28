@@ -6,9 +6,15 @@ images this system ships and installs them over I²C; **System image** installs 
 image from a USB stick on the A/B images (pi-ab-update). Later sections (FPGA update, system
 status) are meant to live in the same app.
 
-Logs go to `/data/system-manager/logs/` where `/data` is its own mount (the A/B images, whose
-root is an overlay on RAM; the directory is created once with `sudo -n`), otherwise to
-`<prefix>/usr/logs/`.
+**Where it keeps things** (`<data>`): `/data/system-manager` when it exists - the A/B images,
+whose root is an overlay on RAM, so only `/data` survives the reboot that ends every update.
+The image's data skeleton creates it (pi-owned); on images built before that, the app creates it
+once when `/data` is its own mount (without sudo first, then `sudo -n install -d`). Elsewhere
+(single-slot images) `<data>` is `<prefix>/usr`. In it: `logs/system-update/` (firmware runs),
+`logs/system-image-update/` (image runs and `last-install`), and `acknowledged-fallback`.
+`SYSTEM_MANAGER_DATA` overrides it (tests; the badge script follows it too).
+
+![System image section at 1920x720](docs/system-image-1920x720.png)
 
 ## Firmware section
 
@@ -48,7 +54,7 @@ Per-board status comes from the script's `RESULT` lines; the outcome from its ex
 After a successful update the app writes `Power cycle required` to `/tmp/micropanel-notice`,
 which the launcher shows as an amber header chip until the next boot. The update cannot be left
 from the UI while it runs, and the app ignores SIGTERM/SIGINT during it. Each run's output is
-logged under `<logs>/system-update/` (see above for where `<logs>` is).
+logged under `<data>/logs/system-update/`.
 
 ## System image section
 
@@ -75,12 +81,20 @@ support in-system updates" and nothing else.
   signature, or the version already running (the engine refuses only an identical version;
   signed downgrades are allowed). No button either while the running image is still an
   uncommitted candidate - the engine leaves that guard to the UI.
+- **Preflight** (UI side, the engine is unchanged): the engine keeps a new image only if every
+  unit in `AB_HEALTH_UNITS` (its board config) stays active with no restarts for the settle
+  window. The section checks them on the running system (`systemctl is-active`,
+  `systemctl show --property=NRestarts`) when an offer appears and every 5 s while it is on
+  screen; when one is down or has restarted, the offer card says "The new image would not be
+  kept: <unit> is not running" (or "has restarted N times"). The install stays allowed, as in
+  the engine: someone recovering a device needs exactly that.
 - **Install**, after a 1.5 s hold: `sudo -n ab-update install usb`. The bar follows the
   engine's progress file (`<runtime-dir>/progress`, polled every 500 ms, never the output);
   `writing` is the long phase. The tab cannot be left, SIGTERM/SIGINT are ignored, and
   `/tmp/system-update.lock` is held. The output is logged line by line (fsync) under
-  `<prefix>/usr/logs/system-image-update/`, and `last-install` there records the version being
-  installed, so the line after the reboot can name it.
+  `<data>/logs/system-image-update/`, and `last-install` there records the version being
+  installed (not on a dry run), so the line after the reboot can name it. If the engine's public
+  status ever carries `version=`, that wins.
 - **End**: `arming` shows "Rebooting into the new image…" and the engine reboots. A
   `failed-<class>` shows the class's text and whether a retry makes sense (source, payload,
   integrity and stall: yes; signature, compatibility, version and the slot classes: no;
@@ -88,7 +102,9 @@ support in-system updates" and nothing else.
 - **After the reboot**: `<runtime-dir>/status` gives `committed`, `candidate-armed` or
   `fallback`; the tab shows "Running 02.06 (committed)", "…still being verified", or "The
   update to 02.06 did not pass its health check; running 02.05 again". The app opens on this
-  tab when it has such news or the last scan found an installable bundle.
+  tab when it has such news or the last scan found an installable bundle. Opening the tab after
+  a fallback writes `<data>/acknowledged-fallback` (`version=` of the install it refers to), so
+  the launcher badge stops repeating it; the tab keeps the line.
 
 The engine's paths come from its board config (`/usr/lib/pi-ab-update/ab-update.conf`,
 `AB_RUNTIME_DIR`, `AB_MANIFEST`), parsed like the engine parses it; the options below override.
@@ -100,6 +116,13 @@ progress file through the phases (`FAKE_AB_STEP` seconds per step, ending in `FA
 default `arming`, or e.g. `failed-integrity`). With `--dry-run` nothing is elevated, the
 scanner prints a canned bundle (or `SYSTEM_IMAGE_SCAN_FAKE=<file>`), and the real
 `/usr/local/bin/ab-update` is never started:
+
+`tests/offscreen-shots.sh <binary> <out-dir> [WxH]` renders every state to PNG with
+`QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software` (needs the Qt SVG image plugin and the
+QtQuick/QtQuick.Window QML modules), using the stand-in, `tests/fake-systemctl` for the
+preflight (`FAKE_DOWN`, `FAKE_RESTARTED`), canned scans and a canned `update-iocs.sh`.
+`tests/badge-fixture.sh` runs the badge script against fake status and acknowledgement records.
+By hand:
 
 ```
 mkdir -p /tmp/fake-ab && printf 'IMAGE_VERSION=02.05\nIMAGE_LAYOUT=ab\nIMAGE_VARIANT=base\n' > /tmp/fake-ab/manifest.env
@@ -116,7 +139,10 @@ firmware other than the shipped image, same read-only check as the app), `Image 
 (a stick carries exactly one signed bundle of another version; the scan also refreshes
 `/run/system-manager/last-scan`). The launcher runs it as the button's `badge_command` about
 20 s after start and whenever an app exits. It skips while `/tmp/system-update.lock` is held by
-a running process.
+a running process. `Update rolled back` is shown once per fallback: after the System image tab
+has been opened, `<data>/acknowledged-fallback` names the same install (the version from the
+engine's status if it publishes one, else `last-install`, else `-`) and the line is skipped; a
+fallback of another install shows it again.
 
 ## Options
 
@@ -124,7 +150,7 @@ a running process.
 |---|---|---|
 | `--update-tool <path>` | `<bindir>/update-iocs.sh` | The update script |
 | `--image-dir <dir>` | `<prefix>/share/sp6bins/firmware/bios-bin` | Shipped firmware images |
-| `--log-dir <dir>` | `<prefix>/usr/logs/system-update` | Update logs |
+| `--log-dir <dir>` | `<data>/logs/system-update` | Firmware update logs |
 | `--notice-file <path>` | `/tmp/micropanel-notice` | Launcher header notice |
 | `--dry-run` | off | Check images and show the flow; nothing is written |
 | `--auto-update` | off | Automated validation: start the update as soon as a check finds one (no hold) |
@@ -132,7 +158,11 @@ a running process.
 | `--scan-tool <path>` | `<bindir>/system-image-scan.sh` | USB bundle scanner |
 | `--runtime-dir <dir>` | engine config `AB_RUNTIME_DIR`, else `/run/ab-update` | Engine progress and status files |
 | `--image-manifest <path>` | engine config `AB_MANIFEST`, else `<prefix>/share/micropanel/image-manifest.env` | Running image manifest |
-| `--image-log-dir <dir>` | `<prefix>/usr/logs/system-image-update` | Image update logs and `last-install` |
+| `--image-log-dir <dir>` | `<data>/logs/system-image-update` | Image update logs and `last-install` |
+| `--systemctl <path>` | `systemctl` | What the preflight asks (test seam) |
+| `--screenshot <file>` | off | Grab the window once the shown section has its first result, then quit |
+| `--screenshot-delay <ms>` | 1200 | Time between that result and the grab |
+| `--window-size WxH` | full screen | Window size (with `--screenshot`, e.g. 1920x720 offscreen) |
 | `--auto-install` | off | Automated validation: install the bundle a scan offers, once, 3 s after the offer (no hold) |
 | `--section firmware\|image` | image when it has news, else firmware | Tab to open first |
 

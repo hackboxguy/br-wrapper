@@ -87,6 +87,8 @@ SystemImageController::SystemImageController(const Options &options, QObject *pa
     m_statusTimer.setInterval(5000);
     connect(&m_statusTimer, &QTimer::timeout, this, &SystemImageController::readStatus);
     if (m_lastOutcome == "candidate-armed") m_statusTimer.start();
+    m_preflightTimer.setInterval(5000);
+    connect(&m_preflightTimer, &QTimer::timeout, this, &SystemImageController::runPreflight);
 }
 
 SystemImageController::~SystemImageController()
@@ -117,12 +119,66 @@ void SystemImageController::readStatus()
 {
     const QString before = m_lastOutcome;
     m_lastOutcome = fileValue(QDir(m_options.runtimeDir).filePath("status"), "state");
-    m_lastOfferedVersion = fileValue(m_options.stateFile, "version");
+    // The engine's public status carries only state= today; if it ever
+    // publishes the candidate's version, that wins over this app's own record
+    const QString published = fileValue(QDir(m_options.runtimeDir).filePath("status"), "version");
+    m_lastOfferedVersion = !published.isEmpty() ? published : fileValue(m_options.stateFile, "version");
     m_lastFromVersion = fileValue(m_options.stateFile, "from");
     if (m_lastOutcome != "candidate-armed") m_statusTimer.stop();
     if (m_lastOutcome != before) {
         emit outcomeChanged();
         emit scanChanged();   // canInstall depends on it
+    }
+    if (m_active) acknowledgeFallback();
+}
+
+// The owner's rule: once the section has been seen after a fallback, the badge
+// stops repeating "Update rolled back" for that fallback. The record names the
+// install it refers to (the same value the badge script derives), so a later
+// fallback of another install shows the badge again. The section itself keeps
+// showing the outcome line.
+void SystemImageController::acknowledgeFallback()
+{
+    if (m_lastOutcome != "fallback" || m_options.ackFile.isEmpty()) return;
+    const QString ref = m_lastOfferedVersion.isEmpty() ? QString("-") : m_lastOfferedVersion;
+    if (fileValue(m_options.ackFile, "version") == ref) return;
+    QDir().mkpath(QFileInfo(m_options.ackFile).absolutePath());
+    QFile f(m_options.ackFile);
+    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        f.write(QString("version=%1\n").arg(ref).toUtf8());
+        f.flush();
+        ::fsync(f.handle());
+    }
+}
+
+// Mirrors the engine's commit predicate (ab-update-commit: every unit active,
+// NRestarts unchanged from 0) on the running system, as `ab-update install`
+// itself warns on stderr - which a UI never sees.
+void SystemImageController::runPreflight()
+{
+    QString units;
+    QFile conf(m_options.abConfig);
+    if (conf.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!conf.atEnd()) {
+            const QString line = QString::fromUtf8(conf.readLine()).trimmed();
+            if (line.startsWith("AB_HEALTH_UNITS=") && line.length() > 16) units = line.mid(16);
+        }
+    }
+    QStringList problems;
+    for (const QString &unit : units.split(' ', Qt::SkipEmptyParts)) {
+        const QString active = runQuick(m_options.systemctl, {"is-active", unit}, 2000);
+        const QString restarts = runQuick(m_options.systemctl,
+                                          {"show", "--value", "--property=NRestarts", unit}, 2000);
+        if (active != "active") problems << QString("%1 is not running").arg(unit);
+        else if (!restarts.isEmpty() && restarts != "0")
+            problems << QString("%1 has restarted %2 times").arg(unit, restarts);
+    }
+    const QString warning = problems.isEmpty() ? QString()
+                          : "The new image would not be kept: " + problems.join("; ");
+    if (warning != m_preflightWarning) {
+        qInfo().noquote() << "[image] preflight:" << (warning.isEmpty() ? QString("health units ok") : warning);
+        m_preflightWarning = warning;
+        emit preflightChanged();
     }
 }
 
@@ -172,8 +228,12 @@ QString SystemImageController::runQuick(const QString &program, const QStringLis
         p.waitForFinished(500);
         return QString();
     }
-    if (p.exitStatus() != QProcess::NormalExit || p.exitCode() != 0) return QString();
-    return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+    if (p.exitStatus() != QProcess::NormalExit) return QString();
+    const QString out = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+    // `systemctl is-active` answers "inactive"/"failed" with a non-zero exit;
+    // the answer is still the answer. Everything else wants exit 0.
+    if (p.exitCode() != 0 && !(args.value(0) == "is-active" && !out.isEmpty())) return QString();
+    return out;
 }
 
 // Anything that mounts or installs needs root. The launcher runs apps as pi,
@@ -206,6 +266,13 @@ void SystemImageController::setActive(bool active)
         m_usbTimer.start();
     } else {
         m_usbTimer.stop();
+    }
+    if (m_active) {
+        acknowledgeFallback();
+        runPreflight();
+        m_preflightTimer.start();
+    } else {
+        m_preflightTimer.stop();
     }
 }
 
@@ -333,6 +400,7 @@ void SystemImageController::parseScan(const QString &out)
             m_scanState = "ready";
         }
     }
+    if (m_scanState == "ready") runPreflight();
     emit scanChanged();
 
     // Automated validation only, never the launcher's button: install once

@@ -34,13 +34,27 @@ as_root() {
     if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo -n "$@"; fi
 }
 
-# 1. A system image update that fell back
+# 1. A system image update that fell back - unless the user has already seen
+# it: System Manager records acknowledged-fallback when its System image section
+# is opened after a fallback, naming the install it refers to. A later fallback
+# of another install shows the badge again. The reference is the candidate's
+# version: from the engine's public status once it publishes one, else from the
+# app's own last-install record, else "-" (the same rule the app uses).
 if [ -x "$AB_UPDATE" ]; then
     rundir=$(awk 'index($0, "AB_RUNTIME_DIR=") == 1 { v = substr($0, 16) } END { print v }' "$AB_CONF" 2>/dev/null)
     [ -n "$rundir" ] || rundir=/run/ab-update
     if grep -qx 'state=fallback' "$rundir/status" 2>/dev/null; then
-        echo "Update rolled back"
-        exit 0
+        data=${SYSTEM_MANAGER_DATA:-/data/system-manager}
+        [ -d "$data" ] || data=$(dirname "$HERE")/usr
+        ref=$(awk -F= '$1 == "version" { print substr($0, 9); exit }' "$rundir/status" 2>/dev/null)
+        [ -n "$ref" ] || ref=$(awk -F= '$1 == "version" { print substr($0, 9); exit }' \
+                                   "$data/logs/system-image-update/last-install" 2>/dev/null)
+        [ -n "$ref" ] || ref=-
+        ack=$(awk -F= '$1 == "version" { print substr($0, 9); exit }' "$data/acknowledged-fallback" 2>/dev/null)
+        if [ "$ack" != "$ref" ]; then
+            echo "Update rolled back"
+            exit 0
+        fi
     fi
 fi
 
