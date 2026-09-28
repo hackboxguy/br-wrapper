@@ -68,14 +68,18 @@ support in-system updates" and nothing else.
 
 - **Scan** while the tab is on screen: the block-device inventory is polled every 2 s, and a
   change (stick in or out) runs `sudo -n system-image-scan.sh`. The scanner uses the engine's
-  own USB rule - USB transport, a vfat/exfat whole-disk filesystem or partition, `*.mpupdate`
+  own USB rule - USB transport, a vfat/exfat/ntfs whole-disk filesystem or partition (NTFS is
+  mounted with `ntfs3` first, then a plain `mount`, as the engine does), `*.mpupdate`
   at the **top level** of the filesystem only, exactly one across all sticks - mounts each
   filesystem `ro,nosuid,nodev,noexec` in a private directory under `/run/system-manager/`,
   reads the bundle's `manifest` and `manifest.sig` (the first two members, so the rootfs is not
   read), verifies the signature against the pinned key, and always unmounts. Bundles found in
   folders are reported separately, because the engine will not see them. Output:
   `BUNDLE device= path= bytes= version= variant= boards= format= signature=ok|bad|nokey|unreadable`,
-  `NESTED device= path=`, `SUMMARY sticks= filesystems= bundles= nested= running= layout=ab|single`.
+  `NESTED device= path=`, `UNMOUNTABLE device= fstype=`,
+  `SUMMARY sticks= filesystems= bundles= nested= unmountable= running= layout=ab|single`. A
+  filesystem that will not mount read-only, with no bundle found anywhere, is shown as "The USB
+  stick could not be read" - the engine fails such a stick as `failed-source`, not as "no bundle".
 - **Offer**: the running image and slot, and the stick's bundle (version, variant, boards,
   size, signature). No button when there is no stick, no bundle, more than one, a bad
   signature, or the version already running (the engine refuses only an identical version;

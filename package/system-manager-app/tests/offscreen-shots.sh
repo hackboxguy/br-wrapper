@@ -16,6 +16,7 @@ printf 'IMAGE_VERSION=02.03\nIMAGE_LAYOUT=ab\nIMAGE_VARIANT=base\n' > "$work/man
 printf 'AB_RUNTIME_DIR=%s\nAB_HEALTH_UNITS=qt-demo-launcher.service micropanel.service\n' "$work/run" > "$work/ab.conf"
 printf 'BUNDLE device=/dev/sda1 path=/micropanel-base-02.04.mpupdate bytes=798218240 version=02.04 variant=base boards=pi4 format=2 signature=ok\nSUMMARY sticks=1 filesystems=1 bundles=1 nested=0 running=02.03 layout=ab\n' > "$work/cases/ready"
 printf 'SUMMARY sticks=0 filesystems=0 bundles=0 nested=0 running=02.03 layout=ab\n' > "$work/cases/nostick"
+printf 'UNMOUNTABLE device=/dev/sda1 fstype=ntfs\nSUMMARY sticks=1 filesystems=1 bundles=0 nested=0 unmountable=1 running=02.03 layout=ab\n' > "$work/cases/unreadable"
 cat > "$work/update-iocs.sh" <<'EOF'
 #!/bin/sh
 echo "RESULT board=ots status=uptodate version=0114 image=REMOTE_DISP_OTS_display_manager_ota.bin file_version=01.14"
@@ -44,6 +45,7 @@ FAKE_DOWN= FAKE_RESTARTED= shot image-offer ready --section image
 FAKE_DOWN=qt-demo-launcher.service shot image-offer-unit-down ready --section image
 FAKE_RESTARTED=micropanel.service=2505 shot image-offer-unit-restarted ready --section image
 FAKE_AB_STEP=1 shot image-installing ready --section image --auto-install --screenshot-delay 11000
+shot image-unreadable unreadable --section image
 echo state=candidate-armed > "$work/run/status"
 shot image-verifying nostick --section image
 echo state=fallback > "$work/run/status"

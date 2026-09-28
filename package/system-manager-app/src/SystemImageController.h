@@ -42,7 +42,8 @@ class SystemImageController : public QObject
     // One line for the top of the section after a reboot, empty when nothing to say
     Q_PROPERTY(QString lastOutcomeText READ lastOutcomeText NOTIFY outcomeChanged)
     // idle | scanning | nostick | none | nested | many | one (not installable,
-    // see scanDetail) | same-version | ready | error
+    // see scanDetail) | same-version | ready | unreadable (a filesystem would
+    // not mount and no bundle was found) | error
     Q_PROPERTY(QString scanState READ scanState NOTIFY scanChanged)
     Q_PROPERTY(QVariantMap offered READ offered NOTIFY scanChanged)
     Q_PROPERTY(QString scanDetail READ scanDetail NOTIFY scanChanged)

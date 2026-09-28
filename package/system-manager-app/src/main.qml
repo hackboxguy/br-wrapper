@@ -555,11 +555,12 @@ Window {
                               : st === "none" ? "No update bundle on the stick"
                               : st === "nested" ? "The bundle is inside a folder"
                               : st === "many" ? "More than one bundle on the stick"
+                              : st === "unreadable" ? "The stick could not be read"
                               : "The stick could not be scanned"
                     note: st === "ready" || st === "same-version" ? "Signed with this device's release key"
                           : imageUpdate.scanDetail
                     noteTone: st === "ready" || st === "same-version" ? t.ok
-                              : st === "one" || st === "error" ? t.bad : t.sub
+                              : st === "one" || st === "error" || st === "unreadable" ? t.bad : t.sub
                     // preflight: the engine would not keep the new image
                     warning: st === "ready" ? imageUpdate.preflightWarning : ""
                     pillLabel: st === "ready" ? "Update available"
@@ -568,10 +569,10 @@ Window {
                                : st === "scanning" || st === "idle" ? "Scanning"
                                : st === "nostick" ? "No stick"
                                : st === "many" ? "Refused"
-                               : st === "error" ? "Error" : "No bundle"
+                               : st === "error" || st === "unreadable" ? "Error" : "No bundle"
                     tone: st === "ready" ? t.warn
                           : st === "same-version" ? t.ok
-                          : st === "one" || st === "many" || st === "error" ? t.bad : t.sub
+                          : st === "one" || st === "many" || st === "error" || st === "unreadable" ? t.bad : t.sub
                 }
             }
 
@@ -626,12 +627,12 @@ Window {
                                 tint: imagePanel.verifying ? t.info
                                       : imageIdleView.offerReady ? t.warn
                                       : imagePanel.st === "same-version" ? t.ok
-                                      : imagePanel.st === "one" || imagePanel.st === "many" || imagePanel.st === "error" ? t.bad
+                                      : imagePanel.st === "one" || imagePanel.st === "many" || imagePanel.st === "error" || imagePanel.st === "unreadable" ? t.bad
                                       : t.sub
                                 glyph: imagePanel.verifying ? "info"
                                        : imageIdleView.offerReady ? "update"
                                        : imagePanel.st === "same-version" ? "check"
-                                       : imagePanel.st === "one" || imagePanel.st === "many" || imagePanel.st === "error" ? "bad"
+                                       : imagePanel.st === "one" || imagePanel.st === "many" || imagePanel.st === "error" || imagePanel.st === "unreadable" ? "bad"
                                        : "info"
                             }
                             Text {
@@ -646,6 +647,7 @@ Window {
                                       : imagePanel.st === "nested" ? "Move the bundle to the top of the stick"
                                       : imagePanel.st === "many" ? "More than one bundle — leave exactly one on the stick"
                                       : imagePanel.st === "one" ? "This bundle cannot be installed"
+                                      : imagePanel.st === "unreadable" ? "The USB stick could not be read"
                                       : "The stick could not be scanned"
                                 color: t.text
                                 font.family: t.font; font.pixelSize: 30 * s; font.weight: Font.DemiBold
@@ -656,7 +658,7 @@ Window {
                             width: parent.width; wrapMode: Text.WordWrap
                             text: imagePanel.verifying ? "Wait a minute and come back. The new image commits itself once it has run healthy for 30 seconds."
                                   : imagePanel.st === "same-version" ? "The stick carries " + imageSection.offer.version + ", which this system already runs."
-                                  : imagePanel.st === "nostick" ? "Plug in a USB stick (FAT32 or exFAT) that holds one .mpupdate bundle at its top level."
+                                  : imagePanel.st === "nostick" ? "Plug in a USB stick (FAT32, exFAT or NTFS) that holds one .mpupdate bundle at its top level."
                                   : imagePanel.st === "none" ? "Copy one .mpupdate bundle to the top level of the stick."
                                   : imagePanel.st === "many" ? "The installer refuses to choose between bundles. Remove all but one, then scan again."
                                   : imageUpdate.scanDetail

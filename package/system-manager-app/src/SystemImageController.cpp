@@ -44,7 +44,7 @@ struct FailureText { const char *cls; const char *title; const char *detail; int
 // retry: 0 no, 1 yes, 2 once (the first time in this session)
 const FailureText kFailures[] = {
     {"source", "No USB stick could be read",
-     "Check that the stick is plugged in and formatted FAT32 or exFAT, then scan again.", 1},
+     "Check that the stick is plugged in and formatted FAT32, exFAT or NTFS, then scan again.", 1},
     {"payload", "No bundle, or more than one, on the stick",
      "Leave exactly one .mpupdate file at the top level of the stick, then scan again.", 1},
     {"signature", "The bundle is not signed by this device's release key",
@@ -351,10 +351,15 @@ void SystemImageController::parseScan(const QString &out)
 {
     QList<QMap<QString, QString>> bundles;
     QString nestedPath;
+    QStringList unmountable;
     QMap<QString, QString> summary;
     for (const QString &line : out.split('\n', Qt::SkipEmptyParts)) {
         if (line.startsWith("BUNDLE ")) bundles << fields(line.mid(7));
         else if (line.startsWith("NESTED ") && nestedPath.isEmpty()) nestedPath = fields(line.mid(7)).value("path");
+        else if (line.startsWith("UNMOUNTABLE ")) {
+            const auto f = fields(line.mid(12));
+            unmountable << QString("%1 (%2)").arg(f.value("device"), f.value("fstype"));
+        }
         else if (line.startsWith("SUMMARY ")) summary = fields(line.mid(8));
     }
 
@@ -368,7 +373,13 @@ void SystemImageController::parseScan(const QString &out)
         m_scanDetail = "The stick could not be read: the scanner needs root (sudo).";
     } else if (filesystems == 0) {
         m_scanState = "nostick";
-        if (sticks > 0) m_scanDetail = "The USB stick has no FAT32 or exFAT filesystem.";
+        if (sticks > 0) m_scanDetail = "The USB stick has no FAT32, exFAT or NTFS filesystem.";
+    } else if (bundles.isEmpty() && !unmountable.isEmpty()) {
+        // What the engine does with the same stick: no bundle found and a
+        // filesystem it could not mount is a source failure, not "no bundle"
+        m_scanState = "unreadable";
+        m_scanDetail = QString("%1 could not be mounted read-only. Check the stick, or copy the bundle to "
+                               "a FAT32, exFAT or NTFS stick.").arg(unmountable.join(", "));
     } else if (bundles.isEmpty() && summary.value("nested").toInt() > 0) {
         m_scanState = "nested";
         m_scanDetail = QString("%1 is inside a folder. Move it to the top level of the stick.").arg(nestedPath);
