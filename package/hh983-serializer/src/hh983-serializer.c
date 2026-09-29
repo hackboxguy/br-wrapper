@@ -274,6 +274,58 @@ static int fpga_addr = 0x1D;
 module_param(fpga_addr, int, 0444);
 MODULE_PARM_DESC(fpga_addr, "Mode 1 only: 7-bit address of the panel's local-dimming FPGA to expose to the host, routed via target slot 2 only if plain pass-through cannot already reach it (default: 0x1D; 0 = route nothing)");
 
+/* FPD-Link re-train (mode 1), 2026-09-28.
+ *
+ * During long I2C-heavy transfers to the panel (the FPGA OTA flash) the
+ * FPD-Link PHY between the 983 and the 988 has been seen to drop while the DP
+ * input stays locked (tmp-docs/fpga-ab-update-test-report-v3.md section 4):
+ * every 988 access then fails with -121, the FPGA behind it keeps running,
+ * and until now only a power cycle brought the link back.  The poll now
+ * notices the loss (988 GP_STATUS_0 unreadable or FPD4_LOCK clear on
+ * link_retrain_after consecutive polls) and re-trains the link: 983 digital
+ * reset, passthrough, wait for 988 lock, 988 passthrough, TDDI and FPGA
+ * routing.  It does NOT use the display-board GPIO4/GPIO6 reset of
+ * hh983_recover_link(): that would reset the panel electronics and kill an
+ * FPGA flash in progress.  Bounded: backoff 1/2/5/10/30/60 s, at most
+ * link_retrain_max attempts per loss.
+ */
+/* Default OFF (report v6/v7): the re-train recovered 0 of 4 natural link losses
+ * (the 988 stays unreachable; class W is the 988's port-0 I2C controller, which
+ * nothing on the 983 side clears), and a 983 digital reset blanks the DP video
+ * until the source re-trains. Kept for its loss counters and as an opt-in. */
+static int link_retrain_after = 0;
+module_param(link_retrain_after, int, 0644);
+MODULE_PARM_DESC(link_retrain_after, "Mode 1: consecutive polls with the 988 unreachable or FPD4_LOCK clear before an FPD-Link re-train (default: 0 = never re-train; opt-in, see report v7)");
+
+static int link_retrain_max = 10;
+module_param(link_retrain_max, int, 0644);
+MODULE_PARM_DESC(link_retrain_max, "Mode 1: maximum re-train attempts per link loss (default: 10)");
+
+/* Re-train tuning (bench, 2026-09-28): the 983 digital reset also resets the
+ * DP RX and the video stays empty until the DP source re-trains. */
+static int link_retrain_reset = 2;
+module_param(link_retrain_reset, int, 0644);
+MODULE_PARM_DESC(link_retrain_reset, "Mode 1 re-train: 2=escalate: first attempt of a loss without reset, later ones with the 983 digital reset (default); 1=always reset; 0=never reset");
+static int link_retrain_hpd_ms = 200;
+module_param(link_retrain_hpd_ms, int, 0644);
+MODULE_PARM_DESC(link_retrain_hpd_ms, "Mode 1 re-train: HPD low time in ms after the re-train (default 200; 0 = no HPD toggle)");
+
+static int force_retrain;
+module_param(force_retrain, int, 0644);
+MODULE_PARM_DESC(force_retrain, "Mode 1: write 1 to run one FPD-Link re-train at the next poll (test hook; reads back 0 once done)");
+
+static int link_lost_count;
+module_param(link_lost_count, int, 0444);
+MODULE_PARM_DESC(link_lost_count, "Mode 1: FPD-Link losses detected since load (read-only)");
+
+static int link_retrain_count;
+module_param(link_retrain_count, int, 0444);
+MODULE_PARM_DESC(link_retrain_count, "Mode 1: FPD-Link re-train attempts since load (read-only)");
+
+static int link_retrain_ok_count;
+module_param(link_retrain_ok_count, int, 0444);
+MODULE_PARM_DESC(link_retrain_ok_count, "Mode 1: FPD-Link re-trains that brought the 988 back (read-only)");
+
 /* HX8530 on the 984's local I2C Port 1: physical address vs host-visible alias. */
 #define OTS_TOUCH_PHYS_ADDR	0x49	/* actual 7-bit addr on the 984 Port 1 bus */
 #define OTS_TOUCH_HOST_ADDR	0x48	/* address presented to the Pi (himax DT reg) */
@@ -428,6 +480,11 @@ struct hh983_data {
 	/* Mode 1 TDDI routing */
 	int tddi_port_used;          /* deserializer I2C port the touch route points at */
 	bool tddi_found;             /* the TDDI answered there */
+	/* Mode 1 FPD-Link re-train */
+	int fpd_fail;                /* consecutive polls with the 988 unreachable / unlocked */
+	int fpd_attempts;            /* re-train attempts in the current loss */
+	unsigned long fpd_next_at;   /* jiffies: earliest next re-train */
+	unsigned long fpd_log_at;    /* jiffies: next "still down" log line */
 };
 
 static int hh983_write_reg(struct i2c_client *client, u8 reg, u8 value)
@@ -1598,6 +1655,154 @@ static void hh983_clear_dp_events(struct hh983_data *data)
 	hh983_apb_read(data->client, APB_SINK_0_INT_CAUSE);
 }
 
+/* 988 register read that does not log: the FPD-Link check below expects
+ * failures while the link is down and rate-limits its own message. */
+static int hh983_read_deser_quiet(struct i2c_client *client, u8 deser_addr, u8 reg)
+{
+	struct i2c_msg msgs[2];
+	u8 reg_buf = reg, val_buf = 0;
+	int ret;
+
+	msgs[0].addr = deser_addr; msgs[0].flags = 0;        msgs[0].len = 1; msgs[0].buf = &reg_buf;
+	msgs[1].addr = deser_addr; msgs[1].flags = I2C_M_RD; msgs[1].len = 1; msgs[1].buf = &val_buf;
+	ret = i2c_transfer(client->adapter, msgs, 2);
+	if (ret != 2)
+		return ret < 0 ? ret : -EIO;
+	return val_buf;
+}
+
+static void hh983_route_fpga(struct hh983_data *data);
+static int hh983_route_tddi(struct hh983_data *data);
+
+/* Re-train the FPD-Link to the 988 without touching the display board.
+ * Returns true when the 988 answers with FPD4_LOCK set afterwards. */
+static bool hh983_fpd_retrain(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int i, sts0 = -1;
+
+	link_retrain_count++;
+	dev_notice(&client->dev, "FPD-Link re-train #%d (attempt %d of this loss)\n",
+		   link_retrain_count, data->fpd_attempts + 1);
+
+	/* The 983 digital reset also resets the DP RX: the video stays empty
+	 * until the DP source re-trains, and an HPD pulse (tried 0.2 to 4 s)
+	 * does not make the rig's HDMI-to-DP converter do that (HW 2026-09-28).
+	 * So the first attempt of a loss goes without it. */
+	if (link_retrain_reset == 1 ||
+	    (link_retrain_reset == 2 && data->fpd_attempts > 0)) {
+		hh983_write_reg(client, SER_RESET_CTL, SER_DIGITAL_RESET_0);   /* self-clearing, keeps registers */
+		msleep(100);
+	}
+	hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
+	msleep(10);
+
+	for (i = 0; i < 40; i++) {                                     /* up to 2 s for the 988 to lock */
+		sts0 = hh983_read_deser_quiet(client, data->deser_addr, DES988_GP_STATUS_0);
+		if (sts0 >= 0 && (sts0 & 0x01))
+			break;
+		msleep(50);
+	}
+	if (sts0 < 0 || !(sts0 & 0x01)) {
+		dev_notice(&client->dev, "FPD-Link re-train: 988 not locked after 2 s (sts0=%d)\n", sts0);
+		return false;
+	}
+
+	hh983_write_deser_reg(client, data->deser_addr, DES988_I2C_CONTROL, DES988_ENABLE_PASSTHROUGH);
+	usleep_range(5000, 10000);
+	hh983_route_tddi(data);
+	hh983_route_fpga(data);
+
+	/* The digital reset also resets the DP RX: the video stream to the
+	 * 988 stays empty until the source re-trains (HW 2026-09-28: "FPD-Link
+	 * locked but no video in stream" after a reset).  Toggle HPD, as
+	 * hh983_recover_link() does, so the source re-reads EDID and re-trains
+	 * -- without the display-board GPIO reset.  Then clear the SINK events
+	 * this causes so the existing NO_VIDEO/VIDEO_DETECT path (which does
+	 * pulse the display-board reset) does not fire on our own re-train. */
+	if (link_retrain_hpd_ms > 0) {
+		hh983_apb_write(client, APB_LINK_ENABLE, 0x00);
+		msleep(min(link_retrain_hpd_ms, 10000));
+		hh983_apb_write(client, APB_LINK_ENABLE, 0x01);
+		msleep(500);
+	}
+	hh983_clear_dp_events(data);
+	data->recovery_cooldown = 5;
+
+	sts0 = hh983_read_deser_quiet(client, data->deser_addr, DES988_GP_STATUS_0);
+	if (sts0 >= 0 && (sts0 & 0x01)) {
+		link_retrain_ok_count++;
+		dev_notice(&client->dev, "FPD-Link re-train OK (988 STS0=0x%02X), ok count %d\n",
+			   sts0, link_retrain_ok_count);
+		return true;
+	}
+	dev_notice(&client->dev, "FPD-Link re-train: 988 lost again right after routing (sts0=%d)\n", sts0);
+	return false;
+}
+
+/* Mode 1 FPD-Link watchdog, run every poll.  Returns true while the link is
+ * considered down (the caller then skips the 988 DTG check, whose reads would
+ * only fail and flood the log). */
+static bool hh983_fpd_link_check(struct hh983_data *data)
+{
+	static const int backoff_s[] = { 1, 2, 5, 10, 30, 60 };
+	struct i2c_client *client = data->client;
+	int sts0;
+
+	if (force_retrain) {
+		force_retrain = 0;
+		dev_notice(&client->dev, "force_retrain requested\n");
+		if (hh983_fpd_retrain(data)) {
+			data->fpd_fail = 0;
+			data->fpd_attempts = 0;
+		}
+		return data->fpd_fail > 0;
+	}
+
+	sts0 = hh983_read_deser_quiet(client, data->deser_addr, DES988_GP_STATUS_0);
+	if (sts0 >= 0 && (sts0 & 0x01)) {
+		if (data->fpd_fail)
+			dev_notice(&client->dev, "FPD-Link to the 988 is back after %d polls (%d re-train attempts)\n",
+				   data->fpd_fail, data->fpd_attempts);
+		data->fpd_fail = 0;
+		data->fpd_attempts = 0;
+		return false;
+	}
+
+	if (data->fpd_fail == 0) {
+		link_lost_count++;
+		dev_warn(&client->dev, "FPD-Link to the 988 lost (%s, loss #%d)\n",
+			 sts0 < 0 ? "988 unreachable" : "FPD4_LOCK clear", link_lost_count);
+		data->fpd_attempts = 0;
+		data->fpd_next_at = jiffies;
+		data->fpd_log_at = jiffies + 30 * HZ;
+	} else if (time_after_eq(jiffies, data->fpd_log_at)) {
+		dev_warn(&client->dev, "FPD-Link to the 988 still down (%d polls, %d re-train attempts)\n",
+			 data->fpd_fail, data->fpd_attempts);
+		data->fpd_log_at = jiffies + 30 * HZ;
+	}
+	data->fpd_fail++;
+
+	if (link_retrain_after > 0 && data->fpd_fail >= link_retrain_after &&
+	    data->fpd_attempts < link_retrain_max &&
+	    time_after_eq(jiffies, data->fpd_next_at)) {
+		int b = data->fpd_attempts < (int)ARRAY_SIZE(backoff_s) ?
+			backoff_s[data->fpd_attempts] : backoff_s[ARRAY_SIZE(backoff_s) - 1];
+
+		if (hh983_fpd_retrain(data)) {
+			data->fpd_fail = 0;
+			data->fpd_attempts = 0;
+			return false;
+		}
+		data->fpd_attempts++;
+		data->fpd_next_at = jiffies + b * HZ;
+		if (data->fpd_attempts >= link_retrain_max)
+			dev_warn(&client->dev, "FPD-Link re-train: giving up after %d attempts; a power cycle is needed\n",
+				 data->fpd_attempts);
+	}
+	return true;
+}
+
 /* Periodic link status monitor — detects DP input video loss/return
  * and triggers automatic video recovery.
  *
@@ -1696,6 +1901,9 @@ static void hh983_link_work_fn(struct work_struct *work)
 	/* Video is up and no recovery is settling: the failure left to look for
 	 * is the 988 DTG wedging under us, which this monitor is blind to
 	 * because it watches SINK video events and a wedge produces none. */
+	if (hh983_fpd_link_check(data))
+		goto resched;                   /* FPD-Link down: nothing behind the 988 is reachable */
+
 	if (data->link_up && data->recovery_cooldown == 0)
 		hh983_des988_check_dtg(data);
 
