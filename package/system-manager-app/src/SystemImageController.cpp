@@ -487,6 +487,7 @@ void SystemImageController::startInstall()
     m_canRetry = false;
     m_phase = "starting";
     m_percent = 0;
+    m_loggedWriteStep = -1;
     m_pending.clear();
     m_startedAt = QDateTime::currentDateTime();
     m_clock.start();
@@ -535,6 +536,13 @@ void SystemImageController::pollProgress()
 
     if (phase != m_phase || overall != m_percent) {
         if (phase != m_phase) logLine(QString("phase %1 (%2%)").arg(phase).arg(progress));
+        // `writing` is the one long phase: a line per 10 % step, so a log cut
+        // off by a reset or a power cut shows how far the write had got
+        if (phase == "writing" && progress / 10 > m_loggedWriteStep) {
+            if (m_loggedWriteStep >= 0 || progress >= 10)
+                logLine(QString("writing %1%").arg(progress));
+            m_loggedWriteStep = progress / 10;
+        }
         m_phase = phase;
         m_percent = overall;
         emit progressChanged();

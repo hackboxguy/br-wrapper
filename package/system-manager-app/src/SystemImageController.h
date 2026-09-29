@@ -169,6 +169,7 @@ private:
     QString m_outcomeDetail;
     bool m_canRetry = false;
     int m_internalRetries = 0;
+    int m_loggedWriteStep = -1;   // last 10 % step of `writing` put in the log
     bool m_autoInstallDone = false;
 
     QProcess *m_install = nullptr;
