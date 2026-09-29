@@ -129,7 +129,7 @@ struct ThemeConfig {
     bool showClock = true;
     bool showIp = true;
     bool showResolution = true;
-    bool showImageVersion = true;  // "IMG 2.06" chip: the running SD-card image's IMAGE_VERSION
+    bool showImageVersion = true;  // "SW-VER 2.06" chip: the running SD-card image's IMAGE_VERSION
     QString imageManifest;     // image-manifest.env; empty = <prefix>/share/micropanel, then pi-ab-update's
     bool animations = true;
     QString noticeFile;        // first line shown as an amber header chip while the file exists
@@ -467,7 +467,7 @@ protected:
         // A notice comes first in the list so it is the last one dropped.
         QList<QPair<QString, QString>> chips;
         if (!m_notice.isEmpty()) chips << qMakePair(QString("!"), m_notice);
-        if (m_theme.showImageVersion && !m_imageVersion.isEmpty()) chips << qMakePair(QString("IMG"), m_imageVersion);
+        if (m_theme.showImageVersion && !m_imageVersion.isEmpty()) chips << qMakePair(QString("SW-VER"), m_imageVersion);
         if (m_theme.showResolution && !m_resolution.isEmpty()) chips << qMakePair(QString("RES"), m_resolution);
         if (m_theme.showIp) chips << qMakePair(QString("IP"), m_ip.isEmpty() ? QString("no link") : m_ip);
         if (m_theme.showIp && m_port > 0) chips << qMakePair(QString("API"), QString(":%1").arg(m_port));

@@ -303,7 +303,7 @@ uses it.
   "grid_spacing": 48,                 // Background grid pitch, 0 disables
   "show_clock": true,                 // HH:mm:ss clock with live pulse (frozen-frame check)
   "show_ip": true,                    // IP and API port chips
-  "show_image_version": true,         // "IMG 2.06" chip: IMAGE_VERSION of the running SD-card image
+  "show_image_version": true,         // "SW-VER 2.06" chip: IMAGE_VERSION of the running SD-card image
   "image_manifest": "",               // Optional: manifest path; default <prefix>/share/micropanel/image-manifest.env,
                                       //   then /usr/lib/pi-ab-update/image-manifest.env; no manifest, no chip
   "show_resolution": true,            // Screen resolution chip
