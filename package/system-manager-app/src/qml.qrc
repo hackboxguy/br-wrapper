@@ -10,5 +10,6 @@
         <file>icons/update.svg</file>
         <file>icons/sdcard.svg</file>
         <file>icons/usb.svg</file>
+        <file>icons/fpga.svg</file>
     </qresource>
 </RCC>

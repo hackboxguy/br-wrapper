@@ -22,6 +22,7 @@
 
 #include "UpdateController.h"
 #include "SystemImageController.h"
+#include "FpgaController.h"
 
 // A key of pi-ab-update's board config, parsed the way the engine parses it
 // (never sourced): the engine's paths are the board's to choose, and the
@@ -134,6 +135,15 @@ int main(int argc, char *argv[])
                                        : abManifest);
     QCommandLineOption imageLogOpt("image-log-dir", "Where each image update run writes its log.", "dir",
                                    QDir(logs).filePath("system-image-update"));
+    // Display FPGA (update-fpga.sh)
+    QCommandLineOption fpgaToolOpt("fpga-tool", "update-fpga.sh to run.", "path",
+                                   QDir(binDir).filePath("update-fpga.sh"));
+    QCommandLineOption fpgaImageOpt("fpga-image-dir", "Directory of the <name>_ota.bin FPGA images.", "dir",
+                                    QDir(prefix).filePath("fpga/bitbin"));
+    QCommandLineOption autoFpgaOpt("auto-fpga-update",
+                                   "Automated validation: start the FPGA update once a check offers one (no hold).");
+    QCommandLineOption autoFpgaActOpt("auto-fpga-activate",
+                                      "Automated validation: activate the written FPGA image (restarts the system).");
     QCommandLineOption autoInstallOpt("auto-install",
                                       "Automated validation: install the image a scan offers, once, without the "
                                       "hold. Never used by the launcher button.");
@@ -145,7 +155,7 @@ int main(int argc, char *argv[])
     QCommandLineOption shotDelayOpt("screenshot-delay", "Milliseconds between the first result and the grab.",
                                     "ms", "1200");
     QCommandLineOption sizeOpt("window-size", "Window size WxH instead of full screen (with --screenshot).", "WxH");
-    QCommandLineOption sectionOpt("section", "Section to open first: firmware or image.", "name");
+    QCommandLineOption sectionOpt("section", "Section to open first: firmware, image or fpga.", "name");
     parser.addOption(toolOpt);
     parser.addOption(imageOpt);
     parser.addOption(logOpt);
@@ -159,6 +169,10 @@ int main(int argc, char *argv[])
     parser.addOption(imageLogOpt);
     parser.addOption(autoInstallOpt);
     parser.addOption(sectionOpt);
+    parser.addOption(fpgaToolOpt);
+    parser.addOption(fpgaImageOpt);
+    parser.addOption(autoFpgaOpt);
+    parser.addOption(autoFpgaActOpt);
     parser.addOption(systemctlOpt);
     parser.addOption(shotOpt);
     parser.addOption(sizeOpt);
@@ -195,9 +209,29 @@ int main(int argc, char *argv[])
 
     SystemImageController imageController(imageOptions);
 
+    FpgaController::Options fpgaOptions;
+    fpgaOptions.tool = parser.value(fpgaToolOpt);
+    fpgaOptions.imageDir = parser.value(fpgaImageOpt);
+    fpgaOptions.logDir = QDir(logs).filePath("system-update");
+    fpgaOptions.lockFile = lockFile;
+    fpgaOptions.noticeFile = parser.value(noticeOpt);
+    fpgaOptions.dryRun = parser.isSet(dryRunOpt);
+    fpgaOptions.autoUpdate = parser.isSet(autoFpgaOpt);
+    fpgaOptions.autoActivate = parser.isSet(autoFpgaActOpt);
+    FpgaController fpgaController(fpgaOptions);
+    // The FPGA section exists only where an FPGA with the update interface
+    // answers. Probe once the firmware check is done: one I2C user at a time.
+    QObject::connect(&controller, &UpdateController::stateChanged, &fpgaController, [&]() {
+        static bool probed = false;
+        if (!probed && controller.state() != "checking") {
+            probed = true;
+            fpgaController.probe();
+        }
+    });
+
     // Open the image section first when it has something to say
     QString section = parser.value(sectionOpt);
-    if (section != "firmware" && section != "image")
+    if (section != "firmware" && section != "image" && section != "fpga")
         section = imageController.wantsAttention() ? "image" : "firmware";
 
     // Same face as the launcher when it is installed; QML falls back otherwise
@@ -206,6 +240,7 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("updater", &controller);
     engine.rootContext()->setContextProperty("imageUpdate", &imageController);
+    engine.rootContext()->setContextProperty("fpgaUpdate", &fpgaController);
     engine.rootContext()->setContextProperty("initialSection", section);
     engine.rootContext()->setContextProperty("uiFont", haveRoboto ? QString("Roboto") : QString());
     engine.load(QUrl(QStringLiteral("qrc:/main.qml")));
@@ -226,11 +261,13 @@ int main(int argc, char *argv[])
         auto *poll = new QTimer(&app);
         auto *started = new QElapsedTimer;
         started->start();
-        QObject::connect(poll, &QTimer::timeout, &app, [=, &app, &controller, &imageController]() {
+        QObject::connect(poll, &QTimer::timeout, &app, [=, &app, &controller, &imageController, &fpgaController]() {
             const QString shown = window->property("section").toString();
             const bool ready = shown == "image"
                 ? (!imageController.supported()
                    || (imageController.scanState() != "idle" && imageController.scanState() != "scanning"))
+                : shown == "fpga"
+                ? (fpgaController.state() != "probing" && fpgaController.state() != "checking")
                 : controller.state() != "checking";
             if (!ready && started->elapsed() < 20000) return;
             poll->stop();

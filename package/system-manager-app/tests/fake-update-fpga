@@ -1,0 +1,59 @@
+#!/bin/bash
+# fake-update-fpga - stands in for space6-architecture's update-fpga.sh on a PC
+# (System Manager --fpga-tool <this>). Never touches I2C.
+#   FAKE_FPGA_ABSENT=1           --probe says there is no FPGA with the update interface
+#   FAKE_FPGA_DISPLAY=<d>        12.3 | 14.6-ej | 14.6-direct   (default 14.6-ej)
+#   FAKE_FPGA_CHECK=<s>          current | outdated | blocked | no-answer   (default outdated)
+#   FAKE_FPGA_STEP=<s>           seconds per progress step (default 0.3)
+#   FAKE_FPGA_END=<n>            exit code of the update (default 0; 2, 3, 6, 1 as in the real table)
+#   FAKE_FPGA_ACTIVATE=<n>       exit code of --activate (default 0)
+set -u
+disp=${FAKE_FPGA_DISPLAY:-14.6-ej}
+case "$disp" in 12.3) img=12-3-inch-new_ota.bin ;; 14.6-direct) img=14-6-fhd-new_ota.bin ;; *) img=14-6-fhd-ej-new_ota.bin ;; esac
+run="09280050/26500201/OTA"
+result() { echo "RESULT board=fpga display=$disp running=$run image=$img status=$1${2:+ reason=$2}"; }
+step=${FAKE_FPGA_STEP:-0.3}
+
+case "${1:-}" in
+    --probe)
+        [ -n "${FAKE_FPGA_ABSENT:-}" ] && { echo "RESULT board=fpga display=unknown running=- image=- status=absent"; exit 1; }
+        echo "RESULT board=fpga display=$disp running=- image=$img status=present"; exit 0 ;;
+    --check)
+        sleep 1
+        case "${FAKE_FPGA_CHECK:-outdated}" in
+            current)   result current; exit 0 ;;
+            outdated)  result outdated; exit 10 ;;
+            no-answer) result no-answer "FPGA does not answer on 0x1D"; exit 6 ;;
+            *)         result blocked "display IOC firmware 0107 < v01.09 (Release 1.6)"; exit 1 ;;
+        esac ;;
+    --activate)
+        echo "NOTICE the display goes dark for about 5 s while the FPGA restarts"
+        sleep 2
+        if [ "${FAKE_FPGA_ACTIVATE:-0}" = 0 ]; then result ok "running from the OTA slot, slot carries the image"; exit 0; fi
+        result no-answer "FPGA not back 30 s after IOC disppower on"; exit "${FAKE_FPGA_ACTIVATE}" ;;
+    --verify)
+        result ok "running from the OTA slot, slot carries the image"; exit 0 ;;
+    --image-dir|"")
+        echo "NOTICE the display may go dark for a few seconds if the link has to be recovered; do not power it off"
+        echo "PROGRESS phase=scan percent=0"; sleep "$step"
+        for d in 64 128 192 256 320 384 448 536; do
+            echo "PROGRESS phase=erase done=$d total=536 percent=$(( 5 + 15 * d / 536 ))"; sleep "$step"
+        done
+        for d in 856 1712 2568 3424 4280 5136 5992 6848 7704 8563; do
+            echo "PROGRESS phase=program done=$d total=8563 percent=$(( 20 + 75 * d / 8563 ))"; sleep "$step"
+            if [ "${FAKE_FPGA_END:-0}" != 0 ] && [ "$d" -ge 3424 ]; then
+                case "$FAKE_FPGA_END" in
+                    6) result no-answer "FPGA stopped answering (abort_phase=link_lost)"; exit 6 ;;
+                    3) result repeat "link lost after the slot header was erased"; exit 3 ;;
+                    2) result failed "abort_phase=preflight before anything was erased; rerun"; exit 2 ;;
+                    *) result failed "abort"; exit "$FAKE_FPGA_END" ;;
+                esac
+            fi
+        done
+        echo "PROGRESS phase=verify percent=95"; sleep "$step"
+        echo "PROGRESS phase=verify percent=100"
+        result ok "written and verified in 780s (recoveries=0); activate: --activate or a display power cycle"
+        echo "NOTICE update written; the new image runs after activation"
+        exit 0 ;;
+    *) echo "fake-update-fpga: $*" >&2; exit 1 ;;
+esac

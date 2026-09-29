@@ -6,6 +6,9 @@
 #                         status says fallback)
 #   Update available      a board carries firmware other than the image this
 #                         system ships (update-iocs.sh --check, read-only)
+#   FPGA update available the display FPGA's update slot carries another image than
+#                         the one this system ships (update-fpga.sh --probe, then
+#                         --check: a read-only slot scan, about 6 s)
 #   Image update on USB   a stick carries exactly one signed image bundle of a
 #                         version other than the running one (system-image-scan.sh,
 #                         read-only; it also refreshes /run/system-manager/last-scan)
@@ -19,6 +22,8 @@ HERE=$(cd -- "$(dirname -- "$0")" && pwd)
 TOOL=${UPDATE_IOCS:-$HERE/update-iocs.sh}
 DIR=${IMAGE_DIR:-$(dirname "$HERE")/share/sp6bins/firmware/bios-bin}
 SCAN=${SYSTEM_IMAGE_SCAN:-$HERE/system-image-scan.sh}
+FPGA_TOOL=${UPDATE_FPGA:-$HERE/update-fpga.sh}
+FPGA_DIR=${FPGA_IMAGE_DIR:-$(dirname "$HERE")/fpga/bitbin}
 AB_UPDATE=${AB_UPDATE:-/usr/local/bin/ab-update}
 AB_CONF=${AB_UPDATE_CONFIG:-/usr/lib/pi-ab-update/ab-update.conf}
 LOCK=/tmp/system-update.lock
@@ -67,7 +72,18 @@ if [ -x "$TOOL" ] && [ -d "$DIR" ]; then
     fi
 fi
 
-# 3. A system image on a USB stick
+# 3. The display FPGA - only where one with the update interface answers
+# (its per-run logs go to /tmp: this runs after every app exit, and a check changes nothing)
+if [ -x "$FPGA_TOOL" ] && [ -d "$FPGA_DIR" ] \
+   && as_root env LOG_DIR=/tmp/system-update-check "$FPGA_TOOL" --probe >/dev/null 2>&1; then
+    as_root timeout 90 env LOG_DIR=/tmp/system-update-check "$FPGA_TOOL" --check --image-dir "$FPGA_DIR" >/dev/null 2>&1
+    if [ $? -eq 10 ]; then
+        echo "FPGA update available"
+        exit 0
+    fi
+fi
+
+# 4. A system image on a USB stick
 if [ -x "$AB_UPDATE" ] && [ -x "$SCAN" ]; then
     out=$(as_root timeout 60 "$SCAN" 2>/dev/null)
     echo "$out" | awk '

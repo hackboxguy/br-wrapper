@@ -16,6 +16,8 @@ add_executable(system-manager-app
     src/UpdateController.h
     src/SystemImageController.cpp
     src/SystemImageController.h
+    src/FpgaController.cpp
+    src/FpgaController.h
     src/qml.qrc
 )
 

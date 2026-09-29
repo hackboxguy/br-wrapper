@@ -1,10 +1,11 @@
 # system-manager-app
 
 System Manager for the display rig, started from qt-demo-launcher's **System Manager** button.
-Two sections, switched in the header: **Firmware** shows the firmware each board runs against the
+Sections, switched in the header: **Firmware** shows the firmware each board runs against the
 images this system ships and installs them over I²C; **System image** installs a new SD-card
-image from a USB stick on the A/B images (pi-ab-update). Later sections (FPGA update, system
-status) are meant to live in the same app.
+image from a USB stick on the A/B images (pi-ab-update); **Display FPGA** updates the display
+FPGA's A/B update slot over I²C, and exists only where such an FPGA answers. A system status
+section is meant to live in the same app later.
 
 **Where it keeps things** (`<data>`): `/data/system-manager` when it exists - the A/B images,
 whose root is an overlay on RAM, so only `/data` survives the reboot that ends every update.
@@ -126,6 +127,8 @@ scanner prints a canned bundle (or `SYSTEM_IMAGE_SCAN_FAKE=<file>`), and the rea
 QtQuick/QtQuick.Window QML modules), using the stand-in, `tests/fake-systemctl` for the
 preflight (`FAKE_DOWN`, `FAKE_RESTARTED`), canned scans and a canned `update-iocs.sh`.
 `tests/badge-fixture.sh` runs the badge script against fake status and acknowledgement records.
+`tests/fake-update-fpga` stands in for `update-fpga.sh` (`FAKE_FPGA_CHECK`, `FAKE_FPGA_END`,
+`FAKE_FPGA_ACTIVATE`, `FAKE_FPGA_ABSENT`, `FAKE_FPGA_STEP`).
 By hand:
 
 ```
@@ -135,11 +138,47 @@ AB_RUNTIME_DIR=/tmp/fake-ab/run FAKE_AB_STEP=0.5 ./system-manager-app --dry-run 
   --runtime-dir /tmp/fake-ab/run --image-manifest /tmp/fake-ab/manifest.env --image-log-dir /tmp/fake-ab/logs
 ```
 
+## Display FPGA section
+
+The A/B update of the display FPGA over I²C, as in sp6bins `docs/fpga-ab-update-procedure.md`:
+the 16 MB configuration flash holds a GOLDEN image at offset 0 (JTAG, once per board) and an
+UPDATE image in the slot at `0x00400000`; a broken or interrupted update falls back to the
+GOLDEN by itself. Today: the Spartan-7 boards (12.3", 14.6" EJ scan-mode, 14.6" direct-drive);
+the Lattice boards later, through the same script.
+
+The app never opens the I²C bus itself; everything goes through `update-fpga.sh`
+(space6-architecture, installed beside `disptool` and `update-iocs.sh`), run with `sudo -n` and
+`LOG_DIR=<data>/logs/system-update` so its logs sit beside this app's (`fpga-<time>.log`):
+
+- **Probe** (`--probe`, two register reads, about 40 ms), once the firmware check is done - one
+  I²C user at a time. The section and its header tab exist only when the FPGA identifies as a
+  known display and answers on `0x1E` (the update interface).
+- **Check** (`--check --image-dir <dir>`, a read-only scan of the slot, about 6 s): current
+  (exit 0), update available (10), blocked (1, e.g. board firmware older than Release 1.6 - the
+  section then points at the Firmware section), not answering (6), unknown (2). The script
+  confirms a "differs" with a second scan (one false "differs" was seen in 18 scans).
+- **Update**, after a 1.5 s hold: `update-fpga.sh --image-dir <dir>` writes the display's
+  `<name>_ota.bin` (picked by the FPGA's identity; `12-3-inch-new_ota.bin`,
+  `14-6-fhd-ej-new_ota.bin`, `14-6-fhd-new_ota.bin`). It resumes: only sectors that differ are
+  written, so a full slot takes 12-13 min and a small difference seconds. The bar follows the
+  script's `PROGRESS phase= done= total= percent=` lines (scan 0-5, erase 5-20, program 20-95,
+  verify 95-100 %). The section cannot be left, SIGTERM/SIGINT are ignored, the lock is held.
+- **Activate**, after a second hold: `update-fpga.sh --activate` has the display IOC cycle the
+  FPGA's rails (the display goes dark for a few seconds), the new image boots and is verified,
+  and the app then restarts the system (`sudo -n systemctl reboot`). "Later" leaves it for the
+  next power cycle; the launcher header says "FPGA restart required" until then.
+- **Outcomes**: 2 "did not finish, nothing changed yet" and 3 "must be repeated now" offer a
+  retry (it resumes); 6 asks for a power cycle, then a rerun; 1 shows the reason. An activation
+  that does not bring the new image up asks for a power cycle (the new image starts then).
+
+The image directory defaults to `<prefix>/fpga/bitbin`.
+
 ## Launcher badge
 
 `system-update-check.sh` prints one line for the launcher's badge, the most important of:
 `Update rolled back` (the last image update fell back), `Update available` (a board carries
-firmware other than the shipped image, same read-only check as the app), `Image update on USB`
+firmware other than the shipped image, same read-only check as the app), `FPGA update available`
+(`update-fpga.sh --probe`, then `--check`; about 6 s, logs in `/tmp`), `Image update on USB`
 (a stick carries exactly one signed bundle of another version; the scan also refreshes
 `/run/system-manager/last-scan`). The launcher runs it as the button's `badge_command` about
 20 s after start and whenever an app exits. It skips while `/tmp/system-update.lock` is held by
@@ -168,7 +207,11 @@ fallback of another install shows it again.
 | `--screenshot-delay <ms>` | 1200 | Time between that result and the grab |
 | `--window-size WxH` | full screen | Window size (with `--screenshot`, e.g. 1920x720 offscreen) |
 | `--auto-install` | off | Automated validation: install the bundle a scan offers, once, 3 s after the offer (no hold) |
-| `--section firmware\|image` | image when it has news, else firmware | Tab to open first |
+| `--section firmware\|image\|fpga` | image when it has news, else firmware | Tab to open first |
+| `--fpga-tool <path>` | `<bindir>/update-fpga.sh` | The FPGA update script |
+| `--fpga-image-dir <dir>` | `<prefix>/fpga/bitbin` | The `<name>_ota.bin` FPGA images |
+| `--auto-fpga-update` | off | Automated validation: start the FPGA update once a check offers one (no hold) |
+| `--auto-fpga-activate` | off | Automated validation: activate a written FPGA image (restarts the system) |
 
 `<bindir>` is the directory of the binary and `<prefix>` its parent, so the defaults work for
 both `/home/pi/micropanel/bin` (PiOS) and `/usr/bin` (Buildroot).

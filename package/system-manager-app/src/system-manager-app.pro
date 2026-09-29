@@ -6,11 +6,13 @@ TARGET = system-manager-app
 SOURCES += \
     main.cpp \
     UpdateController.cpp \
-    SystemImageController.cpp
+    SystemImageController.cpp \
+    FpgaController.cpp
 
 HEADERS += \
     UpdateController.h \
-    SystemImageController.h
+    SystemImageController.h \
+    FpgaController.h
 
 RESOURCES += qml.qrc
 

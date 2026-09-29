@@ -31,11 +31,13 @@ chmod +x "$work/ab-update"
 export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software
 export AB_UPDATE_CONFIG=$work/ab.conf SYSTEM_MANAGER_DATA=$work/data
 
+export FAKE_FPGA_ABSENT=1   # the FPGA section only where asked for below
 shot() { # <name> <case> <extra app args...>
     local name=$1 case=$2; shift 2
     SYSTEM_IMAGE_SCAN_FAKE=$work/cases/$case "$app" --dry-run --window-size "$size" \
         --ab-update "$work/ab-update" --runtime-dir "$work/run" --image-manifest "$work/manifest.env" \
         --update-tool "$work/update-iocs.sh" --image-dir "$work" \
+        --fpga-tool "$here/fake-update-fpga" --fpga-image-dir "$work" \
         --systemctl "$here/fake-systemctl" --screenshot "$out/$name.png" "$@" 2>&1 \
         | grep -E 'preflight|screenshot' | sed "s/^/  [$name] /"
 }
@@ -54,4 +56,11 @@ shot image-fallback nostick --section image
 echo "  acknowledged-fallback after opening the section: $(cat "$work/data/acknowledged-fallback" 2>/dev/null || echo '(none)')"
 rm -f "$work/run/status"
 shot firmware ready --section firmware
+# Display FPGA (tests/fake-update-fpga)
+FAKE_FPGA_ABSENT= FAKE_FPGA_CHECK=outdated shot fpga-offer ready --section fpga
+FAKE_FPGA_ABSENT= FAKE_FPGA_CHECK=current shot fpga-current ready --section fpga
+FAKE_FPGA_ABSENT= FAKE_FPGA_CHECK=blocked shot fpga-blocked ready --section fpga
+FAKE_FPGA_ABSENT= FAKE_FPGA_STEP=1 shot fpga-updating ready --section fpga --auto-fpga-update --screenshot-delay 12000
+FAKE_FPGA_ABSENT= FAKE_FPGA_STEP=0.1 shot fpga-written ready --section fpga --auto-fpga-update --screenshot-delay 9000
+FAKE_FPGA_ABSENT= FAKE_FPGA_STEP=0.1 FAKE_FPGA_END=6 shot fpga-no-answer ready --section fpga --auto-fpga-update --screenshot-delay 8000
 ls -1 "$out"

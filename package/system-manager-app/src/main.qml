@@ -35,8 +35,16 @@ Window {
     // engine's reboot; only a dry run's stand-in leaves the app on "arming".
     readonly property bool busy: updater.state === "updating" || imageUpdate.state === "installing"
                                  || (imageUpdate.state === "arming" && !imageUpdate.dryRun)
-    // "firmware" or "image"; main.cpp opens the image section when it has news
+                                 || fpgaUpdate.state === "updating" || fpgaUpdate.state === "activating"
+                                 || (fpgaUpdate.state === "rebooting" && !fpgaUpdate.dryRun)
+    // "firmware", "image" or "fpga"; main.cpp opens the image section when it has news
     property string section: initialSection
+    // The FPGA section exists only where the probe found an FPGA with the
+    // update interface (0x1E); asked for it on a system without, show firmware
+    Connections {
+        target: fpgaUpdate
+        function onStateChanged() { if (fpgaUpdate.state === "absent" && win.section === "fpga") win.section = "firmware" }
+    }
 
     function tone(name) {
         switch (name) {
@@ -246,6 +254,43 @@ Window {
         }
     }
 
+    // Hold to confirm: a stray tap must not start something that writes or restarts
+    component HoldButton: Rectangle {
+        id: hb
+        property string label
+        property color tint: t.accent
+        signal done()
+        height: 88 * s; radius: 22 * s
+        color: withAlpha(tint, 0.18)
+        border.color: tint; border.width: 2
+        clip: true
+        property real progress: 0
+        Rectangle {
+            width: parent.width * parent.progress; height: parent.height
+            radius: parent.radius
+            color: hb.tint
+        }
+        Text {
+            anchors.centerIn: parent
+            text: hbArea.pressed ? "Keep holding…" : hb.label
+            color: hb.progress > 0.5 ? "#081018" : t.text
+            font.family: t.font; font.pixelSize: 26 * s; font.weight: Font.Bold
+        }
+        NumberAnimation {
+            id: hbAnim
+            target: hb; property: "progress"
+            from: 0; to: 1; duration: 1500
+            onFinished: if (hb.progress >= 1) { hb.progress = 0; hb.done() }
+        }
+        MouseArea {
+            id: hbArea
+            anchors.fill: parent
+            onPressed: hbAnim.restart()
+            onReleased: if (hb.progress < 1) { hbAnim.stop(); hb.progress = 0 }
+            onCanceled: { hbAnim.stop(); hb.progress = 0 }
+        }
+    }
+
     // Same shape as ComponentCard, with free text: the image section's cards
     component ImageCard: Rectangle {
         id: ic
@@ -369,12 +414,14 @@ Window {
                     font.family: t.font; font.pixelSize: 36 * s; font.weight: Font.Bold
                 }
                 Text {
-                    text: "Home  ›  System Manager  ›  " + (win.section === "image" ? "System image" : "Firmware")
+                    text: "Home  ›  System Manager  ›  " + (win.section === "image" ? "System image"
+                                                         : win.section === "fpga" ? "Display FPGA" : "Firmware")
                     color: t.sub
                     font.family: t.font; font.pixelSize: 19 * s
                 }
             }
-            // Sections: fixed while either kind of update runs
+            // Sections: fixed while any update runs. Display FPGA appears only
+            // where an FPGA with the update interface answered the probe.
             Rectangle {
                 id: sectionSwitch
                 anchors.horizontalCenter: parent.horizontalCenter
@@ -384,10 +431,12 @@ Window {
                 color: t.card
                 border.color: t.border
                 opacity: win.busy ? 0.4 : 1.0
-                Rectangle {   // the selection, sliding between the two
+                property real selX: 0
+                property real selW: 0
+                Rectangle {   // the selection, sliding between the tabs
                     y: 6 * s; height: parent.height - 12 * s; radius: height / 2
-                    x: 6 * s + (win.section === "image" ? sectionSwitch.firmwareTab.width : 0)
-                    width: win.section === "image" ? sectionSwitch.imageTab.width : sectionSwitch.firmwareTab.width
+                    x: 6 * s + sectionSwitch.selX
+                    width: sectionSwitch.selW
                     color: withAlpha(t.accent, 0.22)
                     border.color: withAlpha(t.accent, 0.7)
                     Behavior on x { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
@@ -398,41 +447,46 @@ Window {
                     x: 6 * s
                     anchors.verticalCenter: parent.verticalCenter
                     Repeater {
-                        model: [{ key: "firmware", label: "Firmware" }, { key: "image", label: "System image" }]
+                        model: fpgaUpdate.present
+                               ? [{ key: "firmware", label: "Firmware" }, { key: "image", label: "System image" },
+                                  { key: "fpga", label: "Display FPGA" }]
+                               : [{ key: "firmware", label: "Firmware" }, { key: "image", label: "System image" }]
                         Item {
                             id: tab
-                            objectName: modelData.key + "Tab"
+                            readonly property bool selected: win.section === modelData.key
                             width: tabText.implicitWidth + 56 * s; height: 48 * s
+                            function place() { if (selected) { sectionSwitch.selX = x; sectionSwitch.selW = width } }
+                            onSelectedChanged: place()
+                            onXChanged: place()
+                            onWidthChanged: place()
+                            Component.onCompleted: place()
                             Text {
                                 id: tabText
                                 anchors.centerIn: parent
                                 text: modelData.label
-                                color: win.section === modelData.key ? t.text : t.sub
+                                color: tab.selected ? t.text : t.sub
                                 font.family: t.font; font.pixelSize: 20 * s; font.weight: Font.DemiBold
                             }
-                            // image updates flag themselves on the tab too
+                            // other sections flag news on their tab
                             Rectangle {
-                                visible: modelData.key === "image" && win.section !== "image"
-                                         && (imageUpdate.scanState === "ready" || imageUpdate.lastOutcome === "fallback")
+                                readonly property bool imageNews: modelData.key === "image"
+                                    && (imageUpdate.scanState === "ready" || imageUpdate.lastOutcome === "fallback")
+                                readonly property bool fpgaNews: modelData.key === "fpga"
+                                    && (fpgaUpdate.updateAvailable || fpgaUpdate.state === "written")
+                                visible: !tab.selected && (imageNews || fpgaNews)
                                 anchors.right: parent.right; anchors.rightMargin: 14 * s
                                 anchors.verticalCenter: parent.verticalCenter
                                 width: 10 * s; height: width; radius: width / 2
-                                color: imageUpdate.lastOutcome === "fallback" ? t.bad : t.warn
+                                color: imageUpdate.lastOutcome === "fallback" && imageNews ? t.bad : t.warn
                             }
                             MouseArea {
                                 anchors.fill: parent
                                 enabled: !win.busy
                                 onClicked: win.section = modelData.key
                             }
-                            Component.onCompleted: {
-                                if (modelData.key === "firmware") sectionSwitch.firmwareTab = tab
-                                else sectionSwitch.imageTab = tab
-                            }
                         }
                     }
                 }
-                property Item firmwareTab: Item { width: 0 }
-                property Item imageTab: Item { width: 0 }
             }
 
             Row {
@@ -457,6 +511,25 @@ Window {
                           : imageUpdate.scanState === "ready" ? t.warn : t.ok
                 }
                 Pill {
+                    visible: win.section === "fpga"
+                    label: fpgaUpdate.state === "probing" || fpgaUpdate.state === "checking" ? "Checking"
+                           : fpgaUpdate.state === "updating" ? "Updating"
+                           : fpgaUpdate.state === "activating" ? "Restarting FPGA"
+                           : fpgaUpdate.state === "rebooting" ? "Restarting"
+                           : fpgaUpdate.state === "written" ? "Restart required"
+                           : fpgaUpdate.state === "failed" ? "Needs attention"
+                           : fpgaUpdate.status === "current" ? "Up to date"
+                           : fpgaUpdate.status === "outdated" ? "Update available"
+                           : fpgaUpdate.status === "blocked" ? "Blocked" : "Not checked"
+                    tint: fpgaUpdate.state === "updating" || fpgaUpdate.state === "activating"
+                          || fpgaUpdate.state === "rebooting" ? t.info
+                          : fpgaUpdate.state === "written" ? t.warn
+                          : fpgaUpdate.state === "failed" ? t.bad
+                          : fpgaUpdate.status === "current" ? t.ok
+                          : fpgaUpdate.status === "outdated" ? t.warn
+                          : fpgaUpdate.status === "blocked" ? t.bad : t.sub
+                }
+                Pill {
                     visible: win.section === "firmware"
                     label: updater.summary
                     tint: updater.state === "checking" ? t.sub
@@ -477,6 +550,339 @@ Window {
             Repeater {
                 model: ["#C0C0C0", "#C0C000", "#00C0C0", "#00C000", "#C000C0", "#C00000", "#0000C0"]
                 Rectangle { width: strip.width / 7; height: 6 * s; color: modelData }
+            }
+        }
+
+        // ==== Display FPGA section (update-fpga.sh) ============================
+        Item {
+            id: fpgaSection
+            visible: win.section === "fpga"
+            anchors.top: strip.bottom; anchors.topMargin: 26 * s
+            anchors.left: parent.left; anchors.right: parent.right
+            anchors.bottom: parent.bottom
+
+            readonly property string st: fpgaUpdate.state
+            readonly property string status: fpgaUpdate.status
+            readonly property bool checkingNow: st === "probing" || st === "checking"
+            readonly property bool firmwareFirst: status === "blocked"
+                && /firmware|983_manager|IOC/i.test(fpgaUpdate.reason)
+
+            // ---- left: what runs, and what this system ships -----------------
+            Column {
+                id: fpgaLeft
+                width: parent.width * 0.58
+                spacing: 18 * s
+
+                Text {
+                    text: "DISPLAY FPGA"
+                    color: t.sub
+                    font.family: t.font; font.pixelSize: 16 * s; font.weight: Font.DemiBold
+                    font.letterSpacing: 2 * s
+                }
+                ImageCard {
+                    icon: "fpga"
+                    title: "Display FPGA" + (fpgaUpdate.displayName ? "  (" + fpgaUpdate.displayName + ")" : "")
+                    subtitle: fpgaUpdate.runningRelease
+                              ? "Release " + fpgaUpdate.runningRelease + "   ·   build " + fpgaUpdate.runningBuild
+                                + "   ·   " + (fpgaUpdate.runningSlot === "OTA" ? "from the update slot"
+                                              : fpgaUpdate.runningSlot === "GOLDEN" ? "factory image (fallback)"
+                                              : "slot unknown")
+                              : fpgaSection.checkingNow ? "Reading the display FPGA…" : "Not read"
+                    note: fpgaSection.st === "written" ? "The new image is in the update slot; it runs after activation"
+                          : fpgaSection.status === "current" ? "Runs the image this system ships"
+                          : fpgaSection.status === "outdated" ? "This system ships a different image"
+                          : fpgaSection.status === "no-answer" ? "The FPGA does not answer"
+                          : fpgaUpdate.reason
+                    noteTone: fpgaSection.st === "written" ? t.warn
+                              : fpgaSection.status === "current" ? t.ok
+                              : fpgaSection.status === "outdated" ? t.warn : t.bad
+                    pillLabel: fpgaSection.checkingNow ? "Checking"
+                               : fpgaSection.st === "written" ? "Restart required"
+                               : fpgaSection.status === "current" ? "Up to date"
+                               : fpgaSection.status === "outdated" ? "Update available"
+                               : fpgaSection.status === "blocked" ? "Blocked"
+                               : fpgaSection.status === "no-answer" ? "No answer" : "Unknown"
+                    tone: fpgaSection.checkingNow ? t.sub
+                          : fpgaSection.st === "written" || fpgaSection.status === "outdated" ? t.warn
+                          : fpgaSection.status === "current" ? t.ok : t.bad
+                }
+                ImageCard {
+                    icon: "update"
+                    title: fpgaUpdate.image || "Shipped image"
+                    subtitle: "Written to the update slot; the factory image stays as the fallback"
+                    note: ""
+                    pillLabel: "Shipped"
+                    tone: t.accent
+                }
+            }
+
+            // ---- right: what can be done now ------------------------------------
+            Rectangle {
+                id: fpgaPanel
+                anchors.top: fpgaLeft.top; anchors.topMargin: 34 * s
+                anchors.right: parent.right
+                anchors.left: fpgaLeft.right; anchors.leftMargin: 30 * s
+                anchors.bottom: parent.bottom
+                radius: 22 * s
+                color: t.card
+                border.color: t.border
+
+                Item {
+                    anchors.fill: parent
+                    anchors.margins: 34 * s
+
+                    // Checking, activating, restarting: a spinner and a line
+                    Column {
+                        visible: fpgaSection.checkingNow || fpgaSection.st === "activating" || fpgaSection.st === "rebooting"
+                        anchors.centerIn: parent
+                        width: parent.width
+                        spacing: 22 * s
+                        Spinner { anchors.horizontalCenter: parent.horizontalCenter }
+                        Text {
+                            width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                            text: fpgaSection.st === "activating" ? "Restarting the display FPGA…"
+                                  : fpgaSection.st === "rebooting" ? "Restarting the system…"
+                                  : "Checking the display FPGA"
+                            color: t.text
+                            font.family: t.font; font.pixelSize: 28 * s; font.weight: Font.DemiBold
+                        }
+                        Text {
+                            width: parent.width; horizontalAlignment: Text.AlignHCenter; wrapMode: Text.WordWrap
+                            visible: text !== ""
+                            text: fpgaSection.st === "activating" ? "The display goes dark for a few seconds."
+                                  : fpgaSection.st === "rebooting" ? fpgaUpdate.outcomeDetail
+                                  : "About ten seconds."
+                            color: t.sub
+                            font.family: t.font; font.pixelSize: 20 * s
+                        }
+                    }
+
+                    // Ready: offer, up to date, or why not
+                    Column {
+                        id: fpgaReady
+                        visible: fpgaSection.st === "ready"
+                        width: parent.width
+                        spacing: 18 * s
+                        readonly property bool offer: fpgaSection.status === "outdated"
+                        Row {
+                            spacing: 22 * s
+                            ResultIcon {
+                                tint: fpgaReady.offer ? t.warn : fpgaSection.status === "current" ? t.ok : t.bad
+                                glyph: fpgaReady.offer ? "update" : fpgaSection.status === "current" ? "check" : "bad"
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: fpgaReady.width - 100 * s
+                                wrapMode: Text.WordWrap
+                                text: fpgaReady.offer ? "FPGA update available"
+                                      : fpgaSection.status === "current" ? "The display FPGA is up to date"
+                                      : fpgaSection.firmwareFirst ? "Update the board firmware first"
+                                      : fpgaSection.status === "blocked" ? "The update is blocked"
+                                      : "The display FPGA could not be checked"
+                                color: t.text
+                                font.family: t.font; font.pixelSize: 30 * s; font.weight: Font.DemiBold
+                            }
+                        }
+                        Text {
+                            visible: !fpgaReady.offer
+                            width: parent.width; wrapMode: Text.WordWrap
+                            text: fpgaSection.status === "current" ? "It runs the image this system ships."
+                                  : fpgaSection.firmwareFirst ? fpgaUpdate.reason + ". The Firmware section installs it."
+                                  : fpgaUpdate.reason
+                            color: t.sub
+                            font.family: t.font; font.pixelSize: 20 * s
+                        }
+                        Column {
+                            visible: fpgaReady.offer
+                            width: parent.width
+                            spacing: 8 * s
+                            Bullet { label: "Takes up to about 15 minutes. Keep the system switched on." }
+                            Bullet { label: "The display may go dark briefly if its link has to be recovered." }
+                            Bullet { label: "Then activate it: the display restarts and the system reboots." }
+                        }
+                    }
+                    Column {
+                        visible: fpgaSection.st === "ready"
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        spacing: 16 * s
+                        HoldButton {
+                            visible: fpgaReady.offer
+                            width: parent.width
+                            label: fpgaUpdate.dryRun ? "Hold to run a dry update" : "Hold to update the FPGA"
+                            onDone: fpgaUpdate.startUpdate()
+                        }
+                        ActionButton {
+                            visible: fpgaSection.firmwareFirst
+                            width: parent.width
+                            height: 72 * s
+                            primary: true
+                            label: "Go to Firmware"
+                            onClicked: win.section = "firmware"
+                        }
+                        ActionButton {
+                            width: parent.width
+                            height: 72 * s
+                            label: "Check again"
+                            onClicked: fpgaUpdate.check()
+                        }
+                    }
+
+                    // Updating: the engine's own progress
+                    Column {
+                        visible: fpgaSection.st === "updating"
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: parent.width
+                        spacing: 22 * s
+                        Row {
+                            spacing: 22 * s
+                            Spinner {}
+                            Column {
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4 * s
+                                Text {
+                                    text: "Updating the display FPGA"
+                                    color: t.text
+                                    font.family: t.font; font.pixelSize: 30 * s; font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    text: fpgaUpdate.phaseText + "   ·   " + fpgaUpdate.percent + "%   ·   " + mmss(fpgaUpdate.elapsedSeconds)
+                                    color: t.sub
+                                    font.family: t.font; font.pixelSize: 19 * s
+                                }
+                            }
+                        }
+                        Rectangle {
+                            width: parent.width; height: 14 * s; radius: height / 2
+                            color: withAlpha(t.accent, 0.18)
+                            Rectangle {
+                                width: Math.max(parent.height, parent.width * fpgaUpdate.percent / 100)
+                                height: parent.height; radius: height / 2
+                                color: t.accent
+                                Behavior on width { NumberAnimation { duration: 450; easing.type: Easing.OutCubic } }
+                            }
+                        }
+                        Pill { visible: !fpgaUpdate.dryRun; label: "Do not switch the system off"; tint: t.warn }
+                    }
+
+                    // Written: activate now (restarts the system) or later
+                    Column {
+                        visible: fpgaSection.st === "written"
+                        width: parent.width
+                        spacing: 18 * s
+                        Row {
+                            spacing: 22 * s
+                            ResultIcon { tint: t.ok; glyph: "check" }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: fpgaPanel.width - 170 * s
+                                wrapMode: Text.WordWrap
+                                text: fpgaUpdate.outcomeTitle
+                                color: t.text
+                                font.family: t.font; font.pixelSize: 30 * s; font.weight: Font.DemiBold
+                            }
+                        }
+                        Rectangle {
+                            width: parent.width
+                            height: writtenText.implicitHeight + 28 * s
+                            radius: 16 * s
+                            color: withAlpha(t.warn, 0.14)
+                            border.color: withAlpha(t.warn, 0.6)
+                            Text {
+                                id: writtenText
+                                anchors.fill: parent; anchors.margins: 14 * s
+                                wrapMode: Text.WordWrap
+                                text: "Activating restarts the display FPGA (the display goes dark for a few seconds) "
+                                      + "and then the whole system. If the display stays dark, switch the system off and on."
+                                color: t.warn
+                                font.family: t.font; font.pixelSize: 19 * s; font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+                    Column {
+                        visible: fpgaSection.st === "written"
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        spacing: 16 * s
+                        HoldButton {
+                            width: parent.width
+                            tint: t.warn
+                            label: "Hold to activate and restart"
+                            onDone: fpgaUpdate.activate()
+                        }
+                        ActionButton {
+                            width: parent.width
+                            height: 72 * s
+                            label: "Later"
+                            onClicked: updater.quitApp()
+                        }
+                    }
+
+                    // Failed
+                    Column {
+                        visible: fpgaSection.st === "failed"
+                        width: parent.width
+                        spacing: 18 * s
+                        Row {
+                            spacing: 22 * s
+                            ResultIcon {
+                                tint: fpgaUpdate.outcomeKind === "info" ? t.info
+                                      : fpgaUpdate.outcomeKind === "warning" ? t.warn : t.bad
+                                glyph: fpgaUpdate.outcomeKind === "info" ? "info"
+                                       : fpgaUpdate.outcomeKind === "warning" ? "warn" : "bad"
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: fpgaPanel.width - 170 * s
+                                wrapMode: Text.WordWrap
+                                text: fpgaUpdate.outcomeTitle
+                                color: t.text
+                                font.family: t.font; font.pixelSize: 30 * s; font.weight: Font.DemiBold
+                            }
+                        }
+                        Text {
+                            visible: !fpgaUpdate.powerCycleRequired
+                            width: parent.width; wrapMode: Text.WordWrap
+                            text: fpgaUpdate.outcomeDetail
+                            color: t.sub
+                            font.family: t.font; font.pixelSize: 20 * s
+                        }
+                        Rectangle {
+                            visible: fpgaUpdate.powerCycleRequired
+                            width: parent.width
+                            height: fpgaPowerText.implicitHeight + 36 * s
+                            radius: 16 * s
+                            color: withAlpha(t.warn, 0.14)
+                            border.color: withAlpha(t.warn, 0.6)
+                            Text {
+                                id: fpgaPowerText
+                                anchors.fill: parent; anchors.margins: 18 * s
+                                wrapMode: Text.WordWrap
+                                text: fpgaUpdate.outcomeDetail
+                                color: t.warn
+                                font.family: t.font; font.pixelSize: 21 * s; font.weight: Font.DemiBold
+                            }
+                        }
+                    }
+                    Column {
+                        visible: fpgaSection.st === "failed"
+                        anchors.bottom: parent.bottom
+                        width: parent.width
+                        spacing: 16 * s
+                        ActionButton {
+                            width: parent.width
+                            primary: true
+                            label: "Back to home"
+                            onClicked: updater.quitApp()
+                        }
+                        ActionButton {
+                            width: parent.width
+                            height: 72 * s
+                            label: fpgaUpdate.canRetry ? "Check again and retry" : "Check again"
+                            onClicked: fpgaUpdate.check()
+                        }
+                    }
+                }
             }
         }
 
