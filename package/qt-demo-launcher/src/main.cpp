@@ -129,6 +129,8 @@ struct ThemeConfig {
     bool showClock = true;
     bool showIp = true;
     bool showResolution = true;
+    bool showImageVersion = true;  // "IMG 2.06" chip: the running SD-card image's IMAGE_VERSION
+    QString imageManifest;     // image-manifest.env; empty = <prefix>/share/micropanel, then pi-ab-update's
     bool animations = true;
     QString noticeFile;        // first line shown as an amber header chip while the file exists
 
@@ -283,6 +285,7 @@ public:
 
         m_ip = primaryIPv4();
         m_notice = readNotice();
+        m_imageVersion = readImageVersion();
         if (QScreen *screen = QApplication::primaryScreen()) {
             m_resolution = QString("%1×%2").arg(screen->size().width()).arg(screen->size().height());
         }
@@ -464,6 +467,7 @@ protected:
         // A notice comes first in the list so it is the last one dropped.
         QList<QPair<QString, QString>> chips;
         if (!m_notice.isEmpty()) chips << qMakePair(QString("!"), m_notice);
+        if (m_theme.showImageVersion && !m_imageVersion.isEmpty()) chips << qMakePair(QString("IMG"), m_imageVersion);
         if (m_theme.showResolution && !m_resolution.isEmpty()) chips << qMakePair(QString("RES"), m_resolution);
         if (m_theme.showIp) chips << qMakePair(QString("IP"), m_ip.isEmpty() ? QString("no link") : m_ip);
         if (m_theme.showIp && m_port > 0) chips << qMakePair(QString("API"), QString(":%1").arg(m_port));
@@ -525,6 +529,26 @@ protected:
     }
 
 private:
+    // The running SD-card image's version (IMAGE_VERSION in the image
+    // manifest). It cannot change while the system runs, so it is read once.
+    // Images without a manifest show no chip.
+    QString readImageVersion() const
+    {
+        QStringList candidates;
+        if (!m_theme.imageManifest.isEmpty()) candidates << m_theme.imageManifest;
+        candidates << QDir(QCoreApplication::applicationDirPath()).filePath("../share/micropanel/image-manifest.env")
+                   << "/usr/lib/pi-ab-update/image-manifest.env";
+        for (const QString &path : candidates) {
+            QFile f(path);
+            if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) continue;
+            while (!f.atEnd()) {
+                const QString line = QString::fromUtf8(f.readLine()).trimmed();
+                if (line.startsWith("IMAGE_VERSION=")) return line.mid(14).trimmed();
+            }
+        }
+        return QString();
+    }
+
     QString readNotice() const
     {
         if (m_theme.noticeFile.isEmpty()) return QString();
@@ -553,6 +577,7 @@ private:
     QString m_ip;
     QString m_notice;
     QString m_resolution;
+    QString m_imageVersion;
     QTimer *m_tick;
     QTimer *m_anim;
     int m_tickCount = 0;
@@ -2032,6 +2057,8 @@ private:
         t.showClock = theme["show_clock"].toBool(t.showClock);
         t.showIp = theme["show_ip"].toBool(t.showIp);
         t.showResolution = theme["show_resolution"].toBool(t.showResolution);
+        t.showImageVersion = theme["show_image_version"].toBool(t.showImageVersion);
+        t.imageManifest = theme["image_manifest"].toString(t.imageManifest);
         t.animations = theme["animations"].toBool(t.animations);
         t.noticeFile = theme["notice_file"].toString(t.noticeFile);
 
