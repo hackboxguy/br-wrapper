@@ -289,9 +289,13 @@ MODULE_PARM_DESC(fpga_addr, "Mode 1 only: 7-bit address of the panel's local-dim
  * FPGA flash in progress.  Bounded: backoff 1/2/5/10/30/60 s, at most
  * link_retrain_max attempts per loss.
  */
-static int link_retrain_after = 3;
+/* Default OFF (report v6/v7): the re-train recovered 0 of 4 natural link losses
+ * (the 988 stays unreachable; class W is the 988's port-0 I2C controller, which
+ * nothing on the 983 side clears), and a 983 digital reset blanks the DP video
+ * until the source re-trains. Kept for its loss counters and as an opt-in. */
+static int link_retrain_after = 0;
 module_param(link_retrain_after, int, 0644);
-MODULE_PARM_DESC(link_retrain_after, "Mode 1: consecutive polls with the 988 unreachable or FPD4_LOCK clear before an FPD-Link re-train (default: 3, 0 = never re-train)");
+MODULE_PARM_DESC(link_retrain_after, "Mode 1: consecutive polls with the 988 unreachable or FPD4_LOCK clear before an FPD-Link re-train (default: 0 = never re-train; opt-in, see report v7)");
 
 static int link_retrain_max = 10;
 module_param(link_retrain_max, int, 0644);
