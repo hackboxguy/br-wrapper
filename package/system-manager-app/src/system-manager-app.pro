@@ -12,6 +12,7 @@ SOURCES += \
 HEADERS += \
     UpdateController.h \
     SystemImageController.h \
+    SystemImageText.h \
     FpgaController.h
 
 RESOURCES += qml.qrc

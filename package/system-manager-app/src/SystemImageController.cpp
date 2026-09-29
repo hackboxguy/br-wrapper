@@ -1,4 +1,5 @@
 #include "SystemImageController.h"
+#include "SystemImageText.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -11,18 +12,7 @@
 
 namespace {
 
-// key=value lines, the format every file of the engine uses
-QString fileValue(const QString &path, const QString &key)
-{
-    QFile f(path);
-    if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) return QString();
-    const QByteArray prefix = key.toUtf8() + '=';
-    while (!f.atEnd()) {
-        const QByteArray line = f.readLine().trimmed();
-        if (line.startsWith(prefix)) return QString::fromUtf8(line.mid(prefix.size()));
-    }
-    return QString();
-}
+using SystemImageText::fileValue;
 
 QMap<QString, QString> fields(const QString &line)
 {
@@ -124,6 +114,10 @@ void SystemImageController::readStatus()
     const QString published = fileValue(QDir(m_options.runtimeDir).filePath("status"), "version");
     m_lastOfferedVersion = !published.isEmpty() ? published : fileValue(m_options.stateFile, "version");
     m_lastFromVersion = fileValue(m_options.stateFile, "from");
+    // Why the commit service refused the candidate that fell back (engine
+    // 2.06+; only ever published beside state=fallback)
+    m_lastRefusedReason = m_lastOutcome == "fallback"
+        ? fileValue(QDir(m_options.runtimeDir).filePath("status"), "refused_reason") : QString();
     if (m_lastOutcome != "candidate-armed") m_statusTimer.stop();
     if (m_lastOutcome != before) {
         emit outcomeChanged();
@@ -188,11 +182,12 @@ QString SystemImageController::lastOutcomeText() const
     if (m_lastOutcome == "committed")
         return QString("Running %1 (committed)").arg(running);
     if (m_lastOutcome == "fallback") {
-        // The engine's public status carries the state only; the version comes
-        // from this app's own record of what it started, when it survived
+        // The version is the engine's (status version=) or, from an older
+        // engine, this app's own record of what it started; the reason is the
+        // commit service's, when it refused the candidate
         const QString what = (!m_lastOfferedVersion.isEmpty() && m_lastOfferedVersion != m_runningVersion)
                              ? m_lastOfferedVersion : QString("the new image");
-        return QString("The update to %1 did not pass its health check; running %2 again").arg(what, running);
+        return SystemImageText::fallbackText(what, running, m_lastRefusedReason);
     }
     if (m_lastOutcome == "candidate-armed")
         return QString("The previous update is still being verified; wait a minute and come back");

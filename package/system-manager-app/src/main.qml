@@ -344,7 +344,10 @@ Window {
                 font.family: t.font; font.pixelSize: 18 * s
             }
             Text {
+                // Wraps: the rolled-back line ends with the commit service's
+                // reason, which one line would cut off
                 width: parent.width; elide: Text.ElideRight
+                wrapMode: Text.WordWrap; maximumLineCount: 3
                 visible: text !== ""
                 text: ic.note
                 color: ic.noteTone

@@ -16,6 +16,7 @@ add_executable(system-manager-app
     src/UpdateController.h
     src/SystemImageController.cpp
     src/SystemImageController.h
+    src/SystemImageText.h
     src/FpgaController.cpp
     src/FpgaController.h
     src/qml.qrc
@@ -30,6 +31,16 @@ target_link_libraries(system-manager-app
 )
 
 target_include_directories(system-manager-app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+# Host tests (cmake -DBUILD_TESTS=ON; ctest)
+option(BUILD_TESTS "Build the host unit tests" OFF)
+if(BUILD_TESTS)
+    enable_testing()
+    add_executable(test_outcome_text tests/test_outcome_text.cpp)
+    target_include_directories(test_outcome_text PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+    target_link_libraries(test_outcome_text PRIVATE Qt5::Core)
+    add_test(NAME outcome-text COMMAND test_outcome_text)
+endif()
 
 include(GNUInstallDirs)
 

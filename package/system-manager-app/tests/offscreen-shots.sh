@@ -29,6 +29,10 @@ printf '#!/bin/sh\nexport AB_RUNTIME_DIR=%s FAKE_AB_STEP=${FAKE_AB_STEP:-1}\nexe
 chmod +x "$work/ab-update"
 
 export QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software
+# Qt built with journald support (Arch, and systemd distros generally) sends
+# qInfo to the journal when stderr is not a terminal; shot() reads it from
+# stderr, and under pipefail an empty grep there ends the whole run.
+export QT_FORCE_STDERR_LOGGING=1
 export AB_UPDATE_CONFIG=$work/ab.conf SYSTEM_MANAGER_DATA=$work/data
 
 export FAKE_FPGA_ABSENT=1   # the FPGA section only where asked for below
@@ -54,6 +58,9 @@ echo state=fallback > "$work/run/status"
 printf 'version=02.04\nfrom=02.03\n' > "$work/data/logs/system-image-update/last-install"
 shot image-fallback nostick --section image
 echo "  acknowledged-fallback after opening the section: $(cat "$work/data/acknowledged-fallback" 2>/dev/null || echo '(none)')"
+# A candidate the commit service refused: the engine (2.06+) publishes why
+printf 'state=fallback\nversion=02.04\ncandidate_slot=B\nrefused_reason=health lost in the settle window: health unit qt-demo-launcher.service is not active\n' > "$work/run/status"
+shot image-fallback-refused nostick --section image
 rm -f "$work/run/status"
 shot firmware ready --section firmware
 # Display FPGA (tests/fake-update-fpga)

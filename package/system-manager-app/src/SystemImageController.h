@@ -153,6 +153,7 @@ private:
     QString m_lastOutcome;
     QString m_lastOfferedVersion;   // from stateFile: what the previous run installed
     QString m_lastFromVersion;
+    QString m_lastRefusedReason;    // refused_reason= from the engine's status, on a fallback
 
     QString m_scanState = "idle";
     QVariantMap m_offered;

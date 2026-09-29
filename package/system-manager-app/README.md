@@ -106,7 +106,11 @@ support in-system updates" and nothing else.
   internal: once).
 - **After the reboot**: `<runtime-dir>/status` gives `committed`, `candidate-armed` or
   `fallback`; the tab shows "Running 02.06 (committed)", "…still being verified", or "The
-  update to 02.06 did not pass its health check; running 02.05 again". The app opens on this
+  update to 02.06 did not pass its health check; running 02.05 again". When the engine's commit
+  service refused the candidate (engine 2.06+), the status file also carries `refused_reason=`
+  and the line ends with it: "… running 02.05 again. Reason: health lost in the settle window:
+  health unit qt-demo-launcher.service is not active". A candidate that hung or lost power has
+  no reason, and the line stays as it was. The app opens on this
   tab when it has such news or the last scan found an installable bundle. Opening the tab after
   a fallback writes `<data>/acknowledged-fallback` (`version=` of the install it refers to), so
   the launcher badge stops repeating it; the tab keeps the line.
@@ -127,6 +131,8 @@ scanner prints a canned bundle (or `SYSTEM_IMAGE_SCAN_FAKE=<file>`), and the rea
 QtQuick/QtQuick.Window QML modules), using the stand-in, `tests/fake-systemctl` for the
 preflight (`FAKE_DOWN`, `FAKE_RESTARTED`), canned scans and a canned `update-iocs.sh`.
 `tests/badge-fixture.sh` runs the badge script against fake status and acknowledgement records.
+`tests/test_outcome_text.cpp` (QtCore only; `cmake -DBUILD_TESTS=ON`, then `ctest`) checks the
+rolled-back line against status files with and without `refused_reason=`.
 `tests/fake-update-fpga` stands in for `update-fpga.sh` (`FAKE_FPGA_CHECK`, `FAKE_FPGA_END`,
 `FAKE_FPGA_ACTIVATE`, `FAKE_FPGA_ABSENT`, `FAKE_FPGA_STEP`).
 By hand:
