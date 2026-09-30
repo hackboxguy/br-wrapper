@@ -126,6 +126,25 @@ int main(int argc, char *argv[])
                                                   "color", "red");
     parser.addOption(childActionStopColorOption);
 
+    QCommandLineOption childOptionNameOption(QStringList() << "child-option-name",
+                                             "Show an on/off toggle beside the child-action button; each tap sends "
+                                             "{\"command\":\"set_option\",\"name\":<name>,\"enabled\":<bool>} "
+                                             "to the child script. Starts off.",
+                                             "name");
+    parser.addOption(childOptionNameOption);
+
+    QCommandLineOption childOptionTextOption(QStringList() << "child-option-text",
+                                             "Label of the child-option toggle (default: its name). With "
+                                             "--child-option-on-text it is the label while off.",
+                                             "text");
+    parser.addOption(childOptionTextOption);
+
+    QCommandLineOption childOptionOnTextOption(QStringList() << "child-option-on-text",
+                                               "Label of the child-option toggle while on. When set, the button "
+                                               "shows one of the two labels instead of \"<text>: ON/OFF\".",
+                                               "text");
+    parser.addOption(childOptionOnTextOption);
+
     QCommandLineOption disablePatternNavigationOption(QStringList() << "disable-pattern-navigation",
                                                       "Disable background tap/swipe pattern navigation.");
     parser.addOption(disablePatternNavigationOption);
@@ -206,6 +225,9 @@ int main(int argc, char *argv[])
         parser.value(childActionStopTextOption),
         childActionStartColor,
         childActionStopColor);
+    patternController.configureChildOption(parser.value(childOptionNameOption),
+                                           parser.value(childOptionTextOption),
+                                           parser.value(childOptionOnTextOption));
     patternController.setPatternNavigationEnabled(!parser.isSet(disablePatternNavigationOption));
     patternController.setUiAutoHideEnabled(!parser.isSet(disableUiAutoHideOption));
     patternController.setNavigationHelpVisible(!parser.isSet(hideNavigationHelpOption));

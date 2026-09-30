@@ -37,6 +37,9 @@ class PatternController : public QObject
     Q_PROPERTY(QString childActionStopText READ childActionStopText NOTIFY childActionButtonChanged)
     Q_PROPERTY(QColor childActionStartColor READ childActionStartColor NOTIFY childActionButtonChanged)
     Q_PROPERTY(QColor childActionStopColor READ childActionStopColor NOTIFY childActionButtonChanged)
+    Q_PROPERTY(bool childOptionVisible READ childOptionVisible NOTIFY childOptionChanged)
+    Q_PROPERTY(bool childOptionEnabled READ childOptionEnabled NOTIFY childOptionChanged)
+    Q_PROPERTY(QString childOptionLabel READ childOptionLabel NOTIFY childOptionChanged)
 
 public:
     explicit PatternController(QObject *parent = nullptr);
@@ -54,6 +57,16 @@ public:
     bool exitDisabledWhileChildActionActive() const { return m_exitDisabledWhileChildActionActive; }
     QColor childActionStartColor() const { return m_childActionStartColor; }
     QColor childActionStopColor() const { return m_childActionStopColor; }
+    bool childOptionVisible() const { return !m_childOptionName.isEmpty(); }
+    bool childOptionEnabled() const { return m_childOptionEnabled; }
+    // With an on-text the button names the current choice; otherwise it reads
+    // "<text>: ON" / "<text>: OFF".
+    QString childOptionLabel() const {
+        if (!m_childOptionOnText.isEmpty()) {
+            return m_childOptionEnabled ? m_childOptionOnText : m_childOptionText;
+        }
+        return m_childOptionText + (m_childOptionEnabled ? ": ON" : ": OFF");
+    }
     bool getPatternNavigationEnabled() const { return m_patternNavigationEnabled; }
     bool getUiAutoHideEnabled() const { return m_uiAutoHideEnabled; }
     bool getNavigationHelpVisible() const { return m_navigationHelpVisible; }
@@ -67,6 +80,10 @@ public:
     void setNavigationHelpVisible(bool visible);
     void setUserInteractionEnabled(bool enabled);
     void setExitDisabledWhileChildActionActive(bool enabled);
+    // Optional on/off toggle beside the child-action button. Each tap sends
+    // {"command":"set_option","name":<name>,"enabled":<bool>} to the child
+    // script's stdin. Starts off; an empty name hides it.
+    void configureChildOption(const QString &name, const QString &text, const QString &onText = QString());
     void configureStartupMetadata(const QString &status, const QString &text,
                                   const QString &align, int fontSize,
                                   const QColor &color);
@@ -86,6 +103,7 @@ public slots:
     bool getUserInteractionEnabled() const { return m_userInteractionEnabled; }
     void requestQuit();
     void toggleChildAction();
+    void toggleChildOption();
 
 signals:
     void currentPatternChanged();
@@ -104,6 +122,7 @@ signals:
     void navigationHelpVisibleChanged();
     void childActionButtonChanged();
     void childActionStateChanged();
+    void childOptionChanged();
     void exitBehaviorChanged();
 
 private slots:
@@ -142,6 +161,10 @@ private:
     QString m_childActionStopText;
     QColor m_childActionStartColor;
     QColor m_childActionStopColor;
+    QString m_childOptionName;
+    QString m_childOptionText;
+    QString m_childOptionOnText;
+    bool m_childOptionEnabled;
 
     void updatePattern(const QString &pattern);
     bool setPatternParameter(const QString &pattern, const QString &param, const QStringList &values);
@@ -162,7 +185,7 @@ private:
     void stopChildScript();
     void finishApplicationQuit();
     void cleanupChildProcess();
-    bool sendChildControlCommand(const QString &command, bool enabled);
+    bool sendChildControlCommand(const QString &command, bool enabled, const QString &name = QString());
     void setChildActionActive(bool active);
 };
 

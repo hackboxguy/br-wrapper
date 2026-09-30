@@ -36,6 +36,7 @@ PatternController::PatternController(QObject *parent)
     , m_childActionStopText("Stop Recording")
     , m_childActionStartColor(0, 128, 0)
     , m_childActionStopColor(192, 0, 0)
+    , m_childOptionEnabled(false)
 {
     m_childShutdownTimer->setSingleShot(true);
     m_childShutdownTimer->setInterval(3000);
@@ -129,6 +130,15 @@ void PatternController::configureChildActionButton(bool visible, const QString &
     }
     setChildActionActive(false);
     emit childActionButtonChanged();
+}
+
+void PatternController::configureChildOption(const QString &name, const QString &text, const QString &onText)
+{
+    m_childOptionName = name.trimmed();
+    m_childOptionText = text.isEmpty() ? m_childOptionName : text;
+    m_childOptionOnText = onText;
+    m_childOptionEnabled = false;
+    emit childOptionChanged();
 }
 
 void PatternController::setPatternNavigationEnabled(bool enabled)
@@ -308,7 +318,7 @@ void PatternController::setChildActionActive(bool active)
     emit childActionStateChanged();
 }
 
-bool PatternController::sendChildControlCommand(const QString &command, bool enabled)
+bool PatternController::sendChildControlCommand(const QString &command, bool enabled, const QString &name)
 {
     if (!isChildScriptRunning()) {
         qWarning() << "Cannot send child control command; child script is not running";
@@ -317,6 +327,9 @@ bool PatternController::sendChildControlCommand(const QString &command, bool ena
 
     QJsonObject message;
     message["command"] = command;
+    if (!name.isEmpty()) {
+        message["name"] = name;
+    }
     message["enabled"] = enabled;
 
     QByteArray payload = QJsonDocument(message).toJson(QJsonDocument::Compact);
@@ -342,6 +355,20 @@ void PatternController::toggleChildAction()
     bool nextState = !m_childActionActive;
     if (sendChildControlCommand("set_recording", nextState)) {
         setChildActionActive(nextState);
+    }
+}
+
+void PatternController::toggleChildOption()
+{
+    // Locked while the child action runs: the child reads options when it starts.
+    if (m_childOptionName.isEmpty() || m_childActionActive) {
+        return;
+    }
+
+    bool nextState = !m_childOptionEnabled;
+    if (sendChildControlCommand("set_option", nextState, m_childOptionName)) {
+        m_childOptionEnabled = nextState;
+        emit childOptionChanged();
     }
 }
 

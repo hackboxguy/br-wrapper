@@ -401,6 +401,44 @@ Window {
         }
     }
 
+    // Optional on/off toggle for the child script (--child-option-name), e.g. the
+    // gamut analysis "Current brightness" choice. Locked while measuring.
+    Rectangle {
+        id: childOptionButton
+        anchors.top: parent.top
+        anchors.right: childActionButton.left
+        anchors.topMargin: 20
+        anchors.rightMargin: 12
+        width: Math.max(childOptionLabel.contentWidth + 36, 190)
+        height: 60
+        color: patternController.childOptionEnabled ? "#1565C0" : "#505050"
+        opacity: patternController.childActionActive ? 0.55 : 1.0
+        radius: 8
+        border.color: "white"
+        border.width: 1
+        visible: patternController.childOptionVisible && childActionButton.visible
+
+        Text {
+            id: childOptionLabel
+            anchors.centerIn: parent
+            text: patternController.childOptionLabel
+            color: "white"
+            font.pixelSize: 22
+            font.bold: true
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            enabled: !patternController.childActionActive
+            onClicked: {
+                patternController.toggleChildOption()
+                if (patternController.userInteractionEnabled) {
+                    showUITemporarily()
+                }
+            }
+        }
+    }
+
     // Network info (bottom-right) - Outside uiOverlay for independent visibility
     Rectangle {
         id: networkInfoRect
