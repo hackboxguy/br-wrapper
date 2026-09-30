@@ -660,6 +660,9 @@
           "--disable-pattern-navigation",
           "--disable-ui-autohide",
           "--hide-navigation-help",
+          "--child-option-name", "use-current-brightness",
+          "--child-option-text", "Full-Brightness",
+          "--child-option-on-text", "Current-Brightness",
           "--script", "/usr/share/qt-apps/display-analysis-start-child.sh",
           "--script-arg=color-gamut"
         ],

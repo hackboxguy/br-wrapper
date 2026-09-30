@@ -1,5 +1,10 @@
 #!/bin/sh
 # Run a display characterization suite, render a report PNG, and show it.
+#
+# Report names start with the display's serial - the short form of the display
+# IOC's (RH850) unique chip ID, as disp-settings shows it - so reports from
+# several displays can share one archive: <serial>_run-<date>-<time>, plus
+# -b<brightness %> for the color-gamut suite (BRIGHTNESS_VALUE, default 100).
 
 set -u
 
@@ -58,9 +63,31 @@ esac
 RENDERING_APP_ID="${DISPLAY_ANALYSIS_RENDERING_APP_ID:-$DEFAULT_RENDERING_APP_ID}"
 GALLERY_APP_ID="${GALLERY_APP_ID:-$DEFAULT_GALLERY_APP_ID}"
 
+# Short chip serial of the display IOC (e.g. 0HD5-B2WV-JE6HH) via disptool;
+# "unknown-serial" when the IOC or its firmware does not provide one.
+read_display_serial() {
+    tool=""
+    for t in "${DISPTOOL:-}" "$MICROPANEL_HOME/bin/disptool" /usr/bin/disptool /usr/local/bin/disptool; do
+        [ -n "$t" ] && [ -x "$t" ] && tool="$t" && break
+    done
+    serial=""
+    if [ -n "$tool" ]; then
+        serial="$("$tool" --i2cdev="${I2C_DEVICE:-/dev/i2c-1}" --autotestformat --command chipid --device=ioc 2>/dev/null |
+                  sed -n 's/^Short[[:space:]]*:[[:space:]]*\([0-9A-Z-]*\).*/\1/p' | head -n 1)"
+    fi
+    case "$serial" in
+        ????-????-?????) echo "$serial" ;;
+        *) echo "unknown-serial" ;;
+    esac
+}
+
 SUITE_DIR="$OUTPUT_ROOT/$SUITE_DIR_NAME"
 LOCK_DIR="$SUITE_DIR/.analysis.lock"
-RUN_ID="run-$(date +%Y%m%d-%H%M%S)"
+DISPLAY_SERIAL="${DISPLAY_SERIAL:-$(read_display_serial)}"
+RUN_ID="${DISPLAY_SERIAL}_run-$(date +%Y%m%d-%H%M%S)"
+if [ "$RUN_SUITE" = "color-gamut" ]; then
+    RUN_ID="$RUN_ID-b${BRIGHTNESS_VALUE:-100}"
+fi
 RESULTS_DIR="$SUITE_DIR/$RUN_ID"
 PNG_PATH="$SUITE_DIR/$RUN_ID.png"
 ARCHIVE_DIR="$ARCHIVE_ROOT/$SUITE_DIR_NAME"
@@ -385,6 +412,14 @@ if [ "$RUN_SUITE" = "local_dimming_apl" ]; then
     log "Local dimming sweep mode: ${LOCAL_DIMMING_SWEEP_MODE:-percent_apl}"
 fi
 log "Display model: $DISPLAY_MODEL"
+log "Display serial: $DISPLAY_SERIAL"
+if [ "$RUN_SUITE" = "color-gamut" ]; then
+    if [ -n "${BRIGHTNESS_VALUE:-}" ]; then
+        log "Brightness: $BRIGHTNESS_VALUE% (current brightness, chosen at start)"
+    else
+        log "Brightness: suite default (100%)"
+    fi
+fi
 log "Runner: $RUNNER"
 log "Report card: $REPORT_CARD"
 log "Rendering app: $RENDERING_APP_ID"
