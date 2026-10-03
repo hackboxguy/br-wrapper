@@ -124,9 +124,14 @@ Measured unless marked. F = Fable's review, C = Claude's study.
 - **Where**: the root `config.txt` on the boot partition is rendered by the A/B slot selector from the
   slot's own `config.txt` (`misc-tools/packages/pi-ab-update/ab-slot-selector render-normal`), so a hand
   edit (as on the rig now: `[all]`/`gpu_mem=128`, backup `config.txt.fable-bak`) disappears at the next
-  update. Put it in the **micropanel repo's base config** (`configs/config-base.txt.in`, also
-  `configs/config.txt`; golden copies in `tests/golden/pi-config-txt/*.config.txt` need regenerating) —
-  confirm the template → slot `config.txt` path before editing; not into `micropanel-display.txt`.
+  update. **All `config.txt` changes go through the micropanel repo's `scripts/pi-config-txt.sh`**
+  (owner, 2026-10-03), which renders from `configs/config-base.txt.in` and, on A/B images (split boot
+  configuration, `/etc/default/micropanel` → `MICROPANEL_BOOT_CONFIG`), writes a **device-owned display
+  file** that the release-owned `config.txt` includes. Work out with that script which side `gpu_mem`
+  belongs to (it must travel with the release, i.e. the slot `config.txt`, not stay behind in the
+  device file), update its test (`tests/test_pi_config_txt.sh`), the golden copies
+  (`tests/golden/pi-config-txt/*.config.txt`) and the misc-tools users (`micropanel-appliance-hook.sh`,
+  `ab-assertions.sh`, `tests/test_ab_layout_static.sh`, `PERSISTENCE.md`).
   It then travels with the `.mpupdate`, and a rollback restores old config + old player together. Add an
   assertion so the line cannot drop silently (`ab-assertions.sh`, `test_ab_layout_static.sh`).
 - **Player safety net**: read `vcgencmd get_mem gpu` at start; below 128 use **one hardware decoder at a
