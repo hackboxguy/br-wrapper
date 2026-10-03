@@ -61,27 +61,6 @@ include(GNUInstallDirs)
 # Use -DLAUNCHER_CONFIG=qt-demo-launcher-pios.json for PiOS/SDM builds
 set(LAUNCHER_CONFIG "qt-demo-launcher.json" CACHE STRING "Launcher JSON config file to install")
 
-# Synced two-file / two-display video player (GStreamer V4L2 hw decode,
-# frames presented with libdrm atomic commits). Optional: built only where
-# the GStreamer (core + plugins-base) and libdrm dev packages are installed.
-find_package(PkgConfig QUIET)
-if(PKG_CONFIG_FOUND)
-    pkg_check_modules(GST gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0
-                      gstreamer-allocators-1.0 libdrm)
-endif()
-if(GST_FOUND)
-    add_executable(dual-video-player src/dual-video-player.c)
-    target_include_directories(dual-video-player PRIVATE ${GST_INCLUDE_DIRS})
-    target_link_libraries(dual-video-player PRIVATE ${GST_LIBRARIES} m)
-    install(TARGETS dual-video-player
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    )
-    set_target_properties(dual-video-player PROPERTIES AUTOMOC OFF)
-    message(STATUS "  dual-video-player: enabled")
-else()
-    message(STATUS "  dual-video-player: disabled (gstreamer/libdrm dev packages not found)")
-endif()
-
 # Install binary
 install(TARGETS qt-demo-launcher
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}

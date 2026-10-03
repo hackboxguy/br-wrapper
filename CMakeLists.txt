@@ -60,6 +60,7 @@ message(STATUS "========================================")
 # These packages don't require Qt5
 add_subdirectory(package/disp-can-ctrl/src)
 add_subdirectory(package/hh983-serializer/src)
+add_subdirectory(package/micropanel-media-player)
 
 # Add Qt packages if Qt5 was found
 if(Qt5_FOUND)
