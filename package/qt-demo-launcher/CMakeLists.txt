@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.10)
 
-project(qt-demo-launcher VERSION 1.0.0 LANGUAGES CXX)
+project(qt-demo-launcher VERSION 1.0.0 LANGUAGES C CXX)
 
 # C++ standard
 set(CMAKE_CXX_STANDARD 11)
@@ -43,6 +43,12 @@ target_include_directories(qt-demo-launcher
         ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+# LD_PRELOAD shim that clones Kodi's GBM/DRM output onto the 2nd HDMI
+# (Kodi itself only drives one connector). Loaded by the kodi-*.sh scripts.
+add_library(kodi-drm-mirror SHARED src/kodi-drm-mirror.c)
+target_link_libraries(kodi-drm-mirror PRIVATE ${CMAKE_DL_LIBS})
+set_target_properties(kodi-drm-mirror PROPERTIES C_VISIBILITY_PRESET default)
+
 # Workaround for NetworkInterface.moc issue (needed for non-local compile)
 # Comment out #include "NetworkInterface.moc" from NetworkInterface.cpp
 # This is handled by CMAKE_AUTOMOC
@@ -68,6 +74,10 @@ install(FILES
     src/${LAUNCHER_CONFIG}
     DESTINATION ${DATA_DIR}
     RENAME qt-demo-launcher.json
+)
+
+install(TARGETS kodi-drm-mirror
+    LIBRARY DESTINATION ${DATA_DIR}
 )
 
 install(PROGRAMS
