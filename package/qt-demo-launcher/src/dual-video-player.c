@@ -1075,6 +1075,24 @@ static gchar *branch(const char *file, int idx)
 	return b;
 }
 
+/*
+ * Announce GstVideoMeta support in the appsink's ALLOCATION query. For 1080p
+ * the decoder's buffers are 1920x1088 (padded); without the meta it cannot
+ * describe the padding, so v4l2h264dec copies each frame into system memory
+ * and sample_fb() cannot import it. With it the dmabuf comes through as is,
+ * the plane offsets/strides in the meta.
+ */
+static GstPadProbeReturn allocation_probe(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+	GstQuery *q = GST_PAD_PROBE_INFO_QUERY(info);
+	(void)pad;
+	(void)data;
+	if (GST_QUERY_TYPE(q) != GST_QUERY_ALLOCATION)
+		return GST_PAD_PROBE_OK;
+	gst_query_add_allocation_meta(q, GST_VIDEO_META_API_TYPE, NULL);
+	return GST_PAD_PROBE_HANDLED;
+}
+
 /* frame rate negotiated on sink1, 0 if unknown */
 static double video_fps(GstAppSink *sink)
 {
@@ -1216,6 +1234,9 @@ int main(int argc, char **argv)
 		g_snprintf(name, sizeof(name), "sink%d", i + 1);
 		p.sink[i] = GST_APP_SINK(gst_bin_get_by_name(GST_BIN(p.pipeline), name));
 		gst_app_sink_set_caps(p.sink[i], caps);
+		GstPad *pad = gst_element_get_static_pad(GST_ELEMENT(p.sink[i]), "sink");
+		gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM, allocation_probe, NULL, NULL);
+		gst_object_unref(pad);
 	}
 	gst_caps_unref(caps);
 
