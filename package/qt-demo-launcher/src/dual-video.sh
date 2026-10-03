@@ -11,6 +11,14 @@
 #
 # Launched by qt-demo-launcher; exec's the player so the launcher's
 # stop-app (SIGTERM) reaches it directly.
+#
+# --check: play nothing; exit 0 if it could play, else print the reason on
+# one line and exit 1. The launcher runs this as the button's
+# available_command and dims the button (reason as its subtitle) while the
+# clips are not there.
+
+CHECK=0
+[ "$1" = "--check" ] && CHECK=1
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PLAYER="$SCRIPT_DIR/../../bin/dual-video-player"
@@ -23,10 +31,13 @@ find_file() {
     find "$1" -maxdepth 1 -type f -iname "$2" 2>/dev/null | head -1
 }
 
-usb_root=$(detect_usb_media_path ".") || {
-    echo "dual-video: no USB stick found" >&2
+# unavailable <reason>: --check prints the reason for the launcher tile
+unavailable() {
+    if [ "$CHECK" = 1 ]; then echo "$1"; else echo "dual-video: $1" >&2; fi
     exit 1
 }
+
+usb_root=$(detect_usb_media_path ".") || unavailable "Insert USB stick with the clips"
 
 V1="" V2=""
 for dir in "$usb_root" "$usb_root/Videos" "$usb_root/videos"; do
@@ -39,14 +50,8 @@ for dir in "$usb_root" "$usb_root/Videos" "$usb_root/videos"; do
     fi
 done
 
-if [ -z "$V1" ]; then
-    echo "dual-video: dual-player-video-1.mp4 / -2.mp4 not found in USB root or Videos/" >&2
-    exit 1
-fi
-
-if [ -z "$PLAYER" ]; then
-    echo "dual-video: dual-video-player not installed" >&2
-    exit 1
-fi
+[ -n "$V1" ] || unavailable "No dual-player-video-1/2.mp4 on USB stick"
+[ -n "$PLAYER" ] || unavailable "dual-video-player not installed"
+[ "$CHECK" = 1 ] && exit 0
 
 exec "$PLAYER" "$V1" "$V2"

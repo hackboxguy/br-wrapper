@@ -21,6 +21,7 @@
 #include <QFile>
 #include <QPixmap>
 #include <QIcon>
+#include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QScreen>
 #include <QMap>
@@ -81,6 +82,8 @@ struct ButtonConfig {
     QString subtitle;     // "tiles" theme: second line under the text
     QString accentColor;  // "tiles" theme: badge/stripe color (defaults to background_color)
     QString badgeCommand; // "tiles" theme: shell command whose first output line is shown as a badge
+    QString availableCommand; // "tiles" theme: shell command; a non-zero exit dims the tile and ignores
+                              // taps, its first output line replaces the subtitle (the reason)
     QString backgroundColor = "#404040";
     QString hoverColor = "#505050";
     int borderRadius = 15;
@@ -638,6 +641,15 @@ public:
         update();
     }
 
+    // Unavailable (from the button's available_command): drawn like a missing
+    // program, with @reason as the subtitle. A null reason makes it available.
+    void setUnavailable(const QString &reason)
+    {
+        if (reason == m_unavailable && reason.isNull() == m_unavailable.isNull()) return;
+        m_unavailable = reason;
+        update();
+    }
+
     void playReveal(int delayMs)
     {
         if (!m_theme.animations) return;
@@ -680,7 +692,8 @@ protected:
             p.translate(-r.center());
             p.setOpacity(m_reveal);
         }
-        if (m_missing) p.setOpacity(p.opacity() * 0.5);
+        const bool dimmed = m_missing || !m_unavailable.isNull();
+        if (dimmed) p.setOpacity(p.opacity() * 0.5);
 
         const QColor text(m_theme.textColor);
         const QColor subtext(m_theme.subtextColor);
@@ -763,7 +776,9 @@ protected:
         QFontMetricsF fmT(titleFont);
         QString title = fmT.elidedText(m_config.text, Qt::ElideRight, textW);
 
-        QString sub = m_missing ? QString("Not installed") : m_config.subtitle;
+        QString sub = m_missing ? QString("Not installed")
+                    : !m_unavailable.isNull() ? (m_unavailable.isEmpty() ? QString("Not available") : m_unavailable)
+                    : m_config.subtitle;
         QFont subFont = themeFont(m_theme, qRound(u * 0.12), QFont::Normal);
         QFontMetricsF fmS(subFont);
         sub = fmS.elidedText(sub, Qt::ElideRight, textW);
@@ -776,7 +791,7 @@ protected:
         p.drawText(QPointF(x, top + fmT.ascent()), title);
         if (!sub.isEmpty()) {
             p.setFont(subFont);
-            p.setPen(m_missing ? QColor("#F87171") : subtext);
+            p.setPen(dimmed ? QColor("#F87171") : subtext);
             p.drawText(QPointF(x, top + fmT.height() + gap + fmS.ascent()), sub);
         }
 
@@ -800,6 +815,7 @@ private:
     ButtonConfig m_config;
     ThemeConfig m_theme;
     bool m_missing;
+    QString m_unavailable;  // null = available; else why not (empty: "Not available")
     QString m_badge;
     QColor m_accent;
     QPixmap m_icon;
@@ -989,6 +1005,9 @@ public:
         // Badge commands (e.g. the System Update check) run once the display
         // chain has settled after boot, then each time an app exits
         QTimer::singleShot(20000, this, [this]() { runBadgeCommands(); });
+        // Availability checks are cheap and local (no display bus): run them now
+        setupDiskWatcher();
+        QTimer::singleShot(0, this, [this]() { runAvailableCommands(); });
     }
 
 private slots:
@@ -1007,6 +1026,7 @@ protected:
         // Replay the entrance each time we come back from a launched app
         animateTilesIn();
         if (m_badgesStarted) runBadgeCommands();
+        runAvailableCommands();
     }
 
     void keyPressEvent(QKeyEvent *event) override
@@ -1159,6 +1179,7 @@ private:
 	    // Refresh the UI with new config
 	    calculateScaleFactor();
 	    refreshUI();
+	    runAvailableCommands();
 
 	    // Re-add file to watcher (some systems remove it after change)
 	    if (m_configWatcher && !m_currentConfigFile.isEmpty()) {
@@ -1364,6 +1385,62 @@ private:
     QMap<QString, QString> m_badges;       // button id -> badge text from its badge_command
     QSet<QString> m_badgeRunning;
     bool m_badgesStarted = false;
+    QMap<QString, QString> m_unavailable;  // button id -> reason, while its available_command fails
+    QSet<QString> m_availableRunning;
+    QFileSystemWatcher *m_diskWatcher = nullptr;
+    QTimer *m_diskSettle = nullptr;
+
+    // Run each button's available_command: exit 0 = available, anything else
+    // dims the tile (taps ignored) and shows the first output line as the
+    // reason. Runs at start, when the launcher is shown again after an app,
+    // and when a disk appears or goes (USB media for e.g. the dual-video
+    // button). Like the badges, never while an app runs.
+    void runAvailableCommands()
+    {
+        if (!isVisible() || (m_runningProcess && m_runningProcess->state() != QProcess::NotRunning))
+            return;   // showEvent runs them when the launcher is back
+        for (const ButtonConfig &b : m_config.buttons) {
+            if (b.availableCommand.isEmpty() || !b.enabled || m_availableRunning.contains(b.id)) continue;
+            QProcess *proc = new QProcess(this);
+            const QString id = b.id;
+            m_availableRunning.insert(id);
+            connect(proc, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+                    [this, proc, id](int code, QProcess::ExitStatus status) {
+                m_availableRunning.remove(id);
+                if (status == QProcess::NormalExit && code == 0) {
+                    m_unavailable.remove(id);
+                } else {
+                    QString reason = QString::fromUtf8(proc->readAllStandardOutput()).section('\n', 0, 0).trimmed();
+                    m_unavailable.insert(id, reason.isNull() ? QString("") : reason);
+                }
+                for (const QPointer<TileButton> &tile : m_tiles) {
+                    if (tile && tile->property("buttonId").toString() == id)
+                        tile->setUnavailable(m_unavailable.contains(id) ? m_unavailable.value(id) : QString());
+                }
+                proc->deleteLater();
+            });
+            QTimer::singleShot(30000, proc, [proc]() { proc->kill(); });
+            proc->start("/bin/sh", QStringList() << "-c" << b.availableCommand);
+        }
+    }
+
+    // USB media come and go: udev adds/removes /dev/disk/by-id links. Re-check
+    // availability once the disk has settled (a mount may follow the link).
+    void setupDiskWatcher()
+    {
+        m_diskSettle = new QTimer(this);
+        m_diskSettle->setSingleShot(true);
+        m_diskSettle->setInterval(2500);
+        connect(m_diskSettle, &QTimer::timeout, this, [this]() { runAvailableCommands(); });
+        m_diskWatcher = new QFileSystemWatcher(this);
+        for (const QString &dir : {QString("/dev/disk/by-id"), QString("/dev/disk")})
+            if (QFileInfo(dir).isDir()) m_diskWatcher->addPath(dir);
+        connect(m_diskWatcher, &QFileSystemWatcher::directoryChanged, this, [this](const QString &) {
+            if (QFileInfo("/dev/disk/by-id").isDir() && !m_diskWatcher->directories().contains("/dev/disk/by-id"))
+                m_diskWatcher->addPath("/dev/disk/by-id");   // created with the first disk
+            m_diskSettle->start();
+        });
+    }
 
     // Run each button's badge_command and show its first output line on the
     // tile. Never while an app runs (the launcher is hidden then): a badge
@@ -2131,6 +2208,7 @@ private:
             btn.subtitle = btnObj["subtitle"].toString();
             btn.accentColor = btnObj["accent_color"].toString();
             btn.badgeCommand = btnObj["badge_command"].toString();
+            btn.availableCommand = btnObj["available_command"].toString();
             btn.borderRadius = btnObj["border_radius"].toInt(15);
 
             if (btn.action.toLower() == "navigate") {
@@ -2576,10 +2654,12 @@ private:
             tile->setProperty("buttonId", config.id);
             tile->setFixedSize(buttonWidth, buttonHeight);
             tile->setBadge(m_badges.value(config.id));
+            if (m_unavailable.contains(config.id)) tile->setUnavailable(m_unavailable.value(config.id));
             // Launch on press (as the classic buttons do), delayed so the
             // ripple is seen and a swipe can cancel it (scheduleActivation)
             QString buttonId = config.id;
             connect(tile, &QPushButton::pressed, this, [this, buttonId]() {
+                if (m_unavailable.contains(buttonId)) return;   // dimmed by its available_command
                 scheduleActivation(buttonId);
             });
             m_tiles.append(tile);

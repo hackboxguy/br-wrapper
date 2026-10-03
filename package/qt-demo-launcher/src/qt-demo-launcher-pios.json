@@ -133,6 +133,7 @@
         "subtitle": "Two synced clips, one per HDMI",
         "icon": "/usr/share/qt-apps/icons/demo-video.svg",
         "program": "/usr/share/qt-apps/dual-video.sh",
+        "available_command": "/usr/share/qt-apps/dual-video.sh --check",
         "arguments": [],
         "working_directory": "/tmp",
         "position": {

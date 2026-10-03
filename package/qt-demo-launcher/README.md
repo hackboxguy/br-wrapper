@@ -330,6 +330,17 @@ a breadcrumb instead), and each button accepts:
 `badge_command` runs through `/bin/sh -c` about 20 s after the launcher starts and again whenever
 a launched app exits — never while an app is running. An empty output clears the badge. The
 System Manager button uses it for "Update available" (see `package/system-manager-app`).
+
+```json
+"available_command": "/usr/share/qt-apps/dual-video.sh --check"  // Optional: dim the tile while it fails
+```
+
+`available_command` also runs through `/bin/sh -c`: at start, whenever the launcher is shown again
+after an app, and 2.5 s after a disk appears or goes (`/dev/disk/by-id`, i.e. a USB stick is
+plugged or pulled) — never while an app is running. Exit 0 = available. Any other exit dims the
+tile like a missing program, ignores taps, and shows the command's first output line as the
+subtitle ("Not available" if it printed nothing). The Dual Video button uses it to stay dimmed
+until a USB stick carries `dual-player-video-1.mp4` and `-2.mp4`.
 `notice_file` is read once a second; the System Manager writes `Power cycle required` there after
 a firmware update, and `/tmp` clears it on the next boot.
 
