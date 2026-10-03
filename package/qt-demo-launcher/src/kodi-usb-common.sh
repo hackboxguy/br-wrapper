@@ -75,6 +75,29 @@ _get_usb_mount() {
         return 0
     fi
 
+    # Not root (the launcher runs as pi): plain mount needs root. Ask udisks2
+    # via polkit first (mounts at /media/<user>/<LABEL>, owned by the user)...
+    if command -v udisksctl >/dev/null 2>&1; then
+        local out
+        out=$(udisksctl mount -b "$device" --no-user-interaction 2>/dev/null)
+        # "Mounted /dev/sdb1 at /media/pi/MICROPANEL"
+        case "$out" in
+            "Mounted "*" at "*)
+                echo "${out#* at }" | sed 's/\.$//'
+                return 0 ;;
+        esac
+    fi
+
+    # ...then passwordless sudo, read-only and owned by the caller (uid/gid
+    # options apply to vfat/exfat/ntfs; retry without them for e.g. ext4).
+    if sudo -n true 2>/dev/null; then
+        if sudo -n mount -o ro,uid="$(id -u)",gid="$(id -g)" "$device" "$USB_MOUNT_POINT" 2>/dev/null ||
+           sudo -n mount -o ro "$device" "$USB_MOUNT_POINT" 2>/dev/null; then
+            echo "$USB_MOUNT_POINT"
+            return 0
+        fi
+    fi
+
     return 1
 }
 

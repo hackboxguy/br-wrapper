@@ -127,6 +127,34 @@
         "border_radius": 20
       },
       {
+        "id": "dual-video",
+        "enabled": true,
+        "text": "Dual Video",
+        "subtitle": "Two synced clips, one per HDMI",
+        "icon": "/usr/share/qt-apps/icons/demo-video.svg",
+        "program": "/usr/share/qt-apps/dual-video.sh",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 3,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "accent_color": "#A78BFA",
+        "background_color": "#8E44AD",
+        "hover_color": "#7D3C98",
+        "border_radius": 20
+      },
+      {
         "id": "slideshow",
         "enabled": false,
         "text": "Slideshow",
