@@ -1,6 +1,6 @@
 # dual-video-player extension: USB Media playlist player — plan
 
-Status: **planned, not started** (2026-10-03). Written so a fresh session can implement it phase by
+Status: **planned, not started** — bench study done 2026-10-03 (see "Bench findings"). Written so a fresh session can implement it phase by
 phase. Read [qt-demo-launcher-apps-handover.md](qt-demo-launcher-apps-handover.md) first (visual
 language, launcher contract, app conventions, build/deploy/test), then this.
 
@@ -35,12 +35,19 @@ optionally starting automatically at boot. Playback is done by **extending the e
   Information`, `$RECYCLE.BIN`). Videos: `mp4 mkv mov m4v`. Images: `jpg jpeg png` (`jpegdec`/`pngdec`
   are in the image: gstreamer1.0-plugins-good).
 - **Image duration**: default 10 s, range 2–600 s.
-- **Unsupported/heavy files** (probed in the app): anything but **H.264 up to 1920x1080** — the only
-  hardware-decoded format here. H.264 above 1080p exceeds the decoder (software decode stutters; the
-  original 3840x1440 clips of 2026-10-03 were such a case). **HEVC is not hardware-decodable through
-  GStreamer on this image**: the kernel has `rpi-hevc-dec` (`/dev/video19`, stateless V4L2), but
-  GStreamer 1.22 on Pi OS ships no element for it (`v4l2slh265dec`/`v4l2h265dec` missing, checked
-  2026-10-03). Shown greyed with the reason; cannot be checked. Images: any size (downscaled at decode).
+- **Decode path per file** (chosen from the parse-only probe, see "Bench findings"):
+  - **Hardware**: H.264 (Baseline/Main/High, 8-bit 4:2:0) up to 1920x1088 → `v4l2h264dec`, dmabuf,
+    zero copy. The only hardware path: **HEVC is not hardware-decodable through GStreamer on this
+    image** — the kernel has `rpi-hevc-dec` (`/dev/video19`, stateless V4L2) but GStreamer 1.22 on
+    Pi OS ships no element for it (`v4l2slh265dec`/`v4l2h265dec` missing).
+  - **Software**: HEVC (`avdec_h265`) and H.264 above 1080p (`avdec_h264`), from **gst-libav** —
+    measured faster than real time with headroom (findings §3/§4). Frames are copied into DRM dumb
+    buffers and scaled by the display planes.
+  - **Too heavy** (greyed in the app with the reason): estimated decode cost above the software budget.
+    Start with `width × height × fps ≤ 140 M pixels/s` for software files (3840x1440@25 = 138 M decoded
+    at 1.8× real time) and refine with real camera/phone clips; H.264 10-bit/4:2:2 and other codecs
+    (VP9, AV1, MPEG-2…) are unsupported for now.
+  - Images: any size (decoded in software, downscaled to the display).
 - **Refresh rate**: one mode per playlist, not per item (a mode switch blanks HDMI for ~1 s): the
   integer multiple of the **first video's** frame rate, if the display offers one (existing
   `set_refresh` logic). Image-only playlists keep the current mode.
@@ -59,14 +66,58 @@ re-encoding:
   matrix but "unspecified" primaries/transfer → caps `colorimetry=0:3:0:0`, which `v4l2h264dec`
   rejects with `not-negotiated`). Normalise the caps between parser and decoder instead of fixing
   the file.
-- **H.264 above 1080p** and **HEVC**: no hardware decode path on this image (see Defaults). Options,
-  to be decided by measurement: software decode (`avdec_h264`/`avdec_h265` from gst-libav, CPU-bound,
-  will drop frames for large/high-fps content), or mark the file unsupported in the app.
+- **H.264 above 1080p** and **HEVC**: no hardware decode path on this image; **software decode
+  (gst-libav) is fast enough** for the measured cases (findings §3/§4) → software path with a cost
+  budget (Defaults).
 - **Containers**: MP4/MOV (`qtdemux`), MKV (`matroskademux`); `decodebin`/`parsebin` can pick the
   demuxer.
-- **Images** of any size and orientation (phone photos: 12–50 MP JPEGs with EXIF orientation).
+- **Images** of any size and orientation (phone photos: 12–50 MP JPEGs with EXIF orientation):
+  `jpegparse` must precede `jpegdec`, else the EXIF orientation is lost (findings §5).
 
 Experiments and results on the bench go into "Bench findings" below.
+
+## Bench findings (2026-10-03, micropanel Pi4 `.170`, image 2.03, GStreamer 1.22)
+
+Stick content: 4 videos (all H.264 1920x720: two 25 fps High@4.1 with full BT.709 tags, one 30 fps
+High@4 BT.709, one 30 fps Main@4.1 **with no colour description at all**) and 12 JPEGs (1920x1080,
+2560x1440). Extra test files made on the host: H.264 with an incomplete colour description, HEVC
+1080p25, H.264 3840x1440@25, a 4000x3000 JPEG with EXIF orientation 6.
+
+1. **Never probe videos with GstDiscoverer / `gst-discoverer-1.0` / decodebin.** They open the
+   hardware decoder per file. Probing ~10 files in a row **wedged the VideoCore codec firmware**
+   (`bcm2835_mmal_vchiq: timed out waiting for sync completion`, `failed to create component
+   ril.video_decode (Not enough GPU mem?)`, 58 failures; the board has `gpu_mem=76M`). Reloading
+   `bcm2835_codec` then failed to probe (`-12`) and **removed `/dev/video10`**; only a reboot recovered.
+   → **Parse-only probe**: `filesrc ! parsebin ! fakesink` (in the app via the API, reading the caps):
+   ~76 ms per file incl. process start, gives codec, profile, width, height, framerate, colorimetry,
+   and touches no decoder (0 decoder kernel messages over 6 files).
+2. **Hardware decode** (`qtdemux ! h264parse ! v4l2h264dec capture-io-mode=dmabuf ! fakesink
+   sync=false`): all stick videos decode completely, ~110–120 fps for 1920x720 (≈4× real time). A
+   stream **without** a colour description is fine; one with an **incomplete** description
+   (`colorimetry=0:3:0:0`) fails `not-negotiated` — and decodes 300/300 frames with
+   `capssetter caps="video/x-h264,colorimetry=(string)bt709" join=true replace=false` between
+   parser and decoder. → In the player: a CAPS-event probe on the decoder sink pad that replaces an
+   unknown/partial colorimetry with `bt709` (HD) / `bt601` (SD) — no extra element.
+3. **Software decode speed** (`avdec_*`, `fakesink sync=false`): H.264 3840x1440@25 → 45 fps (1.8×
+   real time); HEVC 1080p25 (a low-bitrate sample) → 82 fps (3.3×). The hardware decoder refuses
+   3840x1440 at negotiation, so the path must be chosen *before* building the pipeline.
+4. **Software frames on screen** (`avdec_* ! queue ! kmssink can-scale=true`, single display): H.264
+   3840x1440 → 298 rendered / **0 dropped**, ~27 % of 4 cores (decode + copy + plane downscale);
+   HEVC 1080p → 300 / 0 dropped, ~23 %. Hardware path for comparison ~5 %.
+5. **Images**: 2560x1440 JPEG decode ~260 ms, 12 MP ~150–360 ms (incl. process start). `jpegdec`
+   alone ignores EXIF orientation (4000x3000 out); **`jpegparse ! jpegdec ! videoflip
+   video-direction=auto`** (or `decodebin`, which includes `jpegparse`) gives 3000x4000. → Decode the
+   next image while the current item is shown.
+6. **Time to first frame** (minus ~50 ms process start): hardware H.264 ~90 ms, software HEVC
+   ~460 ms, software H.264 3840x1440 ~580 ms. → Start (preroll) the next item **≥ 1 s before** the
+   current one ends; two hardware decoder instances at once are fine (Dual Video runs two).
+7. **Mixed frame rates** are real (this stick: 25 and 30 fps). One refresh mode per playlist means
+   the minority judders (2/3 cadence); the HDMI-A-1 panel is fixed at 60.07 Hz anyway (30 fps fine,
+   25 fps judders). Default stays "per playlist, from the first video"; a per-item mode switch is a
+   possible later option (cost: an HDMI resync blank at each change, monitor-dependent, not measured).
+8. **Packages**: `capssetter`, `parsebin`, `jpegparse`, `jpegdec`, `pngdec`, `videoflip`,
+   `imagefreeze` are in the image already; **`gstreamer1.0-libav` must be added** to misc-tools
+   `runtime-deps*.txt` for the software path.
 
 ## Architecture
 
@@ -92,10 +143,16 @@ Keep one binary; add a playlist mode next to the existing two-file mode.
   presenter thread, pacing (master display = refresh matching the frame rate), black primaries, EXIT
   popup, input grab, page-flip statistics.
 - **Per item**:
-  - *Video*: `filesrc ! qtdemux|matroskademux ! h264parse ! v4l2h264dec ! appsink` (dmabuf, zero copy),
-    as today. HEVC: unsupported for now (see above); revisit if a newer GStreamer with
+  - *Video, hardware path*: `filesrc ! qtdemux|matroskademux ! h264parse ! [colorimetry probe] !
+    v4l2h264dec ! appsink` (dmabuf, zero copy), as today.
+  - *Video, software path* (HEVC, H.264 > 1080p): `... ! h265parse|h264parse ! avdec_h265|avdec_h264 !
+    appsink` (system memory, I420); the presenter copies each frame into a DRM dumb buffer (keep a
+    small ring of them) and lets the planes scale it. Revisit HEVC if a newer GStreamer with
     `v4l2slh265dec` for `rpi-hevc-dec` lands in the base image.
-  - *Image*: decode once (`filesrc ! decodebin ! videoconvert ! videoscale` to fit the larger display,
+  - The path is chosen from the probe **before** building the pipeline (the hardware decoder refuses
+    oversize streams only at negotiation).
+  - *Image*: decode once (`filesrc ! jpegparse ! jpegdec` (PNG: `pngdec`) `! videoflip video-direction=auto !
+    videoconvert ! videoscale` to fit the larger display,
     respect **EXIF orientation** — phone photos), copy into a DRM dumb buffer (XRGB8888), show it for
     `image_duration` (counted in vblanks of the master display). `videoflip video-direction=auto`
     applies the EXIF orientation tag; `imagefreeze` is available if a pipeline-based still is simpler.
@@ -113,7 +170,8 @@ target added to the top-level `CMakeLists.txt` under the Qt apps, launcher-style
 
 - `UsbMediaController` (C++): find/mount the stick (reuse the logic of `kodi-usb-common.sh`: removable
   `/sys/block/sd*`, existing mount, else `udisksctl mount`, else `sudo -n mount`), scan files, probe
-  videos (GstDiscoverer or `gst-discoverer-1.0` output: codec, width, height, fps, duration), load/save
+  videos **parse-only** (`parsebin` caps + a duration query — never GstDiscoverer/decodebin, findings
+  §1: codec, profile, width, height, fps, colorimetry, duration → decode path or "too heavy"), load/save
   the playlist JSON, read/write the autostart setting, start playback via the launcher TCP API.
 - UI (touch, one screen): header + file list (checkbox, type icon, name, folder, duration/resolution
   or image size, greyed + reason when unsupported), **Select all / None**, **Up / Down** to reorder the
@@ -176,16 +234,21 @@ setup error, 2 = usage.
 ## Phases
 
 ### Phase 1 — playlist playback + app + button
-1. Player: `--playlist` + `--mirror`, video and image items, gapless prefetch, loop, skip bad items,
-   one refresh mode per playlist, EXIT popup, stick-removal stop.
+1. Player: `--playlist` + `--mirror`, video items on the hardware or software path (findings §2–4),
+   colorimetry normalisation probe, image items with EXIF orientation (findings §5), gapless prefetch
+   ≥ 1 s ahead (findings §6), loop, skip bad items, one refresh mode per playlist, EXIT popup,
+   stick-removal stop.
 2. `usb-media.sh` (`--check`, `--play`).
 3. `usb-media-app`: scan, probe, list with checkboxes, select all/none, reorder, image duration, loop,
    save to stick, play.
 4. Launcher button + hidden play entry + path rewrites; CMake/install; README.
-5. Board config: no new packages expected — GStreamer base/good/bad are already pinned in misc-tools
-   `runtime-deps*.txt`, and `jpegdec`, `pngdec`, `imagefreeze`, `videoflip`, `decodebin` are in them
-   (checked 2026-10-03). The app's video probe needs `gst-discoverer-1.0` (gstreamer1.0-plugins-base-apps)
-   or the GstPbutils API (libgstreamer-plugins-base1.0, already pinned) — prefer the API.
+5. Board config: add **`gstreamer1.0-libav`** to misc-tools `runtime-deps.txt` and
+   `runtime-deps-ab.txt` (software path). Everything else is already pinned: GStreamer base/good/bad
+   provide `parsebin`, `capssetter`, `jpegparse`, `jpegdec`, `pngdec`, `videoflip`, `imagefreeze`
+   (checked 2026-10-03).
+6. Move the player to `package/micropanel-media-player` (CMake target + install unchanged:
+   `bin/dual-video-player`; `dual-video.sh` and `usb-media.sh` call it), update the qt-demo-launcher
+   CMake/README and misc-tools references if any.
 
 **Done when**: a mixed list (≥2 videos, ≥3 images) plays mirrored on both HDMIs with no black gaps,
 loops for ≥10 minutes, page-flip stats show regular holds on the master display (as for Dual Video:
