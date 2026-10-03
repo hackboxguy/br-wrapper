@@ -4,7 +4,8 @@
  *     "items": ["Videos/intro.mp4", "Pictures/slide-01.jpg"] }
  *
  * Item paths are relative to the directory holding the playlist (the stick's
- * root), "/" separated. Unknown keys are ignored; missing ones take the
+ * root) or to @root when given (a playlist kept off a read-only stick), "/"
+ * separated. Unknown keys are ignored; missing ones take the
  * defaults below.
  */
 #include "player.h"
@@ -12,23 +13,23 @@
 
 #define DEFAULT_IMAGE_DURATION_S 10
 
-struct playlist *playlist_load(const char *file, GError **err)
+struct playlist *playlist_load(const char *file, const char *root, GError **err)
 {
 	JsonParser *parser = json_parser_new();
 	if (!json_parser_load_from_file(parser, file, err)) {
 		g_object_unref(parser);
 		return NULL;
 	}
-	JsonNode *root = json_parser_get_root(parser);
-	if (!root || !JSON_NODE_HOLDS_OBJECT(root)) {
+	JsonNode *doc = json_parser_get_root(parser);
+	if (!doc || !JSON_NODE_HOLDS_OBJECT(doc)) {
 		g_set_error(err, G_FILE_ERROR, G_FILE_ERROR_INVAL, "%s: not a JSON object", file);
 		g_object_unref(parser);
 		return NULL;
 	}
-	JsonObject *o = json_node_get_object(root);
+	JsonObject *o = json_node_get_object(doc);
 	struct playlist *pl = g_new0(struct playlist, 1);
 	pl->file = g_strdup(file);
-	pl->root = g_path_get_dirname(file);
+	pl->root = root ? g_strdup(root) : g_path_get_dirname(file);
 	pl->image_duration_s = (int)json_object_get_int_member_with_default(o, "image_duration_s",
 									     DEFAULT_IMAGE_DURATION_S);
 	if (pl->image_duration_s < 1)

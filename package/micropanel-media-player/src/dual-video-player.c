@@ -62,8 +62,10 @@ static void usage(const char *prog)
 		"  --once              play once and exit (default: loop forever)\n"
 		"  --probe FILE...     classify files (parse only, no decoder, no display) and exit\n"
 		"Playlist mode (the same item on every display):\n"
-		"  %s --playlist FILE [--mirror] [--list] [--image-duration=S] [--max-loops=N]\n"
+		"  %s --playlist FILE [--root=DIR] [--mirror] [--list] [--image-duration=S] [--max-loops=N]\n"
 		"  --playlist FILE     micropanel-playlist.json (items relative to its directory)\n"
+		"  --root=DIR          resolve items against DIR instead of the playlist's directory\n"
+		"                      (a playlist kept off a read-only stick)\n"
 		"  --list              print the resolved plan (one probe line per item) and exit\n"
 		"  --image-duration=S  seconds per image, overrides the playlist (fractions allowed)\n"
 		"  --max-loops=N       stop after N passes even if the playlist loops (tests)\n"
@@ -135,11 +137,11 @@ static gchar *mount_point_of(const char *dir)
 }
 
 /* playlist mode: --playlist FILE [--list] (see usage) */
-static int run_playlist(struct player *p, const char *file, gboolean list, char *card,
+static int run_playlist(struct player *p, const char *file, const char *root, gboolean list, char *card,
 			size_t card_len, const char *c1, const char *c2, const char *refresh)
 {
 	GError *err = NULL;
-	struct playlist *pl = playlist_load(file, &err);
+	struct playlist *pl = playlist_load(file, root, &err);
 	if (!pl) {
 		g_printerr("dual-video-player: %s\n", err ? err->message : "cannot read the playlist");
 		g_clear_error(&err);
@@ -345,7 +347,7 @@ int main(int argc, char **argv)
 	int nfiles = 0;
 	const char *refresh = "auto";
 	struct player p = { .looping = TRUE };
-	const char *playlist = NULL;
+	const char *playlist = NULL, *root = NULL;
 	gboolean list = FALSE;
 	gboolean refresh_given = FALSE;
 
@@ -382,6 +384,8 @@ int main(int argc, char **argv)
 			playlist = argv[++i];
 		else if (!strncmp(argv[i], "--playlist=", 11))
 			playlist = argv[i] + 11;
+		else if (!strncmp(argv[i], "--root=", 7))
+			root = argv[i] + 7;
 		else if (!strcmp(argv[i], "--list"))
 			list = TRUE;
 		else if (!strcmp(argv[i], "--mirror"))
@@ -399,7 +403,7 @@ int main(int argc, char **argv)
 			files[nfiles++] = argv[i];
 	}
 	if (playlist)
-		return run_playlist(&p, playlist, list, card, sizeof(card), c1, c2,
+		return run_playlist(&p, playlist, root, list, card, sizeof(card), c1, c2,
 				    refresh_given ? refresh : "keep");
 	if (nfiles != 2) {
 		usage(argv[0]);

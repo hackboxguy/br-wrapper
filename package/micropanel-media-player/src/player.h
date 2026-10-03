@@ -166,7 +166,7 @@ struct playlist {
 	gboolean loop, autostart;
 	GPtrArray *items;         /* absolute paths */
 };
-struct playlist *playlist_load(const char *file, GError **err);
+struct playlist *playlist_load(const char *file, const char *root, GError **err);
 void playlist_free(struct playlist *pl);
 int playlist_list(struct playlist *pl);
 
