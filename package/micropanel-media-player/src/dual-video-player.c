@@ -46,6 +46,8 @@
  *   gstreamer-allocators-1.0 libdrm)
  */
 #include "player.h"
+#include <malloc.h>
+#include <sys/eventfd.h>
 
 static void usage(const char *prog)
 {
@@ -59,9 +61,170 @@ static void usage(const char *prog)
 		"  --card=PATH         DRM device (default: first card with connectors)\n"
 		"  --once              play once and exit (default: loop forever)\n"
 		"  --probe FILE...     classify files (parse only, no decoder, no display) and exit\n"
+		"Playlist mode (the same item on every display):\n"
+		"  %s --playlist FILE [--mirror] [--list] [--image-duration=S] [--max-loops=N]\n"
+		"  --playlist FILE     micropanel-playlist.json (items relative to its directory)\n"
+		"  --list              print the resolved plan (one probe line per item) and exit\n"
+		"  --image-duration=S  seconds per image, overrides the playlist (fractions allowed)\n"
+		"  --max-loops=N       stop after N passes even if the playlist loops (tests)\n"
+		"  exit: 0 done/stopped, 1 nothing playable/setup error, 2 usage, 3 stick removed\n"
 		"  --refresh=auto|keep|HZ  display refresh: auto = integer multiple of the\n"
 		"                      video frame rate if offered (default), keep = as is\n",
-		prog);
+		prog, prog);
+}
+
+/* gpu_mem in MB from the firmware, 0 if unknown */
+static int gpu_mem_mb(void)
+{
+	FILE *f = popen("vcgencmd get_mem gpu 2>/dev/null", "r");
+	int mb = 0;
+	if (f) {
+		if (fscanf(f, "gpu=%dM", &mb) != 1)
+			mb = 0;
+		pclose(f);
+	}
+	return mb;
+}
+
+/* undo mountinfo's octal escapes (\040 = space) */
+static gchar *unescape_mount(const char *s)
+{
+	GString *o = g_string_new(NULL);
+	for (; *s; s++) {
+		if (s[0] == '\\' && s[1] >= '0' && s[1] <= '7' && s[2] && s[3]) {
+			g_string_append_c(o, (char)((s[1] - '0') * 64 + (s[2] - '0') * 8 + (s[3] - '0')));
+			s += 3;
+		} else {
+			g_string_append_c(o, *s);
+		}
+	}
+	return g_string_free(o, FALSE);
+}
+
+/*
+ * The mount point holding @dir, in mountinfo's escaped form (that is what
+ * mirror.c searches for), or NULL if it is the root file system (nothing to
+ * watch, e.g. a playlist in /tmp for tests).
+ */
+static gchar *mount_point_of(const char *dir)
+{
+	gchar *text = NULL, *best = NULL, *best_raw = NULL;
+	if (!g_file_get_contents("/proc/self/mountinfo", &text, NULL, NULL))
+		return NULL;
+	gchar **lines = g_strsplit(text, "\n", -1);
+	for (gchar **l = lines; *l; l++) {
+		gchar **f = g_strsplit(*l, " ", 6);
+		if (g_strv_length(f) >= 5) {
+			gchar *mp = unescape_mount(f[4]);
+			size_t n = strlen(mp);
+			gboolean under = !strncmp(dir, mp, n) && (dir[n] == '/' || dir[n] == 0);
+			if (under && n > 1 && (!best_raw || n > strlen(best_raw))) {
+				g_free(best);
+				g_free(best_raw);
+				best = g_strdup(f[4]);
+				best_raw = g_strdup(mp);
+			}
+			g_free(mp);
+		}
+		g_strfreev(f);
+	}
+	g_strfreev(lines);
+	g_free(text);
+	g_free(best_raw);
+	return best;
+}
+
+/* playlist mode: --playlist FILE [--list] (see usage) */
+static int run_playlist(struct player *p, const char *file, gboolean list, char *card,
+			size_t card_len, const char *c1, const char *c2, const char *refresh)
+{
+	GError *err = NULL;
+	struct playlist *pl = playlist_load(file, &err);
+	if (!pl) {
+		g_printerr("dual-video-player: %s\n", err ? err->message : "cannot read the playlist");
+		g_clear_error(&err);
+		return 1;
+	}
+	if (list) {
+		int r = playlist_list(pl);
+		playlist_free(pl);
+		return r;
+	}
+	p->pl = pl;
+	p->mirror = TRUE;
+
+	char conns[8][32];
+	int n = find_outputs(card, card_len, conns, 8);
+	if (n <= 0) {
+		g_printerr("dual-video-player: no connected display found\n");
+		playlist_free(pl);
+		return 1;
+	}
+	const char *names[2] = { c1 ? c1 : conns[0], c2 };
+	if (!names[1])
+		for (int i = 0; i < n && !names[1]; i++)
+			if (strcmp(conns[i], names[0]))
+				names[1] = conns[i];
+	char dev[64];
+	snprintf(dev, sizeof(dev), "/dev/dri/%s", card);
+	int fd = open(dev, O_RDWR | O_CLOEXEC);
+	if (fd < 0 || drmSetMaster(fd) ||
+	    drmSetClientCap(fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1) ||
+	    drmSetClientCap(fd, DRM_CLIENT_CAP_ATOMIC, 1)) {
+		g_printerr("dual-video-player: cannot drive %s (busy, e.g. Kodi?): %s\n", dev, strerror(errno));
+		playlist_free(pl);
+		return 1;
+	}
+	g_fd = p->fd = fd;
+	for (int i = 0; i < 2 && names[i]; i++) {
+		int id = connector_id(card, names[i]);
+		if (id < 0)
+			continue;
+		p->out[p->nout].name = names[i];
+		p->out[p->nout++].conn_id = id;
+	}
+	/* playlist mode keeps the display mode (no HDMI resync blanking); an
+	 * explicit --refresh=HZ is honoured for bench tests */
+	int want = atoi(refresh);
+	for (int i = 0; i < p->nout && want > 0; i++)
+		set_refresh(fd, (uint32_t)p->out[i].conn_id, want, want);
+	uint32_t taken[2] = { 0, 0 };
+	for (int i = 0; i < p->nout; i++) {
+		if (setup_output(fd, &p->out[i], DRM_FORMAT_YUV420, taken, i)) {
+			g_printerr("dual-video-player: %s: no usable CRTC/overlay plane\n", p->out[i].name);
+			playlist_free(pl);
+			return 1;
+		}
+		taken[i] = p->out[i].video.id;
+		g_print("dual-video-player: mirror on %s (%dx%d, %.2f Hz)\n", p->out[i].name,
+			p->out[i].w, p->out[i].h, 1e9 / p->out[i].period);
+	}
+	p->master = 0;
+	setup_popup(p);
+	int gpu = gpu_mem_mb();
+	p->prefetch = gpu >= 128;
+	if (!p->prefetch)
+		g_print("dual-video-player: gpu_mem=%dM: one hardware decoder at a time (no prefetch)\n", gpu);
+	gchar *mp = mount_point_of(pl->root);
+	p->mount_point = mp;
+	g_print("dual-video-player: playlist %s: %u items, image %d s, loop %s\n", pl->file,
+		pl->items->len, pl->image_duration_s, pl->loop ? "on" : "off");
+
+	p->loop = g_main_loop_new(NULL, FALSE);
+	g_unix_signal_add(SIGINT, on_signal, p);
+	g_unix_signal_add(SIGTERM, on_signal, p);
+	p->thread = g_thread_new("presenter", mirror_presenter, p);
+	p->started = g_get_monotonic_time();
+	watch_inputs(p);
+	g_main_loop_run(p->loop);
+	g_atomic_int_set(&p->stop, 1);
+	player_wake(p);
+	g_thread_join(p->thread);
+	g_main_loop_unref(p->loop);
+	playlist_free(pl);
+	g_free(mp);
+	close(fd);
+	return p->ret;
 }
 
 /* ---- pipeline ---- */
@@ -142,24 +305,6 @@ static gchar *branch(const char *file, int idx)
 	return b;
 }
 
-/*
- * Announce GstVideoMeta support in the appsink's ALLOCATION query. For 1080p
- * the decoder's buffers are 1920x1088 (padded); without the meta it cannot
- * describe the padding, so v4l2h264dec copies each frame into system memory
- * and sample_fb() cannot import it. With it the dmabuf comes through as is,
- * the plane offsets/strides in the meta.
- */
-static GstPadProbeReturn allocation_probe(GstPad *pad, GstPadProbeInfo *info, gpointer data)
-{
-	GstQuery *q = GST_PAD_PROBE_INFO_QUERY(info);
-	(void)pad;
-	(void)data;
-	if (GST_QUERY_TYPE(q) != GST_QUERY_ALLOCATION)
-		return GST_PAD_PROBE_OK;
-	gst_query_add_allocation_meta(q, GST_VIDEO_META_API_TYPE, NULL);
-	return GST_PAD_PROBE_HANDLED;
-}
-
 /* frame rate negotiated on sink1, 0 if unknown */
 static double video_fps(GstAppSink *sink)
 {
@@ -200,8 +345,18 @@ int main(int argc, char **argv)
 	int nfiles = 0;
 	const char *refresh = "auto";
 	struct player p = { .looping = TRUE };
+	const char *playlist = NULL;
+	gboolean list = FALSE;
+	gboolean refresh_given = FALSE;
 
+	/* Every playlist item brings new GStreamer streaming threads; with glibc's
+	 * default of up to 8 arenas per core each may get its own arena, which keeps
+	 * the large freed decoder buffers - RSS stepped from ~120 to ~170 MB over 80
+	 * short videos on the bench, and stayed flat at 80-120 MB with two arenas.
+	 * The product has 2 GB and no swap. */
+	mallopt(M_ARENA_MAX, 2);
 	gst_init(&argc, &argv);
+	p.wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
 
 	/* --probe FILE...: classify, print one line per file, no display needed */
 	if (argc > 1 && !strcmp(argv[1], "--probe")) {
@@ -220,8 +375,21 @@ int main(int argc, char **argv)
 			c2 = argv[i] + 13;
 		else if (!strncmp(argv[i], "--card=", 7))
 			snprintf(card, sizeof(card), "%s", g_path_get_basename(argv[i] + 7));
-		else if (!strncmp(argv[i], "--refresh=", 10))
+		else if (!strncmp(argv[i], "--refresh=", 10)) {
 			refresh = argv[i] + 10;
+			refresh_given = TRUE;
+		} else if (!strcmp(argv[i], "--playlist") && i + 1 < argc)
+			playlist = argv[++i];
+		else if (!strncmp(argv[i], "--playlist=", 11))
+			playlist = argv[i] + 11;
+		else if (!strcmp(argv[i], "--list"))
+			list = TRUE;
+		else if (!strcmp(argv[i], "--mirror"))
+			;   /* playlist mode always mirrors */
+		else if (!strncmp(argv[i], "--image-duration=", 17))
+			p.image_duration_ns = (gint64)(g_ascii_strtod(argv[i] + 17, NULL) * GST_SECOND);
+		else if (!strncmp(argv[i], "--max-loops=", 12))
+			p.max_loops = atoi(argv[i] + 12);
 		else if (!strcmp(argv[i], "--once"))
 			p.looping = FALSE;
 		else if (argv[i][0] == '-') {
@@ -230,6 +398,9 @@ int main(int argc, char **argv)
 		} else if (nfiles < 2)
 			files[nfiles++] = argv[i];
 	}
+	if (playlist)
+		return run_playlist(&p, playlist, list, card, sizeof(card), c1, c2,
+				    refresh_given ? refresh : "keep");
 	if (nfiles != 2) {
 		usage(argv[0]);
 		return 2;

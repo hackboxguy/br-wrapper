@@ -24,6 +24,7 @@ gboolean hide_popup(gpointer data)
 {
 	struct player *p = data;
 	g_atomic_int_set(&p->popup_on, 0);
+	player_wake(p);
 	if (p->popup_timer)
 		g_source_remove(p->popup_timer);
 	p->popup_timer = 0;
@@ -35,6 +36,7 @@ gboolean popup_timeout(gpointer data)
 	struct player *p = data;
 	p->popup_timer = 0;   /* this source ends by returning REMOVE */
 	g_atomic_int_set(&p->popup_on, 0);
+	player_wake(p);
 	return G_SOURCE_REMOVE;
 }
 
@@ -60,6 +62,7 @@ void on_tap(struct player *p, gboolean have_pos, int x, int y)
 	}
 	if (!g_atomic_int_get(&p->popup_on)) {
 		g_atomic_int_set(&p->popup_on, 1);
+		player_wake(p);
 		if (p->popup_timer)
 			g_source_remove(p->popup_timer);
 		p->popup_timer = g_timeout_add_seconds(POPUP_SECONDS, popup_timeout, p);

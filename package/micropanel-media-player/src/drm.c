@@ -225,6 +225,44 @@ uint32_t find_plane(int fd, int pipe, uint64_t type, uint32_t fourcc,
 	return id;
 }
 
+/* value of enum entry @name of property @prop, FALSE if absent */
+static gboolean enum_value(int fd, uint32_t prop, const char *name, uint64_t *value)
+{
+	drmModePropertyRes *pr = drmModeGetProperty(fd, prop);
+	gboolean found = FALSE;
+	for (int i = 0; pr && i < pr->count_enums && !found; i++)
+		if (!strcmp(pr->enums[i].name, name)) {
+			*value = pr->enums[i].value;
+			found = TRUE;
+		}
+	drmModeFreeProperty(pr);
+	return found;
+}
+
+/* COLOR_ENCODING / COLOR_RANGE: YUV matrix and range of what the plane shows (optional) */
+static void plane_color_props(int fd, struct plane *pl)
+{
+	static const char *const enc[3] = { "ITU-R BT.601 YCbCr", "ITU-R BT.709 YCbCr",
+					     "ITU-R BT.2020 YCbCr" };
+	static const char *const range[2] = { "YCbCr limited range", "YCbCr full range" };
+	pl->color_enc = prop_id(fd, pl->id, DRM_MODE_OBJECT_PLANE, "COLOR_ENCODING", NULL);
+	pl->color_range = prop_id(fd, pl->id, DRM_MODE_OBJECT_PLANE, "COLOR_RANGE", NULL);
+	for (int i = 0; i < 3 && pl->color_enc; i++)
+		if (!enum_value(fd, pl->color_enc, enc[i], &pl->enc_val[i]))
+			pl->color_enc = 0;
+	for (int i = 0; i < 2 && pl->color_range; i++)
+		if (!enum_value(fd, pl->color_range, range[i], &pl->range_val[i]))
+			pl->color_range = 0;
+}
+
+void plane_set_color(drmModeAtomicReq *req, const struct plane *pl, int enc, int range)
+{
+	if (enc >= 0 && enc < 3 && pl->color_enc)
+		drmModeAtomicAddProperty(req, pl->id, pl->color_enc, pl->enc_val[enc]);
+	if (enc >= 0 && range >= 0 && range < 2 && pl->color_range)
+		drmModeAtomicAddProperty(req, pl->id, pl->color_range, pl->range_val[range]);
+}
+
 int plane_props(int fd, struct plane *pl, uint32_t id)
 {
 	pl->id = id;
@@ -245,6 +283,7 @@ int plane_props(int fd, struct plane *pl, uint32_t id)
 		pl->zmax = z->values[1];
 	}
 	drmModeFreeProperty(z);
+	plane_color_props(fd, pl);
 	return 0;
 }
 
@@ -393,4 +432,99 @@ uint32_t sample_fb(GstSample *s, GstVideoInfo *info)
 		return 0;
 	gst_mini_object_set_qdata(GST_MINI_OBJECT(mem0), fb_quark, GUINT_TO_POINTER(fb), fb_free);
 	return fb;
+}
+
+/* ---- mappable dumb buffers: still images, software-decoded frames ---- */
+
+/*
+ * A @w x @h framebuffer in system-visible memory: XRGB8888 (images) or
+ * YUV420 (I420 frames: one buffer, Y then U then V; the pitch comes from the
+ * kernel, chroma pitch is half of it). Mapped for writing until destroyed.
+ */
+struct dumbbuf *dumb_create(int fd, int w, int h, uint32_t fourcc)
+{
+	struct dumbbuf *db = g_new0(struct dumbbuf, 1);
+	gboolean yuv = fourcc == DRM_FORMAT_YUV420;
+	uint64_t offset;
+	w &= ~1;
+	h &= ~1;
+	if (drmModeCreateDumbBuffer(fd, (uint32_t)w, (uint32_t)(yuv ? h * 3 / 2 : h), yuv ? 8 : 32, 0,
+				    &db->handle, &db->pitch, &db->size) ||
+	    drmModeMapDumbBuffer(fd, db->handle, &offset)) {
+		g_printerr("dual-video-player: dumb buffer %dx%d: %s\n", w, h, strerror(errno));
+		g_free(db);
+		return NULL;
+	}
+	db->map = mmap(NULL, db->size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, (off_t)offset);
+	if (db->map == MAP_FAILED) {
+		drmModeDestroyDumbBuffer(fd, db->handle);
+		g_free(db);
+		return NULL;
+	}
+	uint32_t handles[4] = { db->handle, db->handle, db->handle, 0 };
+	uint32_t pitches[4] = { db->pitch, db->pitch / 2, db->pitch / 2, 0 };
+	uint32_t offsets[4] = { 0, db->pitch * (uint32_t)h, db->pitch * (uint32_t)h + db->pitch / 2 * (uint32_t)h / 2, 0 };
+	if (!yuv) {
+		handles[1] = handles[2] = 0;
+		pitches[1] = pitches[2] = 0;
+		offsets[1] = offsets[2] = 0;
+	}
+	if (drmModeAddFB2(fd, (uint32_t)w, (uint32_t)h, fourcc, handles, pitches, offsets, &db->fb, 0)) {
+		g_printerr("dual-video-player: framebuffer %dx%d: %s\n", w, h, strerror(errno));
+		munmap(db->map, db->size);
+		drmModeDestroyDumbBuffer(fd, db->handle);
+		g_free(db);
+		return NULL;
+	}
+	db->w = w;
+	db->h = h;
+	db->fourcc = fourcc;
+	return db;
+}
+
+/* remove the framebuffer, unmap, free the buffer. Only once it is off screen:
+ * removing a framebuffer that is on a plane turns the plane off. */
+void dumb_destroy(int fd, struct dumbbuf *db)
+{
+	if (!db)
+		return;
+	drmModeRmFB(fd, db->fb);
+	munmap(db->map, db->size);
+	drmModeDestroyDumbBuffer(fd, db->handle);
+	g_free(db);
+}
+
+/* copy a decoded I420 or BGRx frame into @db (same size class; extra rows/columns stay as they are) */
+gboolean dumb_copy(struct dumbbuf *db, GstSample *s)
+{
+	GstVideoInfo vi;
+	GstVideoFrame vf;
+	GstCaps *caps = gst_sample_get_caps(s);
+	if (!caps || !gst_video_info_from_caps(&vi, caps) ||
+	    !gst_video_frame_map(&vf, &vi, gst_sample_get_buffer(s), GST_MAP_READ))
+		return FALSE;
+	int w = MIN(db->w, GST_VIDEO_INFO_WIDTH(&vi)), h = MIN(db->h, GST_VIDEO_INFO_HEIGHT(&vi));
+	uint8_t *dst = db->map;
+	if (db->fourcc == DRM_FORMAT_YUV420 && GST_VIDEO_INFO_FORMAT(&vi) == GST_VIDEO_FORMAT_I420) {
+		uint32_t cp = db->pitch / 2;
+		uint8_t *planes[3] = { dst, dst + db->pitch * db->h, dst + db->pitch * db->h + cp * (db->h / 2) };
+		uint32_t pitches[3] = { db->pitch, cp, cp };
+		for (int pl = 0; pl < 3; pl++) {
+			const uint8_t *src = GST_VIDEO_FRAME_PLANE_DATA(&vf, pl);
+			int stride = GST_VIDEO_FRAME_PLANE_STRIDE(&vf, pl);
+			int pw = pl ? w / 2 : w, ph = pl ? h / 2 : h;
+			for (int y = 0; y < ph; y++)
+				memcpy(planes[pl] + y * pitches[pl], src + y * stride, (size_t)pw);
+		}
+	} else if (db->fourcc == DRM_FORMAT_XRGB8888 && GST_VIDEO_INFO_FORMAT(&vi) == GST_VIDEO_FORMAT_BGRx) {
+		const uint8_t *src = GST_VIDEO_FRAME_PLANE_DATA(&vf, 0);
+		int stride = GST_VIDEO_FRAME_PLANE_STRIDE(&vf, 0);
+		for (int y = 0; y < h; y++)
+			memcpy(dst + y * db->pitch, src + y * stride, (size_t)w * 4);
+	} else {
+		gst_video_frame_unmap(&vf);
+		return FALSE;
+	}
+	gst_video_frame_unmap(&vf);
+	return TRUE;
 }

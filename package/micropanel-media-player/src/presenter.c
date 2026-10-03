@@ -57,24 +57,39 @@ gint64 submit_time(struct player *p, gint64 v)
 	return best;
 }
 
-int commit(struct player *p, const uint32_t *fb, const GstVideoInfo *vi)
+/* fit @f into @o keeping its display aspect (pixel aspect ratio honoured), up or down, centred */
+static void fit(const struct output *o, const struct frame *f, int *x, int *y, int *w, int *h)
+{
+	double aspect = (double)f->w * MAX(f->par_n, 1) / ((double)f->h * MAX(f->par_d, 1));
+	int dw = o->w, dh = (int)lround(o->w / aspect);
+	if (dh > o->h) {
+		dh = o->h;
+		dw = (int)lround(o->h * aspect);
+	}
+	*w = MAX(2, dw & ~1);
+	*h = MAX(2, dh & ~1);
+	*x = (o->w - *w) / 2;
+	*y = (o->h - *h) / 2;
+}
+
+/*
+ * Put f[i] on output i's video plane (plus the black background on the
+ * first commit and the EXIT button), all outputs in ONE atomic commit, and
+ * wait until every display has latched it. Mirror mode passes the same
+ * frame for every output.
+ */
+int commit_frames(struct player *p, const struct frame *const *f)
 {
 	drmModeAtomicReq *req = drmModeAtomicAlloc();
 	for (int i = 0; i < p->nout; i++) {
 		struct output *o = &p->out[i];
-		int vw = GST_VIDEO_INFO_WIDTH(&vi[i]), vh = GST_VIDEO_INFO_HEIGHT(&vi[i]);
-		/* centred, unscaled; scaled down to fit (keeping aspect) if larger */
-		int dw = vw, dh = vh;
-		if (dw > o->w || dh > o->h) {
-			double s = MIN((double)o->w / vw, (double)o->h / vh);
-			dw = (int)(vw * s);
-			dh = (int)(vh * s);
-		}
+		int x, y, w, h;
+		fit(o, f[i], &x, &y, &w, &h);
 		if (o->black_fb && !o->primary_set)
 			plane_set(req, &o->primary, o->black_fb, o->crtc_id, o->w, o->h,
 				  0, 0, o->w, o->h, 0);
-		plane_set(req, &o->video, fb[i], o->crtc_id, vw, vh,
-			  (o->w - dw) / 2, (o->h - dh) / 2, dw, dh, 1);
+		plane_set(req, &o->video, f[i]->fb, o->crtc_id, f[i]->w, f[i]->h, x, y, w, h, 1);
+		plane_set_color(req, &o->video, f[i]->enc, f[i]->range);
 		o->flipped = FALSE;
 	}
 	if (p->popup.id) {
@@ -106,6 +121,29 @@ int commit(struct player *p, const uint32_t *fb, const GstVideoInfo *vi)
 			return -ETIMEDOUT;
 		drmHandleEvent(p->fd, &ev);
 	}
+}
+
+/* two-file mode: stream i's frame on output i, plane colour left alone */
+int commit(struct player *p, const uint32_t *fb, const GstVideoInfo *vi)
+{
+	struct frame fr[2];
+	const struct frame *f[2];
+	for (int i = 0; i < p->nout; i++) {
+		fr[i] = (struct frame){ .fb = fb[i], .w = GST_VIDEO_INFO_WIDTH(&vi[i]),
+					.h = GST_VIDEO_INFO_HEIGHT(&vi[i]),
+					.par_n = GST_VIDEO_INFO_PAR_N(&vi[i]),
+					.par_d = GST_VIDEO_INFO_PAR_D(&vi[i]), .enc = -1, .range = 0 };
+		f[i] = &fr[i];
+	}
+	return commit_frames(p, f);
+}
+
+/* wake the presenter out of a wait (popup shown/hidden, stop) */
+void player_wake(struct player *p)
+{
+	uint64_t one = 1;
+	if (p->wake_fd >= 0 && write(p->wake_fd, &one, sizeof(one)) < 0)
+		return;
 }
 
 /* take our video planes and the button off screen (the launcher's fbdev
