@@ -15,7 +15,8 @@ if(PKG_CONFIG_FOUND)
                       gstreamer-allocators-1.0 libdrm)
 endif()
 if(GST_FOUND)
-    add_executable(dual-video-player src/dual-video-player.c)
+    add_executable(dual-video-player src/dual-video-player.c src/drm.c src/input.c
+                                     src/presenter.c)
     target_include_directories(dual-video-player PRIVATE ${GST_INCLUDE_DIRS})
     target_link_libraries(dual-video-player PRIVATE ${GST_LIBRARIES} m)
     install(TARGETS dual-video-player
