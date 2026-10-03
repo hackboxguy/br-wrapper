@@ -8,7 +8,8 @@
 #                         system ships (update-iocs.sh --check, read-only)
 #   FPGA update available the display FPGA's update slot carries another image than
 #                         the one this system ships (update-fpga.sh --probe, then
-#                         --check: a read-only slot scan, about 6 s)
+#                         --check: a read-only slot scan, about 6 s; its result is
+#                         cached for the boot until System Manager runs the tool)
 #   Image update on USB   a stick carries exactly one signed image bundle of a
 #                         version other than the running one (system-image-scan.sh,
 #                         read-only; it also refreshes /run/system-manager/last-scan)
@@ -73,11 +74,31 @@ if [ -x "$TOOL" ] && [ -d "$DIR" ]; then
 fi
 
 # 3. The display FPGA - only where one with the update interface answers
-# (its per-run logs go to /tmp: this runs after every app exit, and a check changes nothing)
-if [ -x "$FPGA_TOOL" ] && [ -d "$FPGA_DIR" ] \
-   && as_root env LOG_DIR=/tmp/system-update-check "$FPGA_TOOL" --probe >/dev/null 2>&1; then
-    as_root timeout 90 env LOG_DIR=/tmp/system-update-check "$FPGA_TOOL" --check --image-dir "$FPGA_DIR" >/dev/null 2>&1
-    if [ $? -eq 10 ]; then
+# (its per-run logs go to /tmp: this runs after every app exit, and a check changes nothing).
+# The slot scan is cached: the slot only changes when System Manager runs update-fpga.sh, which
+# leaves a log in its log directory. Scanning after every app exit kept the display's I2C port busy
+# just as the next app started (the scan moves the FPGA's 0x1E register pointer; an app that read
+# the FPGA in two transactions then saw another page and fell back to legacy writes). A conclusive
+# result (current/outdated) is reused for this boot until such a log or a new image appears.
+FPGA_CACHE=/tmp/system-update-check.fpga
+FPGA_LOGS=${SYSTEM_MANAGER_DATA:-/data/system-manager}
+[ -d "$FPGA_LOGS" ] || FPGA_LOGS=$(dirname "$HERE")/usr
+FPGA_LOGS=$FPGA_LOGS/logs/system-update
+BOOT_ID=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+fpga_cached() {
+    [ -f "$FPGA_CACHE" ] && grep -qx "boot=$BOOT_ID" "$FPGA_CACHE" || return 1
+    [ -z "$(find "$FPGA_DIR" -newer "$FPGA_CACHE" 2>/dev/null | head -n 1)" ] || return 1
+    [ -z "$(find "$FPGA_LOGS" -name 'update-fpga-*' -newer "$FPGA_CACHE" 2>/dev/null | head -n 1)" ] || return 1
+    sed -n 's/^rc=//p' "$FPGA_CACHE"
+}
+if [ -x "$FPGA_TOOL" ] && [ -d "$FPGA_DIR" ]; then
+    rc=$(fpga_cached)
+    if [ -z "$rc" ] && as_root env LOG_DIR=/tmp/system-update-check "$FPGA_TOOL" --probe >/dev/null 2>&1; then
+        as_root timeout 90 env LOG_DIR=/tmp/system-update-check "$FPGA_TOOL" --check --image-dir "$FPGA_DIR" >/dev/null 2>&1
+        rc=$?
+        case $rc in 0|10) printf 'boot=%s\nrc=%s\n' "$BOOT_ID" "$rc" > "$FPGA_CACHE" 2>/dev/null ;; esac
+    fi
+    if [ "$rc" = 10 ]; then
         echo "FPGA update available"
         exit 0
     fi

@@ -92,6 +92,7 @@ private:
     bool writeRegisterLegacy(int fd, uint8_t reg, const uint8_t *data, int len);
     bool ensureProtocol();
     bool probeProtocol(Protocol protocol);
+    bool newSlaveAnswers();
     bool pingCurrentProtocol(int fd);
     void clearProtocol();
     void initializeLegacyState();

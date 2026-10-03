@@ -6,6 +6,7 @@
 #include <QJsonObject>
 #include <QSaveFile>
 #include <fcntl.h>
+#include <linux/i2c.h>
 #include <linux/i2c-dev.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -23,6 +24,17 @@ bool plausibleVersion(const uint8_t value[4]) {
     const int month = ((value[0] >> 4) & 0x0F) * 10 + (value[0] & 0x0F);
     const int day = ((value[1] >> 4) & 0x0F) * 10 + (value[1] & 0x0F);
     return month >= 1 && month <= 12 && day >= 1 && day <= 31;
+}
+// The 0x1E slave keeps its page/register pointer between transactions and other
+// processes (update-fpga.sh's flash scan, the launcher's update badge) move it, so
+// a pointer write and a separate read can return another page's bytes. Set
+// [page 0, reg] and read in ONE repeated-start transfer.
+bool readNewAtomic(int fd, uint8_t reg, uint8_t *data, int len) {
+    uint8_t pointer[2] = {0x00, reg};
+    struct i2c_msg msgs[2] = {{kNewAddr, 0, 2, pointer},
+                              {kNewAddr, I2C_M_RD, static_cast<__u16>(len), data}};
+    struct i2c_rdwr_ioctl_data transfer = {msgs, 2};
+    return ioctl(fd, I2C_RDWR, &transfer) == 2;
 }
 }
 
@@ -60,7 +72,7 @@ int FpgaController::openI2c() {
 }
 void FpgaController::closeI2c(int fd) { if (fd >= 0) close(fd); }
 bool FpgaController::readNew(int fd, uint8_t reg, uint8_t *data, int len) {
-    return write(fd, &reg, 1) == 1 && read(fd, data, len) == len;
+    return readNewAtomic(fd, reg, data, len);
 }
 bool FpgaController::writeNew(int fd, uint8_t reg, const uint8_t *data, int len) {
     if (len < 1 || len > 2) return false;
@@ -89,9 +101,27 @@ bool FpgaController::probeProtocol(Protocol protocol) {
 }
 bool FpgaController::ensureProtocol() {
     if (m_protocol != Protocol::None) return true;
-    if (m_protocolOverride != "legacy" && probeProtocol(Protocol::New)) m_protocol = Protocol::New;
-    else if (m_protocolOverride != "new" && probeProtocol(Protocol::Legacy)) m_protocol = Protocol::Legacy;
-    else return false;
+    bool newFound = false;
+    for (int attempt = 0; m_protocolOverride != "legacy" && attempt < 3 && !newFound; ++attempt) {
+        if (attempt) usleep(20000);
+        newFound = probeProtocol(Protocol::New);
+    }
+    if (newFound) m_protocol = Protocol::New;
+    else if (m_protocolOverride == "new") return false;
+    else {
+        // An FPGA with the 0x1E slave never gets legacy writes: on those bitstreams
+        // legacy LD register 0x29 is the OTA work-mode bit, and setting it locks every
+        // register write until a power cycle. Odd data here is a transient: retry later.
+        if (m_protocolOverride != "legacy") {
+            const int fd = openI2cAt(kNewAddr);
+            uint8_t byte;
+            const bool answers = fd >= 0 && readNewAtomic(fd, kVersion, &byte, 1);
+            closeI2c(fd);
+            if (answers) { qWarning() << "FpgaController: 0x1E answers but its version is not plausible; retrying later"; return false; }
+        }
+        if (!probeProtocol(Protocol::Legacy)) return false;
+        m_protocol = Protocol::Legacy;
+    }
     m_legacyStateInitialized = false;
     qDebug() << "FpgaController: selected" << (m_protocol == Protocol::New ? "new FPGA protocol (0x1E)" : "legacy FPGA protocol (0x1D)");
     return true;
