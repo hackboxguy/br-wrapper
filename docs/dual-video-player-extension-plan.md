@@ -267,6 +267,18 @@ false. Missing items are skipped at play time.
 ## Phases
 
 ### Phase 1 — playlist playback + app + button
+
+**Status (2026-10-04): implemented, first image 2.05.** Player playlist mode (br-wrapper `cfec40c`,
+`efd5f13`, `--root`), `usb-media.sh`, `usb-media-app`, the launcher button, misc-tools deps and
+assertion, `gpu_mem=128` in micropanel's base template. Bench results on `.170` (gpu_mem=128):
+1080p30 hw 598x2 + 1x3 vblanks, 0 late; boundaries held exactly as due (no black gaps); HEVC sw 4 late
+in 300; 1080 item switches with framebuffers back to 1, CMA bounded, RSS flat 58-131 MB over 538
+switches; EXIT during a 30 s still stops at once; stick pulled during a still and a video → exit 3 in
+~0.76 s; `stop-app` during preroll 0.24 s and during playback (wrapper → player) 0.39 s; app → Play →
+playback → back to the app → Back verified on the panel. **Open before shipping**: the `gpu_mem`
+regression checks above (eyes on the panels), the 10-minute mixed loop and the 30-minute software
+soak with `get_throttled` on a 2 GB unit, EXIT returning to the app pressed by hand.
+
 1. Player: VideoMeta allocation fix (own commit) → `git mv` to `package/micropanel-media-player` (own
    commit) → module split (no behaviour change) → `--probe`, `--list`, `--playlist --mirror` with
    everything under "Player".

@@ -88,6 +88,7 @@ install(PROGRAMS
     src/display-analysis-start-child.sh
     src/kodi-usb-common.sh
     src/dual-video.sh
+    src/usb-media.sh
     update-config-paths.sh
     update-service-paths.sh
     DESTINATION ${DATA_DIR}

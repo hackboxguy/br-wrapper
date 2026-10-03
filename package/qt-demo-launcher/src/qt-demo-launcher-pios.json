@@ -156,6 +156,35 @@
         "border_radius": 20
       },
       {
+        "id": "usb-media",
+        "enabled": true,
+        "text": "USB Media",
+        "subtitle": "Playlist of pictures and videos",
+        "icon": "/usr/share/qt-apps/icons/media-player.svg",
+        "program": "/usr/share/qt-apps/usb-media.sh",
+        "available_command": "/usr/share/qt-apps/usb-media.sh --check",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 3,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "accent_color": "#34D399",
+        "background_color": "#16A085",
+        "hover_color": "#138D75",
+        "border_radius": 20
+      },
+      {
         "id": "slideshow",
         "enabled": false,
         "text": "Slideshow",
