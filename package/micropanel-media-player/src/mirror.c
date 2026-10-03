@@ -201,8 +201,11 @@ static gboolean make_frame(struct item *it, GstSample *s, struct frame *f)
 /*
  * Commit @f to every output at the master vblank @target or the first one
  * still reachable after it. Returns the vblank used, -1 on a commit error.
+ * @paced: a video frame due at @target - missing it counts as late. First
+ * frames and re-commits just take the next vblank (a boundary that is late
+ * because the item was not ready shows in the boundary statistics).
  */
-static gint64 show(struct mirror *mr, const struct frame *f, gint64 target)
+static gint64 show(struct mirror *mr, const struct frame *f, gint64 target, gboolean paced)
 {
 	struct player *p = mr->p;
 	struct output *m = mr->m;
@@ -222,7 +225,8 @@ static gint64 show(struct mirror *mr, const struct frame *f, gint64 target)
 		if (t > now + 300 * 1000)
 			break;
 		target++;   /* too late for this vblank */
-		p->late++;
+		if (paced)
+			p->late++;
 	}
 	sleep_until(t);
 	const struct frame *fs[2] = { f, f };
@@ -235,6 +239,12 @@ static gint64 show(struct mirror *mr, const struct frame *f, gint64 target)
 	mr->shown = *f;
 	mr->last_target = target;
 	return target;
+}
+
+/* the master vblank happening now (the grid only advances with page flips, so extrapolate) */
+static gint64 now_idx(const struct output *m)
+{
+	return m->last_idx + (mono_ns() - m->last_ts) / m->period;
 }
 
 /*
@@ -262,7 +272,9 @@ static void hold_until(struct mirror *mr, gint64 until)
 		if (now_popup != popup && !stopping(mr)) {
 			popup = now_popup;
 			struct frame f = mr->shown;
-			if (show(mr, &f, mr->last_target + 1) < 0)
+			/* re-commit at the next vblank (not a late frame: nothing was due) */
+			mr->last_target = MAX(mr->last_target, now_idx(m));
+			if (show(mr, &f, mr->last_target + 1, FALSE) < 0)
 				return;
 		}
 	}
@@ -329,7 +341,7 @@ static void detach_hw_frame(struct mirror *mr, struct item *it)
 	struct dumbbuf *db = dumb_create(g_fd, f.w, f.h, DRM_FORMAT_YUV420);
 	if (db && dumb_copy(db, mr->shown_sample)) {
 		f.fb = db->fb;
-		if (show(mr, &f, mr->last_target + 1) >= 0) {
+		if (show(mr, &f, mr->last_target + 1, FALSE) >= 0) {
 			gst_sample_unref(mr->shown_sample);
 			mr->shown_sample = NULL;
 			mr->hold = db;
@@ -350,7 +362,7 @@ static void play_item(struct mirror *mr, struct item *it, struct item **old)
 	}
 	GstSample *first = it->mi.decode == DECODE_HW ? gst_sample_ref(it->first) : NULL;
 	gint64 prev_last = mr->last_target;
-	gint64 start = show(mr, &f, mr->next_target);
+	gint64 start = show(mr, &f, mr->next_target, FALSE);
 	if (start < 0) {
 		if (first)
 			gst_sample_unref(first);
@@ -404,7 +416,7 @@ static void play_item(struct mirror *mr, struct item *it, struct item **old)
 			gst_sample_unref(s);
 			continue;
 		}
-		if (show(mr, &f, target) < 0) {
+		if (show(mr, &f, target, TRUE) < 0) {
 			gst_sample_unref(s);
 			break;
 		}
