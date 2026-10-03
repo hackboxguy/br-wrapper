@@ -1,207 +1,246 @@
-# dual-video-player extension: USB Media playlist player — plan
+# dual-video-player extension: USB Media playlist player — plan (v2)
 
-Status: **planned, not started** — bench study done 2026-10-03 (see "Bench findings"). Written so a fresh session can implement it phase by
-phase. Read [qt-demo-launcher-apps-handover.md](qt-demo-launcher-apps-handover.md) first (visual
-language, launcher contract, app conventions, build/deploy/test), then this.
+Status: **phase 1 in progress** (started 2026-10-03). v2 folds in Fable's review
+(`tmp-docs/fable-dual-video-player-extension-review-v1.md` in the workspace, measured on the rig) and the
+owner's decisions of 2026-10-03. Read [qt-demo-launcher-apps-handover.md](qt-demo-launcher-apps-handover.md)
+first (visual language, launcher contract, app conventions, build/deploy/test), then this.
 
 ## Goal
 
-A new launcher button **"USB Media"** (home screen, page 2, next to "Dual Video") opens a new app,
-`package/usb-media-app`, where the user picks media files on the USB stick, orders them, and plays
-them as a playlist — **the same content on both HDMI outputs** — optionally looping forever and
-optionally starting automatically at boot. Playback is done by **extending the existing
-`dual-video-player`** (GStreamer decode + DRM presenter), not by Kodi or mpv.
+A launcher button **"USB Media"** (home screen, page 2, next to "Dual Video") opens `usb-media-app`, where
+the user picks media files on the USB stick, orders them and plays them as a playlist — **the same content
+on both HDMI outputs** — optionally looping forever and optionally starting at boot. Playback extends the
+existing `dual-video-player` (GStreamer decode + one DRM presenter), not Kodi or mpv.
 
-## Decisions (agreed 2026-10-03)
+## Product constraints
 
-| Topic | Decision |
-|---|---|
-| Engine | Extend `dual-video-player` (`package/qt-demo-launcher/src/dual-video-player.c`) |
-| Audio | Not required (no audio pipeline) |
-| Outputs | Mirror: the same item on both HDMIs. Per-display content stays the job of "Dual Video" |
-| Mixed playlists | Yes: images and videos in one list, played in list order |
-| Image duration | One value for the whole playlist (seconds) |
-| Playlist location | On the USB stick (portable: prepare once, plug into any unit) |
-| Autostart switch | Device setting (persistent under `/data`) |
-| Per-item durations | Not now |
-| Transitions, video thumbnails | Nice to have (phase 3) |
-| Media files | **Played as stored on the stick — no conversion step.** The player must cope with real-world files (see "Playing files as stored") |
-| Player location | Moves to its own package **`package/micropanel-media-player`** (used by Dual Video and USB Media) |
+Minimum hardware: **Pi 4 with 2 GB RAM, 16 GB SD card, A/B slots updated in-system from a `.mpupdate`.**
+The bench rig is a 4 GB board with a 119 GB card — its numbers flatter the product. On 2 GB: Linux sees
+~1.8 GB, `/` and `/tmp` are a tmpfs overlay capped at ~900 MB, **no swap** (over-use ends in the OOM
+killer), CMA 512 MB. The player and app write nothing that grows in `/` or `/tmp`; every queue is
+bounded.
 
-## Defaults (accepted 2026-10-03)
+The rig runs **firmware KMS** (`dtoverlay=vc4-fkms-v3d`, dmesg `bound fe600000.firmwarekms`): planes are
+firmware layers. The vc4 notes below were measured on this setup.
 
-- **Playlist file**: `micropanel-playlist.json` in the stick root, paths **relative** to the stick root.
-- **Scan**: stick root + subfolders, max depth 3, skip hidden/system dirs (`.Trashes`, `System Volume
-  Information`, `$RECYCLE.BIN`). Videos: `mp4 mkv mov m4v`. Images: `jpg jpeg png` (`jpegdec`/`pngdec`
-  are in the image: gstreamer1.0-plugins-good).
-- **Image duration**: default 10 s, range 2–600 s.
-- **Decode path per file** (chosen from the parse-only probe, see "Bench findings"):
-  - **Hardware**: H.264 (Baseline/Main/High, 8-bit 4:2:0) up to 1920x1088 → `v4l2h264dec`, dmabuf,
-    zero copy. The only hardware path: **HEVC is not hardware-decodable through GStreamer on this
-    image** — the kernel has `rpi-hevc-dec` (`/dev/video19`, stateless V4L2) but GStreamer 1.22 on
-    Pi OS ships no element for it (`v4l2slh265dec`/`v4l2h265dec` missing).
-  - **Software**: HEVC (`avdec_h265`) and H.264 above 1080p (`avdec_h264`), from **gst-libav** —
-    measured faster than real time with headroom (findings §3/§4). Frames are copied into DRM dumb
-    buffers and scaled by the display planes.
-  - **Too heavy** (greyed in the app with the reason): estimated decode cost above the software budget.
-    Start with `width × height × fps ≤ 140 M pixels/s` for software files (3840x1440@25 = 138 M decoded
-    at 1.8× real time) and refine with real camera/phone clips; H.264 10-bit/4:2:2 and other codecs
-    (VP9, AV1, MPEG-2…) are unsupported for now.
-  - Images: any size (decoded in software, downscaled to the display).
-- **Refresh rate**: one mode per playlist, not per item (a mode switch blanks HDMI for ~1 s): the
-  integer multiple of the **first video's** frame rate, if the display offers one (existing
-  `set_refresh` logic). Image-only playlists keep the current mode.
-- **Stick removed during playback**: stop and return to the launcher.
-- **Write-protected / read-only stick**: Save shows an error ("Stick is read-only"); Play still works
-  (the list is passed to the player directly).
-- **No Loop**: return to the launcher after the last item.
-- **Autostart countdown**: 5 s, full-screen "Starting playlist… tap to cancel".
+## Decisions
 
-## Playing files as stored (no conversion)
+| # | Topic | Decision |
+|---|---|---|
+| 1 | Engine | Extend `dual-video-player`; it moves to **`package/micropanel-media-player`** (used by Dual Video and USB Media) |
+| 2 | Audio | Not required |
+| 3 | Outputs | Mirror: the same item on both HDMIs. Per-display content stays the job of "Dual Video" |
+| 4 | Mixed playlists | Images and videos in one list, in list order |
+| 5 | Image duration | One value per playlist (seconds) |
+| 6 | Files | **Played as stored — no conversion** |
+| 7 | Playlist location | On the stick: `micropanel-playlist.json` in its root, paths relative to the root |
+| 8 | Autostart flag | **In the playlist file** (`"autostart": true`), set by the app's checkbox, written with Save. The unit stores nothing. A new stick has no playlist → nothing autostarts; a prepared stick autostarts on any unit. Evaluated at boot only |
+| 9 | No playlist on the stick | No "play everything" fallback; the user builds the playlist in the app |
+| 10 | Display mode | **Playlist mode never changes the display mode** (`--refresh=keep` is the default with `--playlist`; the option stays for bench tests). No blanking, nothing to restore. 25 fps on 60 Hz shows the 2/3 cadence — accepted. Dual Video keeps its refresh matching |
+| 11 | `gpu_mem` | **128** in the image base config, "as long as it doesn't cause any regression" (see `gpu_mem`) |
+| 12 | HEVC | Software path, **"may play slowly" is acceptable**: labelled in the app, late frames logged per item. HEVC Main10 and 4K software items are unsupported |
+| 13 | 50/60 fps in mirror mode | ~1 % repeated frames accepted |
+| 14 | Portrait (rotated) videos | Not required now; later via software `videoflip`. Until then shown unrotated, with a note in the app |
+| 15 | Per-item durations | Not now. Transitions, thumbnails: nice to have (phase 3) |
 
-Users copy whatever their camera, phone or PC produced. The player must therefore handle, without
-re-encoding:
+## Defaults
 
-- **H.264 with an incomplete VUI colour description** (seen 2026-10-03: the stream carried the BT.709
-  matrix but "unspecified" primaries/transfer → caps `colorimetry=0:3:0:0`, which `v4l2h264dec`
-  rejects with `not-negotiated`). Normalise the caps between parser and decoder instead of fixing
-  the file.
-- **H.264 above 1080p** and **HEVC**: no hardware decode path on this image; **software decode
-  (gst-libav) is fast enough** for the measured cases (findings §3/§4) → software path with a cost
-  budget (Defaults).
-- **Containers**: MP4/MOV (`qtdemux`), MKV (`matroskademux`); `decodebin`/`parsebin` can pick the
-  demuxer.
-- **Images** of any size and orientation (phone photos: 12–50 MP JPEGs with EXIF orientation):
-  `jpegparse` must precede `jpegdec`, else the EXIF orientation is lost (findings §5).
+- **Scan**: stick root + subfolders, max depth 3. Skip every name starting with `.` or `$` (macOS
+  `._name.mp4` AppleDouble files match the extension filter), `LOST.DIR`, `System Volume Information`.
+  Videos: `mp4 mkv mov m4v`. Images: `jpg jpeg png`. HEIC (iPhone default) and other unknown media are
+  **listed as unsupported with a reason**, not hidden.
+- **Image duration**: default 10 s, range 2–600 s in the app (the player's CLI allows less, for tests).
+- **Image size cap**: 50 MP (a 50 MP JPEG is ~75 MB decoded); larger → unsupported.
+- **Classification per file** (one classifier, `dual-video-player --probe`, see Player):
+  - `hw` — H.264 Baseline/Main/High, 8-bit 4:2:0, ≤ 1920x1088 → `v4l2h264dec`, dmabuf, zero copy.
+  - `sw` — HEVC Main ≤ 1920x1088 and H.264 above 1080p up to 2560x1600 → `avdec_h265`/`avdec_h264`;
+    labelled **"may play slowly"** when HEVC above ~4 Mbit/s or any sw item above 1080p (bitrate =
+    file size ÷ duration; calibrate with real phone clips).
+  - `unsupported` + reason — HEVC Main10 (decodes to `I420_10LE`, no matching plane format), anything
+    above 2560x1600 in software (memory on 2 GB), 10-bit/4:2:2 H.264, other codecs (VP9, AV1, MPEG-2…).
+  - `rotated` flag — `image-orientation` tag on a video (shown unrotated for now).
+- **Stick removed during playback**: stop with a distinct exit code; the app says "Stick removed".
+- **Read-only stick**: Play works; Save and the Autostart checkbox are disabled with the reason.
+- **No Loop**: back to the app after the last item.
+- **Autostart countdown**: 5 s, "Starting playlist… tap to cancel" (cancel = this boot only; the flag
+  stays).
 
-Experiments and results on the bench go into "Bench findings" below.
+## Bench findings (2026-10-03, rig `.170`, image 2.03, GStreamer 1.22)
 
-## Bench findings (2026-10-03, micropanel Pi4 `.170`, image 2.03, GStreamer 1.22)
+Measured unless marked. F = Fable's review, C = Claude's study.
 
-Stick content: 4 videos (all H.264 1920x720: two 25 fps High@4.1 with full BT.709 tags, one 30 fps
-High@4 BT.709, one 30 fps Main@4.1 **with no colour description at all**) and 12 JPEGs (1920x1080,
-2560x1440). Extra test files made on the host: H.264 with an incomplete colour description, HEVC
-1080p25, H.264 3840x1440@25, a 4000x3000 JPEG with EXIF orientation 6.
+1. **Never probe with GstDiscoverer / `gst-discoverer-1.0` / decodebin** — they open the hardware decoder
+   per file; ~10 files in a row wedged the VideoCore codec firmware (`timed out waiting for sync
+   completion`, `failed to create component … (Not enough GPU mem?)`, reload of `bcm2835_codec` failed
+   and removed `/dev/video10`, reboot needed) [C, at `gpu_mem=76M`]. **Parse-only probe**:
+   `filesrc ! parsebin ! fakesink` → codec, profile, size, fps, colorimetry, rotation; ~76 ms per file,
+   0.12 s even during a hardware decode, no decoder touched [C, F].
+2. **Hardware decoder concurrency depends on `gpu_mem`** [F]: at 76M two decoders work only for 720p+720p;
+   a second decoder next to a 1080p stream gets 0 frames silently or wedges the firmware. At 128M and
+   256M all tested pairs (up to 1080p60 + 1080p30) run. SIGKILL of decoding processes and 15 open/close
+   cycles leave the decoder healthy at 128M. **Throughput is shared**: a free-running second 1080p
+   decode slowed a real-time 1080p60 stream to ~60 %, and two processes with a decoder serialised
+   completely at 76M → keep all decoding in one process and let a prerolled item stop after its first
+   frame.
+3. **Hardware decode speed**: 1920x720 ~110–120 fps, 1080p ~46–70 fps (16–20 Mbit/s) [C, F]. A stream
+   **without** a colour description decodes; an **incomplete** one (`colorimetry=0:3:0:0`, which is what
+   ffmpeg's `-colorspace bt709` produces without x264's own primaries/transfer — the *common* case [F])
+   fails `not-negotiated` and decodes 300/300 frames once the caps are normalised (`capssetter
+   caps="video/x-h264,colorimetry=(string)bt709"` between parser and decoder) [C].
+4. **1080p hardware frames were not importable** in the existing player (`cannot import frame as DRM
+   framebuffer`): the decoder pads to 1920x1088 and, without `GstVideoMeta` support announced in the
+   ALLOCATION query, hands appsink a *copied* system-memory buffer. Adding the meta in an allocation-query
+   probe on the appsink pad fixes it (1080p30 mirrored: 598/600 frames held exactly 2 vblanks) [F].
+5. **Software decode** (`avdec_*`, all four cores): H.264 3840x1440@25 45 fps and HEVC 1080p25
+   near-static 82 fps [C] — but **HEVC at phone-like bitrates is below real time**: 1080p30 8.6 Mbit/s
+   21.8 fps, 12 Mbit/s 18.8 fps, Main10 16.3 fps, 1080p60 20 Mbit/s 19.7 fps, 2160p30 ~5 fps; H.264
+   2160p30 13 fps; H.264 1080p60 27 Mbit/s 87 fps [F]. Software frames on screen (`kmssink
+   can-scale=true`, copy + plane downscale): 3840x1440 H.264 298/0 dropped at ~27 % CPU, HEVC 1080p
+   300/0 at ~23 % [C]. SoC 52 → 61 °C within minutes of software decode [F].
+6. **Images**: 12 MP JPEG → 1080p 0.38 s (progressive 0.57 s), **50 MP 2.5–2.9 s** (almost all
+   `jpegdec`); `videoscale` before `videoflip`/`videoconvert` saves ~0.5 s [F]. `jpegdec` alone ignores
+   EXIF orientation; `jpegparse ! jpegdec ! videoflip video-direction=auto` applies it [C].
+7. **Time to first frame** (minus ~50 ms process start): hardware ~90 ms, software HEVC ~460 ms,
+   software H.264 3840x1440 ~580 ms [C].
+8. **Mirror on two outputs** (one decoded framebuffer on an overlay plane of each CRTC, one atomic
+   commit) [F]: 1080p30 master A-1 60.07 Hz → 598× 2 vblanks, 1× 3, clean on both; 720p25 → regular
+   cadence; **1080p50/60 ~1 % late frames** on two unsynchronised outputs (each commit waits for both
+   flips). `modetest` accepted a 3840x2160 NV12 plane scaled to 1920x1080 on both CRTCs, also with a
+   second XRGB plane each (crossfade) — accepted only, not checked visually.
+9. **Planes**: `COLOR_ENCODING` (601/709/2020) and `COLOR_RANGE` (limited/full), default 709 limited;
+   the decoder's output caps say `bt601` even for BT.709 streams → take matrix and range from the
+   **parser** caps. Rotation only `rotate-0/180` + reflect, no 90° [F].
+10. **Packages**: `parsebin`, `capssetter`, `jpegparse`, `jpegdec`, `pngdec`, `videoflip`, `imagefreeze`
+    and `libjson-glib-1.0-0` are in the image; **`gstreamer1.0-libav` must be added** (libavcodec59 etc.
+    are already there, so it is small) [C, F].
+11. **Stick**: NTFS, mounted rw by udisks (`ntfs3`). What an unclean NTFS volume does at the next mount
+    is untested [F].
 
-1. **Never probe videos with GstDiscoverer / `gst-discoverer-1.0` / decodebin.** They open the
-   hardware decoder per file. Probing ~10 files in a row **wedged the VideoCore codec firmware**
-   (`bcm2835_mmal_vchiq: timed out waiting for sync completion`, `failed to create component
-   ril.video_decode (Not enough GPU mem?)`, 58 failures; the board has `gpu_mem=76M`). Reloading
-   `bcm2835_codec` then failed to probe (`-12`) and **removed `/dev/video10`**; only a reboot recovered.
-   → **Parse-only probe**: `filesrc ! parsebin ! fakesink` (in the app via the API, reading the caps):
-   ~76 ms per file incl. process start, gives codec, profile, width, height, framerate, colorimetry,
-   and touches no decoder (0 decoder kernel messages over 6 files).
-2. **Hardware decode** (`qtdemux ! h264parse ! v4l2h264dec capture-io-mode=dmabuf ! fakesink
-   sync=false`): all stick videos decode completely, ~110–120 fps for 1920x720 (≈4× real time). A
-   stream **without** a colour description is fine; one with an **incomplete** description
-   (`colorimetry=0:3:0:0`) fails `not-negotiated` — and decodes 300/300 frames with
-   `capssetter caps="video/x-h264,colorimetry=(string)bt709" join=true replace=false` between
-   parser and decoder. → In the player: a CAPS-event probe on the decoder sink pad that replaces an
-   unknown/partial colorimetry with `bt709` (HD) / `bt601` (SD) — no extra element.
-3. **Software decode speed** (`avdec_*`, `fakesink sync=false`): H.264 3840x1440@25 → 45 fps (1.8×
-   real time); HEVC 1080p25 (a low-bitrate sample) → 82 fps (3.3×). The hardware decoder refuses
-   3840x1440 at negotiation, so the path must be chosen *before* building the pipeline.
-4. **Software frames on screen** (`avdec_* ! queue ! kmssink can-scale=true`, single display): H.264
-   3840x1440 → 298 rendered / **0 dropped**, ~27 % of 4 cores (decode + copy + plane downscale);
-   HEVC 1080p → 300 / 0 dropped, ~23 %. Hardware path for comparison ~5 %.
-5. **Images**: 2560x1440 JPEG decode ~260 ms, 12 MP ~150–360 ms (incl. process start). `jpegdec`
-   alone ignores EXIF orientation (4000x3000 out); **`jpegparse ! jpegdec ! videoflip
-   video-direction=auto`** (or `decodebin`, which includes `jpegparse`) gives 3000x4000. → Decode the
-   next image while the current item is shown.
-6. **Time to first frame** (minus ~50 ms process start): hardware H.264 ~90 ms, software HEVC
-   ~460 ms, software H.264 3840x1440 ~580 ms. → Start (preroll) the next item **≥ 1 s before** the
-   current one ends; two hardware decoder instances at once are fine (Dual Video runs two).
-7. **Mixed frame rates** are real (this stick: 25 and 30 fps). One refresh mode per playlist means
-   the minority judders (2/3 cadence); the HDMI-A-1 panel is fixed at 60.07 Hz anyway (30 fps fine,
-   25 fps judders). Default stays "per playlist, from the first video"; a per-item mode switch is a
-   possible later option (cost: an HDMI resync blank at each change, monitor-dependent, not measured).
-8. **Packages**: `capssetter`, `parsebin`, `jpegparse`, `jpegdec`, `pngdec`, `videoflip`,
-   `imagefreeze` are in the image already; **`gstreamer1.0-libav` must be added** to misc-tools
-   `runtime-deps*.txt` for the software path.
+## `gpu_mem`
+
+- **128**, not 256 (128 passed every two-decoder case; 256 costs 2 GB units another 128 MB). On a
+  simulated 2 GB board (`total_mem=2048`): 1798 MB visible, ~1430 MB available at idle, CMA ~450 MB free,
+  two 1080p decoders fine [F].
+- **Where**: the root `config.txt` on the boot partition is rendered by the A/B slot selector from the
+  slot's own `config.txt` (`misc-tools/packages/pi-ab-update/ab-slot-selector render-normal`), so a hand
+  edit (as on the rig now: `[all]`/`gpu_mem=128`, backup `config.txt.fable-bak`) disappears at the next
+  update. Put it in the **micropanel repo's base config** (`configs/config-base.txt.in`, also
+  `configs/config.txt`; golden copies in `tests/golden/pi-config-txt/*.config.txt` need regenerating) —
+  confirm the template → slot `config.txt` path before editing; not into `micropanel-display.txt`.
+  It then travels with the `.mpupdate`, and a rollback restores old config + old player together. Add an
+  assertion so the line cannot drop silently (`ab-assertions.sh`, `test_ab_layout_static.sh`).
+- **Player safety net**: read `vcgencmd get_mem gpu` at start; below 128 use **one hardware decoder at a
+  time** (tear down, then start the next, holding the last frame — a short freeze instead of a wedge).
+  Plus a **decoder watchdog**: an item with no frame within 5 s of PLAYING is failed and skipped (the
+  76M failure mode is silence).
+- **Regression checks before shipping** (need eyes on the panels): Kodi video + slideshow incl. the
+  HDMI-2 mirror, Dual Video, the Qt Quick apps, disp-tester patterns, cluster demo; boot + 30 min playlist
+  on a real 2 GB unit (`free -m`, `get_throttled`); `.mpupdate` install → `get_mem gpu` 128 on the
+  candidate, forced rollback → old value; all display variants (the setting is in the shared base block).
 
 ## Architecture
 
 ```
-qt-demo-launcher ── "USB Media" button ──> usb-media-app (Qt Quick)
-      │  available_command: usb-media.sh --check (dims the tile without a stick)
-      │                               │ Play: writes/updates micropanel-playlist.json on the stick,
-      │                               │ then asks the launcher (TCP 8081) to start "usb-media-play"
-      │ <── start-app usb-media-play ─┘
-      └──> usb-media.sh --play  ──exec──>  dual-video-player --playlist <file> --mirror
-boot: usb-media-autostart (systemd oneshot, after qt-demo-launcher) ──> countdown ──> start-app usb-media-play
+qt-demo-launcher ── "USB Media" (id usb-media) ──> usb-media.sh   (the launcher's tracked child)
+      │  available_command: usb-media.sh --check        loop:
+      │                                                   usb-media-app            exit 0 → leave
+      │                                                                            exit 10 → play
+      │                                                   dual-video-player --playlist <stick>/micropanel-playlist.json --mirror
+      │                                                   → back to the app with the player's exit reason
+      │                                                 trap TERM → forward to the current child
+boot: usb-media-autostart.service ── polls :8081 ── start-app usb-media-autostart (visible:false entry)
+                                                    = usb-media.sh --autostart: countdown in the app → play → app
 ```
 
-### Player (`dual-video-player`, extended in place)
+Why: the launcher refuses `start-app` while an app runs and cannot start an `enabled: false` entry
+(`startApp()` → `findButton(appId, config, true)`); `visible: false` is the existing "off the grid but
+startable" switch [F, code — verify]. The wrapper needs no second entry for normal use, no TCP round
+trip, no launcher flash between app and player, and EXIT returns to the playlist editor.
 
-Keep one binary; add a playlist mode next to the existing two-file mode.
+### Player (`package/micropanel-media-player`, binary `dual-video-player`)
 
-- **CLI**: `dual-video-player --playlist <micropanel-playlist.json> --mirror` (existing
-  `VIDEO1 VIDEO2` mode unchanged). `--loop`/`--image-duration` come from the playlist file; CLI
-  overrides allowed for testing.
-- **Mirror presenter**: one decoded frame, shown on *both* outputs in the same atomic commit (each
-  output's plane scaled/centred for its own mode — the HVS scales, still zero copy). Reuse the existing
-  presenter thread, pacing (master display = refresh matching the frame rate), black primaries, EXIT
-  popup, input grab, page-flip statistics.
-- **Per item**:
-  - *Video, hardware path*: `filesrc ! qtdemux|matroskademux ! h264parse ! [colorimetry probe] !
-    v4l2h264dec ! appsink` (dmabuf, zero copy), as today.
-  - *Video, software path* (HEVC, H.264 > 1080p): `... ! h265parse|h264parse ! avdec_h265|avdec_h264 !
-    appsink` (system memory, I420); the presenter copies each frame into a DRM dumb buffer (keep a
-    small ring of them) and lets the planes scale it. Revisit HEVC if a newer GStreamer with
-    `v4l2slh265dec` for `rpi-hevc-dec` lands in the base image.
-  - The path is chosen from the probe **before** building the pipeline (the hardware decoder refuses
-    oversize streams only at negotiation).
-  - *Image*: decode once (`filesrc ! jpegparse ! jpegdec` (PNG: `pngdec`) `! videoflip video-direction=auto !
-    videoconvert ! videoscale` to fit the larger display,
-    respect **EXIF orientation** — phone photos), copy into a DRM dumb buffer (XRGB8888), show it for
-    `image_duration` (counted in vblanks of the master display). `videoflip video-direction=auto`
-    applies the EXIF orientation tag; `imagefreeze` is available if a pipeline-based still is simpler.
-- **Gapless**: preroll the **next** item while the current one plays (a second pipeline in PAUSED, or
-  the next image already decoded), so item changes do not flash black.
-- **Errors**: an item that fails to open/decode is skipped with a log line; if every item fails, exit 1.
-- **Loop**: restart at item 0 (videos use the existing segment-seek idea only within one file; the
-  playlist loop is a new pipeline per item).
-- **Stats**: per item, log frames held (existing page-flip stats) — the way to prove smoothness.
+Order of work: (a) the 1080p import fix in place, own commit; (b) **pure `git mv`** to the new package,
+own commit; (c) split the 1287-line file into modules (drm/presenter, item pipelines, input/popup,
+playlist, probe) without behaviour change; (d) the extension.
 
-### App (`package/usb-media-app`, new)
+- **CLI**: existing `VIDEO1 VIDEO2` mode unchanged. New: `--probe FILE…` (one line per file: kind,
+  codec, profile, size, fps, PAR, duration, bitrate, rotation, path = hw/sw/unsupported + reason; the app
+  runs this via QProcess — no GStreamer in the Qt app); `--playlist FILE --mirror`; test seams `--list`
+  (print the resolved plan per item, no DRM), `--image-duration S` (any value), `--max-loops N`, a final
+  machine-readable stats line.
+- **Exit codes**: 0 finished (no loop) / user stop / SIGTERM; 1 nothing playable / setup error; 2 usage;
+  3 stick removed.
+- **Pipelines** built from elements with `g_object_set(location)` (stick filenames are arbitrary), never
+  `gst_parse_launch` strings:
+  - hw: `filesrc ! qtdemux|matroskademux ! h264parse ! [colorimetry probe] ! v4l2h264dec ! appsink`
+    with the **VideoMeta allocation probe** on the appsink pad (finding 4);
+  - sw: `… ! h265parse|h264parse ! avdec_* ! appsink` (I420) → copied into a fixed **ring of 3–4 dumb
+    buffers**, scaled by the planes;
+  - image: `filesrc ! jpegparse ! jpegdec` (PNG: `pngdec`) `! videoscale ! videoflip
+    video-direction=auto ! videoconvert ! appsink` (scale first, to fit the larger display) → one dumb
+    buffer per shown image, freed after it leaves the screen.
+  - The colorimetry probe rewrites the decoder-sink CAPS event when the colorimetry is unknown or
+    partial (`bt709` for HD, `bt601` for SD).
+- **Presenter** (one thread, one atomic commit per frame for both outputs, black primaries, EXIT popup,
+  input grab — as today), changed for playlists:
+  - **Pacing from buffer PTS per item**: `target = item_start_vblank + round(pts / period)`, the vblank
+    grid running continuously across items — mixed rates and variable frame rate with one rule; late
+    frames hold the previous one and are counted.
+  - **Wake-ups** (eventfd/condition): popup changes and stop must act while a still is shown (no commits
+    for 10 s otherwise).
+  - **Item switch**: commit the new item's first frame → wait for the flip → only then release the old
+    sample and drop the old pipeline (removing a framebuffer that is on a plane turns the plane off →
+    black flash). Teardown and the next item's build/preroll happen **off the presenter thread**, with
+    `ASYNC_DONE` instead of a blocking `get_state`.
+  - **Prefetch**: start preparing the next item as soon as the current one starts (preroll stops at the
+    first frame: PAUSED, appsink `max-buffers` small) — no duration bookkeeping; needs `gpu_mem ≥ 128`,
+    else one decoder at a time.
+  - **Scaling**: fit, keep aspect, up and down, honouring the stream's **pixel aspect ratio**, per output.
+  - **Colour**: set the planes' `COLOR_ENCODING`/`COLOR_RANGE` per item from the parser caps (after
+    normalisation).
+  - **No leaks in a forever loop**: free image and software-ring framebuffers after they leave the
+    screen (today `dumb_fb()` keeps its framebuffers until the fd closes).
+  - **Stick removal**: poll `/proc/self/mountinfo` (a still does no I/O) → exit 3; a read error must not
+    walk "skip bad item" through the whole list.
+  - **Stats per item**, images skipped, plus the boundary ("item 3→4: last frame held N vblanks" — the
+    proof of "no black gaps").
+- **JSON**: parse the playlist with json-glib (`libjson-glib-1.0-0` runtime, `libjson-glib-dev` build).
 
-Follow touch-gallery / System Manager structure: Qt Quick (`main.qml` + C++ controllers), CMake
-target added to the top-level `CMakeLists.txt` under the Qt apps, launcher-style visual language.
+### App (`package/usb-media-app`, Qt Quick)
 
-- `UsbMediaController` (C++): find/mount the stick (reuse the logic of `kodi-usb-common.sh`: removable
-  `/sys/block/sd*`, existing mount, else `udisksctl mount`, else `sudo -n mount`), scan files, probe
-  videos **parse-only** (`parsebin` caps + a duration query — never GstDiscoverer/decodebin, findings
-  §1: codec, profile, width, height, fps, colorimetry, duration → decode path or "too heavy"), load/save
-  the playlist JSON, read/write the autostart setting, start playback via the launcher TCP API.
-- UI (touch, one screen): header + file list (checkbox, type icon, name, folder, duration/resolution
-  or image size, greyed + reason when unsupported), **Select all / None**, **Up / Down** to reorder the
-  checked items, **Image duration** (stepper), **Loop**, **Autostart on boot**, **Save**, **Play**,
-  Back. Image thumbnails in phase 3.
-- The app exits when it hands off to the player (launcher contract: one running app).
+Follow touch-gallery / System Manager (QML + C++ controllers), CMake target in the top-level
+`CMakeLists.txt`, launcher visual language.
+
+- Find/mount the stick (the logic of `kodi-usb-common.sh`: removable `/sys/block/sd*`, existing mount,
+  else `udisksctl mount`, else `sudo -n mount`), scan files (Defaults), classify them with
+  `dual-video-player --probe` (QProcess; images too, for size), load/save the playlist.
+- UI (touch, one screen): file list (checkbox, type, name, folder, duration/resolution or image size;
+  greyed + reason when unsupported; "may play slowly" / "plays unrotated" notes), Select all / None,
+  Up / Down for the checked items, Image duration, **Loop**, **Autostart on boot** (disabled + reason
+  on a read-only stick), Save, Play, Back.
+- **Save safely** (NTFS/exFAT/FAT sticks are pulled right after saving): write a temp file, `fsync`,
+  rename, `fsync` the directory / `syncfs`.
+- Exit codes to the wrapper: 0 leave, 10 play (playlist saved or passed). `--countdown N`: the autostart
+  countdown screen, exit 10 = play, 0 = cancelled. `--message TEXT`: show the player's exit reason
+  when returning ("Stick removed", "Nothing playable").
+- Caches (phase 3 thumbnails, probe results) only under `/data/usb-media/` with a size cap — never in `/`.
 
 ### Launcher integration
 
-- New button in `qt-demo-launcher-pios.json`, page 2 next to `dual-video` (row 3, column 2):
-  `id: usb-media`, program = the app, `available_command: .../usb-media.sh --check` (dims the tile
-  without a stick — the `available_command` mechanism exists since `383b436`).
-- A **hidden** launcher entry `usb-media-play` (`enabled: false` keeps it off the grid but `start-app`
-  can still find it — verify; otherwise give the TCP API a "start by program path" or use a dedicated
-  invisible id) whose program is `usb-media.sh --play`, so playback runs as the launcher's tracked app
-  (stop-app works, badges/availability are not run during playback).
-- `update-config-paths.sh`: add sed lines for `usb-media.sh` and the app binary (each program path
-  is rewritten individually — a missed one leaves the button pointing at `/usr/...`).
+- `qt-demo-launcher-pios.json`: button `usb-media` (page 2, row 3, column 2), program `usb-media.sh`,
+  `available_command: usb-media.sh --check`; phase 2 adds the `visible: false` entry
+  `usb-media-autostart` (program `usb-media.sh --autostart`).
+- `update-config-paths.sh`: one sed line per new program path.
+- `usb-media.sh`: `--check` (exit 0 when a stick is mounted, else one line of reason), default = the
+  app↔player loop, `--autostart` (phase 2). `trap TERM` forwards to the current child so `stop-app`
+  works within the launcher's timeout.
 
-### Autostart
+### Autostart (phase 2)
 
-- Setting: `/data/usb-media/settings.json` (`{"autostart": true}`); `/data` survives reboots and A/B
-  updates. (Check how other apps persist under `/data` — see misc-tools `PERSISTENCE.md` /
-  `board-configs/micropanel/packages/micropanel-data-skeleton.sh`; a new `/data` subdirectory may need
-  the data skeleton hook.)
-- `usb-media-autostart.service` (oneshot, `After=qt-demo-launcher.service`): if autostart is on, wait
-  up to 15 s for a stick with a valid playlist, show the countdown (the player itself can render it:
-  `--countdown 5`, tap = cancel → exit 0 without playing), then `start-app usb-media-play` via TCP.
-  No stick / no playlist / cancelled → nothing happens, the launcher stays.
-- Never auto-play without a way out: the countdown and the in-playback tap → EXIT both stay.
+- `usb-media-autostart.service` (oneshot): poll port 8081 until the launcher answers (ordering alone
+  is not enough: the launcher sleeps 4 s in `ExecStartPre`), wait up to 15 s for a stick, and if
+  `micropanel-playlist.json` is valid and `"autostart": true` → `start-app usb-media-autostart`.
+  Anything else → nothing; the launcher stays.
 
 ## Interfaces
 
@@ -212,97 +251,81 @@ target added to the top-level `CMakeLists.txt` under the Qt apps, launcher-style
   "version": 1,
   "image_duration_s": 10,
   "loop": true,
-  "items": [
-    "Videos/intro.mp4",
-    "Pictures/slide-01.jpg",
-    "Pictures/slide-02.png",
-    "Videos/demo.mkv"
-  ]
+  "autostart": false,
+  "items": ["Videos/intro.mp4", "Pictures/slide-01.jpg", "Videos/demo.mkv"]
 }
 ```
 
-Paths relative to the stick root, `/` separators, order = play order. Unknown keys are ignored
-(forward compatibility). Missing items are skipped at play time.
-
-**Player exit codes**: 0 = finished (no loop) or stopped by the user/SIGTERM, 1 = nothing playable /
-setup error, 2 = usage.
-
-**`usb-media.sh`**: `--check` (exit 0 if a stick is mounted, else one line of reason, like
-`dual-video.sh --check`), `--play` (find the playlist on the stick, exec the player), `--autostart`
-(the boot flow above).
+Relative paths, `/` separators, order = play order. Unknown keys ignored; a missing `autostart` means
+false. Missing items are skipped at play time.
 
 ## Phases
 
 ### Phase 1 — playlist playback + app + button
-1. Player: `--playlist` + `--mirror`, video items on the hardware or software path (findings §2–4),
-   colorimetry normalisation probe, image items with EXIF orientation (findings §5), gapless prefetch
-   ≥ 1 s ahead (findings §6), loop, skip bad items, one refresh mode per playlist, EXIT popup,
-   stick-removal stop.
-2. `usb-media.sh` (`--check`, `--play`).
-3. `usb-media-app`: scan, probe, list with checkboxes, select all/none, reorder, image duration, loop,
-   save to stick, play.
-4. Launcher button + hidden play entry + path rewrites; CMake/install; README.
-5. Board config: add **`gstreamer1.0-libav`** to misc-tools `runtime-deps.txt` and
-   `runtime-deps-ab.txt` (software path). Everything else is already pinned: GStreamer base/good/bad
-   provide `parsebin`, `capssetter`, `jpegparse`, `jpegdec`, `pngdec`, `videoflip`, `imagefreeze`
-   (checked 2026-10-03).
-6. Move the player to `package/micropanel-media-player` (CMake target + install unchanged:
-   `bin/dual-video-player`; `dual-video.sh` and `usb-media.sh` call it), update the qt-demo-launcher
-   CMake/README and misc-tools references if any.
+1. Player: VideoMeta allocation fix (own commit) → `git mv` to `package/micropanel-media-player` (own
+   commit) → module split (no behaviour change) → `--probe`, `--list`, `--playlist --mirror` with
+   everything under "Player".
+2. `usb-media.sh` (`--check`, app↔player loop, TERM forwarding).
+3. `usb-media-app` (scan, classify, list, select, reorder, duration, loop, autostart checkbox stored in
+   the playlist, safe save, play, return messages).
+4. Launcher button + path rewrites; CMake/install; READMEs.
+5. Board config: `gstreamer1.0-libav` and `libjson-glib-1.0-0` in misc-tools `runtime-deps*.txt`,
+   `libjson-glib-dev` in the br-wrapper hook's build deps; `gpu_mem=128` in the micropanel repo base
+   config (+ golden files, + assertion), with the regression checks above before it ships.
 
-**Done when**: a mixed list (≥2 videos, ≥3 images) plays mirrored on both HDMIs with no black gaps,
-loops for ≥10 minutes, page-flip stats show regular holds on the master display (as for Dual Video:
-every 25 fps frame held exactly 2 vblanks at 50 Hz), EXIT returns to the launcher on both displays,
-pulling the stick stops playback cleanly, and the USB Media tile is dimmed without a stick.
+**Done when** (owner decisions 10/12/13):
+- a mixed list (≥ 2 videos incl. a 1080p and a 720p item back to back, ≥ 3 images, ≥ 1 software item)
+  plays mirrored on both HDMIs, **no display mode change**, no black gaps (boundary stats), and loops
+  ≥ 10 min;
+- the hold pattern per hardware item is the regular cadence for its frame rate at the display's
+  refresh (30 fps on 60 Hz: 2; 25 fps: 2/3), late frames ≤ ~1 % for ≤ 60 fps items; software items
+  are exempt from the late-frame limit but must not stall or grow memory;
+- leak check: 1000 item switches (`--image-duration` small, `--max-loops`) without growth in
+  framebuffers (`/sys/kernel/debug/dri/1/framebuffer`), `CmaFree` or RSS;
+- 30-minute software-path soak with `vcgencmd get_throttled`;
+- EXIT (also during a still) returns to the app; the stick pulled during a still and during a video
+  → exit 3 → "Stick removed"; `stop-app` during preroll works;
+- the USB Media tile is dimmed without a stick.
 
 ### Phase 2 — autostart on boot
-1. Settings file + app checkbox.
-2. `usb-media-autostart.service` + countdown/cancel.
-3. Board config: install/enable the unit (br-wrapper CMake install + misc-tools hook post-command,
-   like `qt-demo-launcher.service`).
-
-**Done when**: with autostart on and the prepared stick in, a cold boot ends in mirrored playback
-after the countdown; a tap during the countdown cancels; without the stick the launcher stays;
-toggling autostart off in the app stops it on the next boot.
+The `autostart` key + checkbox (stored in the playlist), `usb-media-autostart.service`, the
+`visible: false` entry, the countdown in the app. **Done when**: a cold boot with the prepared stick ends
+in playback after the countdown; a tap cancels (this boot only); without the stick or with
+`autostart: false` the launcher stays.
 
 ### Phase 3 — nice to have
-Image thumbnails (cached on the device, not the stick), video thumbnails (first keyframe via a
-`thumbnailer` pipeline), crossfade transitions between items (two planes, alpha ramp), per-item
-duration, shuffle.
+Thumbnails (cached under `/data/usb-media/`, size-capped), crossfade transitions (two planes, accepted by
+the planes, finding 8), per-item duration, shuffle, portrait videos via software `videoflip`, a hardware
+HEVC path if GStreamer gains `v4l2slh265dec` for `rpi-hevc-dec`, libjpeg DCT-domain downscaling for
+50 MP images.
 
-## Lessons from building dual-video-player (do not relearn these)
+## Lessons from dual-video-player (do not relearn these)
 
-- **One atomic commit for both displays.** vc4 makes a commit on one CRTC wait for the other CRTC's
-  pending flip; two independent presenters (two kmssinks, two players) stutter on both outputs.
-- **Vblank grid from page-flip *timestamps*.** The sequence numbers vc4 puts in page-flip events are
-  wrong for one CRTC. `drmWaitVBlank` *relative 0* queries return a zero timestamp while vblank IRQs
-  are idle — use a real wait (`sequence = 1`) to start, then flip events.
-- **Submit commits just after a vblank**, not mid-period: delays only make a commit later, so leave
-  the most room before the next vblank (see `submit_time()`).
-- **25 fps on 60 Hz always shows a 2/3 cadence**; switch to an integer-multiple mode when offered
-  (HDMI-A-1 on the bench rig is a fixed 60.07 Hz panel, HDMI-A-2 offers 50 Hz).
-- **Never touch the FPGA's I2C** from the player. The 0x1E slave keeps its register pointer between
-  transactions and other tools move it; legacy register 0x29 locks the FPGA (see the RTL handover
-  `tmp-docs/blocked-i2c-issue.md` in the workspace and br-wrapper `eee1d32`).
-- The H.264 hardware decoder rejects streams whose **VUI colour description** is incomplete
-  (`colorimetry=0:3:0:0` → `not-negotiated`); fix files losslessly with
-  `ffmpeg -c copy -bsf:v h264_metadata=video_full_range_flag=0:colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1`.
-- The launcher runs program paths verbatim after `update-config-paths.sh` rewrote them; every new
-  program needs its own sed line there.
+- **One atomic commit for both displays.** A commit on one CRTC waits for the other CRTC's pending flip
+  (firmware KMS on this rig); two presenters stutter on both outputs.
+- **Vblank grid from page-flip *timestamps***: vc4's page-flip sequence numbers are wrong for one CRTC;
+  `drmWaitVBlank` relative-0 queries return a zero timestamp while vblank IRQs are idle.
+- **Submit just after a vblank**, leaving the most room before the next (see `submit_time()`).
+- **Never touch the FPGA's I2C** from the player (0x1E pointer race; legacy register 0x29 locks the FPGA —
+  br-wrapper `eee1d32`, RTL handover `tmp-docs/blocked-i2c-issue.md`).
+- The launcher runs program paths verbatim after `update-config-paths.sh`; every new program needs its
+  own sed line.
 
-## Bench notes (micropanel Pi4, `pi@192.168.1.170`)
+## Bench notes (rig `pi@192.168.1.170`)
 
+- **Prefer a power cycle over `sudo reboot`**: Tasmota socket `192.168.1.232`
+  (`curl "http://192.168.1.232/cm?cmnd=Power%20Off"`, then `Power%20On`). A wedged codec firmware can hang
+  a soft reboot; after soft reboots the DS90UB983 on HDMI-1 sometimes stops answering (`hh983-serializer
+  1-0018: Failed to write reg 0x07: -5`) and the panel stays dark while HDMI-A-1 still reads connected.
+  After every boot: `sudo dmesg | grep hh983`.
+- `/boot/firmware` is mounted ro; the rig currently has `gpu_mem=128` hand-added (backup
+  `config.txt.fable-bak`).
 - Root is a tmpfs overlay: live patches vanish on reboot; `apt-get update` is needed before *every*
-  `apt-get install` (the lists are removed after each run). Build on the Pi after installing
-  `cmake qtbase5-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libdrm-dev`.
-- Launcher TCP API on 8081 via bash `/dev/tcp` (no `nc`): `start-app`, `stop-app`,
-  `get-running-app`, `screen 2`, `get-screen`, `reload-config`.
-- Screenshots: the launcher draws to `/dev/fb0` (RGB565 1920x1080); `cat /dev/fb0 > f.raw`, convert
-  with PIL `Image.frombytes('RGB',(1920,1080),raw,'raw','BGR;16')`. While a DRM app runs, check
-  planes with `kmsprint`.
-- Fake touch for EXIT-popup tests: a `uinput` device with ABS_X/ABS_Y 0..4095 + BTN_TOUCH (the player
-  grabs every device with BTN_TOUCH); see the 2026-10-03 session's `faketouch.c` pattern.
-- Simulating a USB unplug via sysfs `authorized`: target the **stick's** device (e.g. `1-1.4`), not
-  the hub `1-1` — deauthorizing the hub drops every USB device (measurement probes too).
-- `pkill -f <pattern>` over ssh matches the ssh command line itself and kills the session; kill by
-  PID or use `pkill -x`.
+  `apt-get install`. Building on the unit works on the 4 GB rig only (on 2 GB it eats half the overlay).
+- Launcher TCP API on 8081 via bash `/dev/tcp`: `start-app`, `stop-app`, `get-running-app`, `screen 2`,
+  `get-screen`, `reload-config`.
+- Screenshots: `/dev/fb0` (RGB565 1920x1080) → PIL `Image.frombytes('RGB',(1920,1080),raw,'raw','BGR;16')`;
+  while a DRM app runs, `kmsprint`.
+- Fake touch: a `uinput` device with ABS_X/ABS_Y 0..4095 + BTN_TOUCH (the player grabs it).
+- USB unplug simulation via sysfs `authorized`: target the stick (`1-1.4`), not the hub `1-1`.
+- `pkill -f <pattern>` over ssh matches the ssh command line itself; kill by PID or `pkill -x`.
