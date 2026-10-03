@@ -87,6 +87,33 @@ struct indev {
 	gboolean down;
 };
 
+/* probe.c: what a media file is and how the player plays it */
+enum media_kind { MEDIA_UNKNOWN, MEDIA_VIDEO, MEDIA_IMAGE };
+enum decode_path { DECODE_UNSUPPORTED, DECODE_HW, DECODE_SW, DECODE_IMAGE };
+
+struct media_info {
+	char file[1024];
+	enum media_kind kind;
+	enum decode_path decode;
+	char codec[24];
+	char profile[32];
+	int width, height;
+	int fps_n, fps_d;             /* 0/1 for images and variable rate */
+	int par_n, par_d;
+	gint64 duration_ns;
+	gint64 size;                  /* bytes */
+	double bitrate_mbps;
+	int rotation;                 /* degrees from the orientation tag */
+	gboolean flip;
+	char colorimetry[32];
+	gboolean slow;                /* decodes, but maybe below real time */
+	char reason[128];             /* why unsupported */
+};
+
+gboolean probe_file(const char *path, struct media_info *mi);
+void probe_print(const struct media_info *mi);
+const char *decode_path_name(enum decode_path d);
+
 extern GQuark fb_quark;
 extern int g_fd;
 

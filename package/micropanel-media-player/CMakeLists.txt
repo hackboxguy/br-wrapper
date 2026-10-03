@@ -16,7 +16,7 @@ if(PKG_CONFIG_FOUND)
 endif()
 if(GST_FOUND)
     add_executable(dual-video-player src/dual-video-player.c src/drm.c src/input.c
-                                     src/presenter.c)
+                                     src/presenter.c src/probe.c)
     target_include_directories(dual-video-player PRIVATE ${GST_INCLUDE_DIRS})
     target_link_libraries(dual-video-player PRIVATE ${GST_LIBRARIES} m)
     install(TARGETS dual-video-player

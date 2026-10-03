@@ -58,6 +58,7 @@ static void usage(const char *prog)
 		"  --connector2=NAME   display for VIDEO2 (default: second connected)\n"
 		"  --card=PATH         DRM device (default: first card with connectors)\n"
 		"  --once              play once and exit (default: loop forever)\n"
+		"  --probe FILE...     classify files (parse only, no decoder, no display) and exit\n"
 		"  --refresh=auto|keep|HZ  display refresh: auto = integer multiple of the\n"
 		"                      video frame rate if offered (default), keep = as is\n",
 		prog);
@@ -201,6 +202,16 @@ int main(int argc, char **argv)
 	struct player p = { .looping = TRUE };
 
 	gst_init(&argc, &argv);
+
+	/* --probe FILE...: classify, print one line per file, no display needed */
+	if (argc > 1 && !strcmp(argv[1], "--probe")) {
+		for (int i = 2; i < argc; i++) {
+			struct media_info mi;
+			probe_file(argv[i], &mi);
+			probe_print(&mi);
+		}
+		return argc > 2 ? 0 : 2;
+	}
 	fb_quark = g_quark_from_static_string("dual-video-player-fb");
 	for (int i = 1; i < argc; i++) {
 		if (!strncmp(argv[i], "--connector1=", 13))
