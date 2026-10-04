@@ -54,7 +54,7 @@ static void usage(const char *prog)
 	fprintf(stderr,
 		"Usage: %s [options] VIDEO1 VIDEO2\n"
 		"  Plays VIDEO1 on the first and VIDEO2 on the second display, in sync.\n"
-		"  Files must be H.264 in MP4 (Pi4 hardware decoder: max 1920x1080).\n"
+		"  Two-file mode: H.264 in MP4, max 1920x1080 (Pi4 hardware decoder).\n"
 		"Options:\n"
 		"  --connector1=NAME   display for VIDEO1 (default: first connected, e.g. HDMI-A-1)\n"
 		"  --connector2=NAME   display for VIDEO2 (default: second connected)\n"

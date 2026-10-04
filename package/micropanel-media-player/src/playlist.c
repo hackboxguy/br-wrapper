@@ -13,6 +13,17 @@
 
 #define DEFAULT_IMAGE_DURATION_S 10
 
+/* "a/../b" climbs out of the stick, "holiday..2.mp4" is just a name */
+static gboolean has_parent_component(const char *rel)
+{
+	gchar **parts = g_strsplit(rel, "/", -1);
+	gboolean found = FALSE;
+	for (gchar **c = parts; *c && !found; c++)
+		found = !strcmp(*c, "..");
+	g_strfreev(parts);
+	return found;
+}
+
 struct playlist *playlist_load(const char *file, const char *root, GError **err)
 {
 	JsonParser *parser = json_parser_new();
@@ -42,7 +53,7 @@ struct playlist *playlist_load(const char *file, const char *root, GError **err)
 	for (guint i = 0; items && i < json_array_get_length(items); i++) {
 		JsonNode *n = json_array_get_element(items, i);
 		const char *rel = JSON_NODE_HOLDS_VALUE(n) ? json_node_get_string(n) : NULL;
-		if (!rel || !*rel || rel[0] == '/' || strstr(rel, ".."))
+		if (!rel || !*rel || rel[0] == '/' || has_parent_component(rel))
 			continue;   /* relative paths inside the stick only */
 		g_ptr_array_add(pl->items, g_build_filename(pl->root, rel, NULL));
 	}

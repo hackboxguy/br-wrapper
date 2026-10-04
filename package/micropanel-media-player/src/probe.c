@@ -59,6 +59,32 @@ static GstPadProbeReturn tag_probe(GstPad *pad, GstPadProbeInfo *info, gpointer 
 	return GST_PAD_PROBE_OK;
 }
 
+/*
+ * The video/image stream's first buffer: its caps, tags and the container's
+ * duration are known now. Ends the wait without waiting for the whole
+ * pipeline's ASYNC_DONE, which a file with an audio track reached only by the
+ * 3 s timeout (every camera/phone clip).
+ */
+static GstPadProbeReturn first_buffer_probe(GstPad *pad, GstPadProbeInfo *info, gpointer data)
+{
+	(void)info;
+	(void)data;
+	GstCaps *caps = gst_pad_get_current_caps(pad);
+	if (caps) {
+		const char *name = gst_structure_get_name(gst_caps_get_structure(caps, 0));
+		if (g_str_has_prefix(name, "video/") || g_str_has_prefix(name, "image/")) {
+			GstObject *sink = gst_pad_get_parent(pad);
+			if (sink) {
+				gst_element_post_message(GST_ELEMENT(sink),
+					gst_message_new_application(sink, gst_structure_new_empty("probe-stream-ready")));
+				gst_object_unref(sink);
+			}
+		}
+		gst_caps_unref(caps);
+	}
+	return GST_PAD_PROBE_REMOVE;
+}
+
 static void on_pad(GstElement *parsebin, GstPad *pad, gpointer data)
 {
 	struct probe_ctx *ctx = data;
@@ -71,6 +97,7 @@ static void on_pad(GstElement *parsebin, GstPad *pad, gpointer data)
 	gst_element_sync_state_with_parent(sink);
 	GstPad *sinkpad = gst_element_get_static_pad(sink, "sink");
 	gst_pad_add_probe(sinkpad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, tag_probe, ctx->mi, NULL);
+	gst_pad_add_probe(sinkpad, GST_PAD_PROBE_TYPE_BUFFER, first_buffer_probe, NULL, NULL);
 	gst_pad_link(pad, sinkpad);
 	gst_object_unref(sinkpad);
 }
@@ -172,10 +199,12 @@ static void classify(struct media_info *mi, const GstStructure *st, const char *
 }
 
 /*
- * EXIF orientation of a JPEG. jpegparse has rank "none", so parsebin never
- * plugs it and the orientation tag stays inside the file; run it explicitly.
+ * EXIF orientation and colour space of a JPEG. jpegparse has rank "none", so
+ * parsebin never plugs it and the orientation tag stays inside the file; run
+ * it explicitly. A CMYK/YCCK JPEG (print workflows) is refused here: jpegdec
+ * cannot decode it.
  */
-static void jpeg_orientation(const char *path, struct media_info *mi)
+static void jpeg_details(const char *path, struct media_info *mi)
 {
 	GstElement *pipeline = gst_pipeline_new(NULL);
 	GstElement *src = gst_element_factory_make("filesrc", NULL);
@@ -190,9 +219,18 @@ static void jpeg_orientation(const char *path, struct media_info *mi)
 	gst_element_link_many(src, parse, sink, NULL);
 	GstPad *pad = gst_element_get_static_pad(sink, "sink");
 	gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, tag_probe, mi, NULL);
-	gst_object_unref(pad);
 	gst_element_set_state(pipeline, GST_STATE_PAUSED);
 	gst_element_get_state(pipeline, NULL, NULL, PROBE_TIMEOUT);   /* preroll: tags precede the buffer */
+	GstCaps *caps = gst_pad_get_current_caps(pad);
+	if (caps) {
+		const char *cs = gst_structure_get_string(gst_caps_get_structure(caps, 0), "colorspace");
+		if (cs && (strstr(cs, "CMYK") || strstr(cs, "YCCK"))) {
+			mi->decode = DECODE_UNSUPPORTED;
+			g_strlcpy(mi->reason, "CMYK JPEG not supported (save as RGB)", sizeof(mi->reason));
+		}
+		gst_caps_unref(caps);
+	}
+	gst_object_unref(pad);
 	gst_element_set_state(pipeline, GST_STATE_NULL);
 	gst_object_unref(pipeline);
 }
@@ -242,6 +280,10 @@ gboolean probe_file(const char *path, struct media_info *mi)
 		case GST_MESSAGE_ASYNC_DONE:
 			done = TRUE;
 			break;
+		case GST_MESSAGE_APPLICATION:
+			if (gst_message_has_name(m, "probe-stream-ready"))
+				done = TRUE;
+			break;
 		case GST_MESSAGE_ERROR:
 			done = failed = TRUE;
 			break;
@@ -282,8 +324,8 @@ gboolean probe_file(const char *path, struct media_info *mi)
 	if (mi->duration_ns > 0)
 		mi->bitrate_mbps = mi->size * 8.0 / ((double)mi->duration_ns / GST_SECOND) / 1e6;
 	classify(mi, st, gst_structure_get_name(st));
-	if (!strcmp(gst_structure_get_name(st), "image/jpeg") && !mi->rotation)
-		jpeg_orientation(path, mi);
+	if (!strcmp(gst_structure_get_name(st), "image/jpeg") && mi->decode == DECODE_IMAGE)
+		jpeg_details(path, mi);
 	gst_caps_unref(caps);
 	return mi->decode != DECODE_UNSUPPORTED;
 }

@@ -5,7 +5,7 @@
  *          (dmabuf, zero copy: the frames are imported as DRM framebuffers)
  *   sw     filesrc ! demux ! h264parse|h265parse ! avdec_* ! appsink (I420 in
  *          system memory, copied into a ring of dumb buffers by the presenter)
- *   image  filesrc ! jpegparse ! jpegdec | pngdec ! videoscale ! videoflip
+ *   image  filesrc ! jpegparse ! jpegdec | pngdec ! videoconvert ! videoscale ! videoflip
  *          (EXIF orientation) ! videoconvert ! appsink (BGRx, one frame)
  *
  * An item is prepared (PAUSED, first frame prerolled) by the worker thread
@@ -159,7 +159,9 @@ static gboolean build(struct item *it, int disp_w, int disp_h)
 		GstElement *dec = make(jpeg ? "jpegdec" : "pngdec");
 		GstElement *scale = make("videoscale"), *sizef = make("capsfilter");
 		GstElement *flip = make("videoflip"), *conv = make("videoconvert");
-		if (!dec || !scale || !sizef || !flip || !conv || (jpeg && !parse))
+		/* first convert: videoscale takes neither 16-bit PNG (RGBA64) nor CMYK JPEG */
+		GstElement *conv0 = make("videoconvert");
+		if (!dec || !conv0 || !scale || !sizef || !flip || !conv || (jpeg && !parse))
 			goto fail;
 		int sw, sh;
 		image_target(mi, disp_w, disp_h, &sw, &sh);
@@ -168,7 +170,7 @@ static gboolean build(struct item *it, int disp_w, int disp_h)
 		g_object_set(sizef, "caps", sc, NULL);
 		gst_caps_unref(sc);
 		g_object_set(flip, "video-direction", 8 /* auto */, NULL);
-		gst_bin_add_many(GST_BIN(pl), dec, scale, sizef, flip, conv, NULL);
+		gst_bin_add_many(GST_BIN(pl), dec, conv0, scale, sizef, flip, conv, NULL);
 		if (jpeg) {
 			gst_bin_add(GST_BIN(pl), parse);
 			if (!gst_element_link_many(src, parse, dec, NULL))
@@ -176,7 +178,7 @@ static gboolean build(struct item *it, int disp_w, int disp_h)
 		} else if (!gst_element_link(src, dec)) {
 			goto fail;
 		}
-		if (!gst_element_link_many(dec, scale, sizef, flip, conv, sink, NULL))
+		if (!gst_element_link_many(dec, conv0, scale, sizef, flip, conv, sink, NULL))
 			goto fail;
 		caps = gst_caps_from_string("video/x-raw,format=BGRx");
 		it->yuv = FALSE;
@@ -241,15 +243,31 @@ static gboolean bus_error(struct item *it, char *buf, size_t len)
  * in it->first, or FAILED with a reason. Blocks up to PREPARE_TIMEOUT (runs
  * on the worker thread).
  */
-void item_prepare(struct item *it, const char *file, int disp_w, int disp_h)
+/*
+ * Classify the item (no decoder involved): from @known, a classification of
+ * the same file kept from an earlier loop pass, or by probing. FALSE (and
+ * ITEM_FAILED) when it cannot play.
+ */
+gboolean item_probe(struct item *it, const char *file, const struct media_info *known)
 {
 	it->enc = 1;
 	it->range = 0;
-	if (!probe_file(file, &it->mi)) {
+	if (known)
+		it->mi = *known;
+	else
+		probe_file(file, &it->mi);
+	it->probed = TRUE;
+	if (it->mi.decode == DECODE_UNSUPPORTED) {
 		g_snprintf(it->why, sizeof(it->why), "%s", it->mi.reason[0] ? it->mi.reason : "unsupported");
 		g_atomic_int_set(&it->state, ITEM_FAILED);
-		return;
+		return FALSE;
 	}
+	return TRUE;
+}
+
+/* build a probed item's pipeline and preroll its first frame: ITEM_READY or ITEM_FAILED */
+void item_build(struct item *it, int disp_w, int disp_h)
+{
 	if (!build(it, disp_w, disp_h)) {
 		g_snprintf(it->why, sizeof(it->why), "cannot build the pipeline");
 		g_atomic_int_set(&it->state, ITEM_FAILED);
@@ -269,6 +287,12 @@ void item_prepare(struct item *it, const char *file, int disp_w, int disp_h)
 	GstBuffer *b = gst_sample_get_buffer(it->first);
 	it->first_pts = GST_BUFFER_PTS_IS_VALID(b) ? (gint64)GST_BUFFER_PTS(b) : 0;
 	g_atomic_int_set(&it->state, ITEM_READY);
+}
+
+void item_prepare(struct item *it, const char *file, int disp_w, int disp_h)
+{
+	if (item_probe(it, file, NULL))
+		item_build(it, disp_w, disp_h);
 }
 
 /* start a prepared video item; frames then come from item_pull() */

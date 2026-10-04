@@ -96,12 +96,15 @@ struct media_info {
 };
 
 /* playlist items (item.c) */
-enum item_state { ITEM_PREPARING, ITEM_READY, ITEM_FAILED };
+/* ITEM_PROBED: classified but not built - a hardware item held back while
+ * another hardware decoder is alive (gpu_mem below 128) */
+enum item_state { ITEM_PREPARING, ITEM_PROBED, ITEM_READY, ITEM_FAILED };
 #define ITEM_RING 3               /* dumb buffers per software-decoded item */
 
 struct item {
 	int index;                /* position in the playlist */
 	struct media_info mi;
+	gboolean probed;          /* mi holds a classification (cacheable) */
 	GstElement *pipeline;
 	GstAppSink *sink;
 	gint state;               /* enum item_state, set by the worker */
@@ -216,6 +219,8 @@ void plane_set_color(drmModeAtomicReq *req, const struct plane *pl, int enc, int
 
 /* item.c, mirror.c: playlist playback */
 GstPadProbeReturn allocation_probe(GstPad *pad, GstPadProbeInfo *info, gpointer data);
+gboolean item_probe(struct item *it, const char *file, const struct media_info *known);
+void item_build(struct item *it, int disp_w, int disp_h);
 void item_prepare(struct item *it, const char *file, int disp_w, int disp_h);
 void item_play(struct item *it);
 GstSample *item_pull(struct item *it, GstClockTime timeout);

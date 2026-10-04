@@ -516,6 +516,23 @@ gboolean dumb_copy(struct dumbbuf *db, GstSample *s)
 			for (int y = 0; y < ph; y++)
 				memcpy(planes[pl] + y * pitches[pl], src + y * stride, (size_t)pw);
 		}
+	} else if (db->fourcc == DRM_FORMAT_YUV420 && GST_VIDEO_INFO_FORMAT(&vi) == GST_VIDEO_FORMAT_NV12) {
+		/* the hardware decoder's frames: luma as is, interleaved chroma split */
+		uint32_t cp = db->pitch / 2;
+		uint8_t *u = dst + db->pitch * db->h, *v = u + cp * (db->h / 2);
+		const uint8_t *ys = GST_VIDEO_FRAME_PLANE_DATA(&vf, 0);
+		const uint8_t *uv = GST_VIDEO_FRAME_PLANE_DATA(&vf, 1);
+		int ystride = GST_VIDEO_FRAME_PLANE_STRIDE(&vf, 0), uvstride = GST_VIDEO_FRAME_PLANE_STRIDE(&vf, 1);
+		for (int y = 0; y < h; y++)
+			memcpy(dst + y * db->pitch, ys + y * ystride, (size_t)w);
+		for (int y = 0; y < h / 2; y++) {
+			const uint8_t *row = uv + y * uvstride;
+			uint8_t *ur = u + y * cp, *vr = v + y * cp;
+			for (int x = 0; x < w / 2; x++) {
+				ur[x] = row[2 * x];
+				vr[x] = row[2 * x + 1];
+			}
+		}
 	} else if (db->fourcc == DRM_FORMAT_XRGB8888 && GST_VIDEO_INFO_FORMAT(&vi) == GST_VIDEO_FORMAT_BGRx) {
 		const uint8_t *src = GST_VIDEO_FRAME_PLANE_DATA(&vf, 0);
 		int stride = GST_VIDEO_FRAME_PLANE_STRIDE(&vf, 0);
