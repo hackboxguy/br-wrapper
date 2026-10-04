@@ -5,7 +5,9 @@
 # the update engine (ab-system-update, discover_usb_bundle) will, so the user
 # is told before pressing the button what the engine is going to find. It is
 # read-only: every filesystem is mounted ro,nosuid,nodev,noexec in a private
-# directory and unmounted again on every path. It never calls ab-update and
+# directory (one that is already mounted, e.g. by udisks2 for the launcher's
+# media apps, through a read-only bind of that mount) and unmounted again on
+# every path. It never calls ab-update and
 # never decides what is installable - the engine does that when it installs.
 #
 # Output, one line each (values never contain spaces):
@@ -130,9 +132,14 @@ if [ "${#filesystems[@]}" -gt 0 ]; then
     for i in "${!filesystems[@]}"; do
         device=${filesystems[$i]}; fstype=${fstypes[$i]}
         [ -b "$device" ] || continue
-        # The engine's driver order (mount_source_device): the in-kernel ntfs3
-        # first for NTFS, then a plain mount, so ntfs-3g can serve too
+        # The engine's order (mount_source_device): the in-kernel ntfs3 first
+        # for NTFS, then a read-only bind of an existing mount (a filesystem
+        # mounted read-write refuses a second, read-only mount), then a plain
+        # mount, so ntfs-3g can serve too
+        existing=$(findmnt -n -o TARGET --source "$device" 2>/dev/null | head -n 1)
         if ! { [ "$fstype" = ntfs ] && mount -t ntfs3 -o ro,nosuid,nodev,noexec -- "$device" "$mnt" 2>/dev/null; } \
+           && ! { [ -n "$existing" ] && mount --bind -- "$existing" "$mnt" 2>/dev/null &&
+                  { mount -o remount,bind,ro,nosuid,nodev,noexec -- "$mnt" 2>/dev/null || { umount "$mnt" 2>/dev/null; false; }; }; } \
            && ! mount -o ro,nosuid,nodev,noexec -- "$device" "$mnt" 2>/dev/null; then
             unmountable=$((unmountable + 1))
             lines+=("UNMOUNTABLE device=$device fstype=$fstype")
