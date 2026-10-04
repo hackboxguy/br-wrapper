@@ -24,6 +24,12 @@ usb-media.sh (launcher child)      [--autostart: countdown -> play, retried whil
   `docs/dual-video-player-extension-plan.md`, "Interfaces"); unknown keys are
   kept on save. Saving writes a temp file, fsyncs, renames and fsyncs the
   directory, so the stick can be pulled right after.
+- **Switching off right after Save**: an NTFS stick whose power is cut within
+  moments of a write is left "dirty"; the next boot mounts it **read-only**
+  (Save disabled, Play and autostart still work). Wait a few seconds after Save
+  before switching off. A stick that turned read-only is repaired by `chkdsk`
+  on a PC (or, on the unit, `sudo ntfsfix -d /dev/sda1`, which only clears the
+  flag and repairs nothing - so the unit does not do it by itself).
 - **Read-only stick**: Save is disabled; Play writes the playlist to
   `--temp-playlist` and the wrapper passes `--root=<stick>` to the player.
 - **Classification cache**: `--probe-cache` (default `/tmp/usb-media-probe.cache`,
@@ -38,7 +44,8 @@ usb-media.sh (launcher child)      [--autostart: countdown -> play, retried whil
   (`usb-media.sh --autostart`): `usb-media-app --countdown 5` ("Starting the
   playlist 5... tap anywhere to cancel"; exit 10 = play, 0 = cancelled into the
   app, this boot only), then playback. Until someone touches the unit, a
-  playback that ends with an error is retried 3 times, 5 s apart; EXIT (exit 0)
+  playback that ends with an error is retried 3 times in a row, 5 s apart (a
+  playback that ran 60 s before failing refills the budget); EXIT (exit 0)
   and a removed stick (exit 3) return to the app as usual.
 
 Screenshots without a display:

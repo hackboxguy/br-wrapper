@@ -77,6 +77,28 @@ void playlist_free(struct playlist *pl)
 	g_free(pl);
 }
 
+/*
+ * --autostart-check: may this playlist start by itself at boot? The flag is
+ * read first (no probing when it is off), then items are classified only
+ * until the first playable one. One line of reason; 0 = start.
+ */
+int playlist_autostart_check(struct playlist *pl)
+{
+	if (!pl->autostart) {
+		g_print("the playlist does not ask for autostart\n");
+		return 1;
+	}
+	for (guint i = 0; i < pl->items->len; i++) {
+		struct media_info mi;
+		if (probe_file(g_ptr_array_index(pl->items, i), &mi)) {
+			g_print("autostart: item %u of %u plays\n", i + 1, pl->items->len);
+			return 0;
+		}
+	}
+	g_print("nothing in the playlist can be played\n");
+	return 1;
+}
+
 /* --list: the resolved plan, one probe line per item, no display */
 int playlist_list(struct playlist *pl)
 {

@@ -172,6 +172,7 @@ struct playlist {
 struct playlist *playlist_load(const char *file, const char *root, GError **err);
 void playlist_free(struct playlist *pl);
 int playlist_list(struct playlist *pl);
+int playlist_autostart_check(struct playlist *pl);
 
 gboolean probe_file(const char *path, struct media_info *mi);
 void probe_print(const struct media_info *mi);

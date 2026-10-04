@@ -177,7 +177,9 @@ static struct item *take_next(struct mirror *mr)
 	if (g_atomic_int_get(&it->state) == ITEM_PREPARING)
 		return NULL;   /* stopping; the worker still owns it and will finish */
 	mr->next = NULL;
-	if (it->probed && !mr->cached[it->index]) {
+	/* successes only: a failure may be transient (a slow read at start), so a
+	 * failed item is probed again on the next pass */
+	if (it->probed && it->mi.decode != DECODE_UNSUPPORTED && !mr->cached[it->index]) {
 		mr->cache[it->index] = it->mi;
 		mr->cached[it->index] = TRUE;
 	}

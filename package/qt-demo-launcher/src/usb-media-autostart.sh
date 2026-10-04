@@ -23,7 +23,8 @@ log() { echo "usb-media-autostart: $*"; }
 # launcher <command>: one request, the first line of the answer
 launcher() {
     local reply=""
-    exec 3<>"/dev/tcp/127.0.0.1/$PORT" 2>/dev/null || return 1
+    # braces: bash reports a refused connect before a plain 2>/dev/null applies
+    { exec 3<>"/dev/tcp/127.0.0.1/$PORT"; } 2>/dev/null || return 1
     printf '%s\n' "$1" >&3
     IFS= read -r -t 5 reply <&3
     exec 3>&- 3<&-

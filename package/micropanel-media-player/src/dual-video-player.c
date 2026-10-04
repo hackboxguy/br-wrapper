@@ -66,6 +66,8 @@ static void usage(const char *prog)
 		"  --playlist FILE     micropanel-playlist.json (items relative to its directory)\n"
 		"  --root=DIR          resolve items against DIR instead of the playlist's directory\n"
 		"                      (a playlist kept off a read-only stick)\n"
+		"  --autostart-check   exit 0 if the playlist asks for autostart and an item plays\n"
+		"                      (flag first, stops at the first playable item), else 1\n"
 		"  --list              print the resolved plan (one probe line per item) and exit\n"
 		"  --image-duration=S  seconds per image, overrides the playlist (fractions allowed)\n"
 		"  --max-loops=N       stop after N passes even if the playlist loops (tests)\n"
@@ -137,7 +139,7 @@ static gchar *mount_point_of(const char *dir)
 }
 
 /* playlist mode: --playlist FILE [--list] (see usage) */
-static int run_playlist(struct player *p, const char *file, const char *root, gboolean list, char *card,
+static int run_playlist(struct player *p, const char *file, const char *root, int list, char *card,
 			size_t card_len, const char *c1, const char *c2, const char *refresh)
 {
 	GError *err = NULL;
@@ -148,7 +150,7 @@ static int run_playlist(struct player *p, const char *file, const char *root, gb
 		return 1;
 	}
 	if (list) {
-		int r = playlist_list(pl);
+		int r = list == 2 ? playlist_autostart_check(pl) : playlist_list(pl);
 		playlist_free(pl);
 		return r;
 	}
@@ -348,7 +350,7 @@ int main(int argc, char **argv)
 	const char *refresh = "auto";
 	struct player p = { .looping = TRUE };
 	const char *playlist = NULL, *root = NULL;
-	gboolean list = FALSE;
+	int list = 0;   /* 1 --list, 2 --autostart-check */
 	gboolean refresh_given = FALSE;
 
 	/* Every playlist item brings new GStreamer streaming threads; with glibc's
@@ -387,7 +389,9 @@ int main(int argc, char **argv)
 		else if (!strncmp(argv[i], "--root=", 7))
 			root = argv[i] + 7;
 		else if (!strcmp(argv[i], "--list"))
-			list = TRUE;
+			list = 1;
+		else if (!strcmp(argv[i], "--autostart-check"))
+			list = 2;
 		else if (!strcmp(argv[i], "--mirror"))
 			;   /* playlist mode always mirrors */
 		else if (!strncmp(argv[i], "--image-duration=", 17))
