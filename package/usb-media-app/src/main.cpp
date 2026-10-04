@@ -34,6 +34,10 @@ int main(int argc, char *argv[])
     QCommandLineOption tempOpt("temp-playlist",
                                "Where Play writes the playlist when the stick is read-only.", "file");
     QCommandLineOption messageOpt("message", "Shown when the app opens (why playback ended).", "text");
+    QCommandLineOption cacheOpt("probe-cache", "Classifications kept across the app <-> player loop "
+                                "(path + size + mtime; empty = none).", "file", "/tmp/usb-media-probe.cache");
+    QCommandLineOption countdownOpt("countdown", "Autostart: show a countdown of <s> seconds, then exit 10 "
+                                    "(play); a tap cancels (exit 0). The stick is not scanned.", "s");
     QCommandLineOption shotOpt("screenshot", "Grab the window to <file> once every file is classified, then "
                                "quit (docs; QT_QPA_PLATFORM=offscreen QT_QUICK_BACKEND=software).", "file");
     QCommandLineOption sizeOpt("window-size", "Window size WxH instead of full screen (with --screenshot).", "WxH");
@@ -41,6 +45,8 @@ int main(int argc, char *argv[])
     parser.addOption(playerOpt);
     parser.addOption(tempOpt);
     parser.addOption(messageOpt);
+    parser.addOption(cacheOpt);
+    parser.addOption(countdownOpt);
     parser.addOption(shotOpt);
     parser.addOption(sizeOpt);
     parser.process(app);
@@ -55,6 +61,7 @@ int main(int argc, char *argv[])
     options.player = parser.value(playerOpt);
     options.tempPlaylist = parser.value(tempOpt);
     options.message = parser.value(messageOpt);
+    options.probeCache = parser.value(cacheOpt);
     MediaController controller(options);
 
     // Same face as the launcher when it is installed; QML falls back otherwise
@@ -63,9 +70,10 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("media", &controller);
     engine.rootContext()->setContextProperty("uiFont", haveRoboto ? QString("Roboto") : QString());
-    // Autostart on boot is phase 2 (usb-media-autostart.service); until it
-    // ships, the checkbox stays hidden (the playlist key is kept as it is)
-    engine.rootContext()->setContextProperty("autostartSupported", false);
+    // Autostart on boot: usb-media-autostart.service reads the key at boot
+    engine.rootContext()->setContextProperty("autostartSupported", true);
+    const int countdown = parser.isSet(countdownOpt) ? qMax(1, parser.value(countdownOpt).toInt()) : 0;
+    engine.rootContext()->setContextProperty("countdownSeconds", countdown);
     engine.load(QUrl(QStringLiteral("qrc:/main.qml")));
     if (engine.rootObjects().isEmpty())
         return 1;
@@ -83,7 +91,8 @@ int main(int argc, char *argv[])
         auto *started = new QElapsedTimer;
         started->start();
         QObject::connect(poll, &QTimer::timeout, &app, [=, &controller]() {
-            if (controller.state() != "ready" && started->elapsed() < 30000)
+            (void)countdown;
+            if (!countdown && controller.state() != "ready" && started->elapsed() < 30000)
                 return;
             poll->stop();
             QTimer::singleShot(800, window, [=]() {
@@ -98,6 +107,7 @@ int main(int argc, char *argv[])
         poll->start(200);
     }
 
-    QTimer::singleShot(0, &controller, &MediaController::start);
+    if (!countdown)   // the countdown plays the saved playlist as it is: no scan, no probing
+        QTimer::singleShot(0, &controller, &MediaController::start);
     return app.exec();
 }

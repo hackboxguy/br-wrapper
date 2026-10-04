@@ -305,6 +305,21 @@ soak with `get_throttled` on a 2 GB unit, EXIT returning to the app pressed by h
 - the USB Media tile is dimmed without a stick.
 
 ### Phase 2 — autostart on boot
+
+**Status (2026-10-04): implemented, first image 2.06**, together with the fixes from Fable's review v2
+(`tmp-docs/fable-dual-video-player-extension-review-v2.md`): probe ends at the video stream's first
+buffer (files with audio 3.06 s → 77 ms), the gpu_mem < 128 path keeps one hardware decoder alive
+without blanking (hardware→hardware: copied last frame held ~0.2 s), the update engine arms a candidate
+with the candidate's own boot template (the trial boot after an update ran the old release's
+`config.txt` lines, i.e. 76M), CMYK JPEGs unsupported in the probe, app probe cache. As built:
+`usb-media-autostart.service` (WantedBy **graphical.target** — under multi-user.target it is an
+ordering cycle with the launcher, which is After=multi-user.target, and systemd drops it; seen on the
+rig), `usb-media-autostart.sh` (bash, `/dev/tcp` to :8081), the `_internal` launcher entry
+`usb-media-autostart` (the existing hidden-entry convention; `findButton()` ignores `visible`),
+`usb-media.sh --autostart-check/--autostart`, `usb-media-app --countdown N`. Unattended policy: retry
+3×, 5 s apart, on any exit but 0 (EXIT/finished) and 3 (stick removed). Rig: cold boot (Tasmota) with
+an autostart playlist → playback at boot+32 s; tap during the countdown → app with "Autostart
+cancelled"; `autostart: false` → nothing; killed player → back after 5 s; `stop-app` → all gone.
 The `autostart` key + checkbox (stored in the playlist), `usb-media-autostart.service`, the
 `visible: false` entry, the countdown in the app. **Done when**: a cold boot with the prepared stick ends
 in playback after the countdown; a tap cancels (this boot only); without the stick or with

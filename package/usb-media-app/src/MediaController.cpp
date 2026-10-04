@@ -2,6 +2,7 @@
 
 #include <QCoreApplication>
 #include <QDebug>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -21,6 +22,7 @@ namespace {
 
 const int kMaxDepth = 3;           // stick root + 3 levels of folders
 const int kProbeBatch = 16;        // files per dual-video-player --probe run
+const int kMaxCacheEntries = 20000;
 const int kMinImageDuration = 2;
 const int kMaxImageDuration = 600;
 
@@ -183,7 +185,44 @@ MediaController::MediaController(const Options &options, QObject *parent)
 
 void MediaController::start()
 {
+    loadProbeCache();
     scan();
+}
+
+// size + modification time: a file changed on another computer is probed again
+QString MediaController::fileStamp(const QString &path) const
+{
+    const QFileInfo fi(path);
+    return QString("%1:%2").arg(fi.size()).arg(fi.lastModified().toMSecsSinceEpoch());
+}
+
+void MediaController::loadProbeCache()
+{
+    QFile f(m_opt.probeCache);
+    if (m_opt.probeCache.isEmpty() || !f.open(QIODevice::ReadOnly))
+        return;
+    while (!f.atEnd()) {
+        const QString line = QString::fromUtf8(f.readLine()).trimmed();
+        const int tab = line.indexOf('\t');
+        const int file = line.lastIndexOf("\tfile=");
+        if (tab > 0 && file > tab)
+            m_cache.insert(line.mid(file + 6), line);
+    }
+}
+
+void MediaController::saveProbeCache()
+{
+    if (m_opt.probeCache.isEmpty() || !m_cacheDirty)
+        return;
+    QByteArray out;
+    int n = 0;
+    for (auto i = m_cache.constBegin(); i != m_cache.constEnd() && n < kMaxCacheEntries; ++i, ++n)
+        out += i.value().toUtf8() + '\n';
+    QString error;
+    if (writeSafely(m_opt.probeCache, out, &error))
+        m_cacheDirty = false;
+    else
+        qWarning() << "usb-media-app: probe cache" << m_opt.probeCache << error;
 }
 
 void MediaController::scan()
@@ -260,12 +299,29 @@ void MediaController::probeNext()
 {
     QVector<MediaFile> &files = m_model.files();
     m_batch.clear();
+    bool fromCache = false;
     while (m_nextProbe < files.size() && m_batch.size() < kProbeBatch) {
         const MediaFile &f = files[m_nextProbe++];
-        if (!f.probed)
-            m_batch << m_opt.root + "/" + f.rel;
+        if (f.probed)
+            continue;
+        const QString path = m_opt.root + "/" + f.rel;
+        const QString cached = m_cache.value(path);
+        if (cached.startsWith(fileStamp(path) + "\t") && applyProbeLine(cached.mid(cached.indexOf('\t') + 1))) {
+            fromCache = true;
+            continue;
+        }
+        m_batch << path;
+    }
+    if (fromCache) {
+        emit progressChanged();
+        emit selectionChanged();
     }
     if (m_batch.isEmpty()) {
+        if (m_nextProbe < files.size()) {   // only cache hits so far: next batch
+            probeNext();
+            return;
+        }
+        saveProbeCache();
         setState("ready");
         return;
     }
@@ -275,9 +331,13 @@ void MediaController::probeNext()
 void MediaController::onProbeFinished()
 {
     const QString out = QString::fromUtf8(m_probe.readAllStandardOutput());
-    for (const QString &line : out.split('\n'))
-        if (line.startsWith("PROBE\t"))
-            applyProbeLine(line);
+    for (const QString &line : out.split('\n')) {
+        if (!line.startsWith("PROBE\t") || !applyProbeLine(line))
+            continue;
+        const QString file = line.mid(line.lastIndexOf("\tfile=") + 6);
+        m_cache.insert(file, fileStamp(file) + "\t" + line);
+        m_cacheDirty = true;
+    }
     // anything the probe did not answer for (it crashed, or is missing)
     QVector<MediaFile> &files = m_model.files();
     for (int i = 0; i < files.size(); ++i) {
@@ -295,7 +355,8 @@ void MediaController::onProbeFinished()
     probeNext();
 }
 
-void MediaController::applyProbeLine(const QString &line)
+// true when the line answered for a listed, not yet classified file
+bool MediaController::applyProbeLine(const QString &line)
 {
     QHash<QString, QString> kv;
     for (const QString &field : line.split('\t')) {
@@ -305,7 +366,7 @@ void MediaController::applyProbeLine(const QString &line)
     }
     const QString file = kv.value("file");
     if (!file.startsWith(m_opt.root + "/"))
-        return;
+        return false;
     const QString rel = file.mid(m_opt.root.size() + 1);
     QVector<MediaFile> &files = m_model.files();
     for (int i = 0; i < files.size(); ++i) {
@@ -344,8 +405,9 @@ void MediaController::applyProbeLine(const QString &line)
             f.checked = false;   // a saved item that cannot play any more
         m_model.changed(i);
         ++m_probedCount;
-        return;
+        return true;
     }
+    return false;
 }
 
 int MediaController::checkedCount() const
@@ -500,8 +562,12 @@ void MediaController::play()
             return;
         }
     } else if (m_dirty || !QFileInfo::exists(m_opt.root + "/" + kPlaylistName)) {
-        if (!save())
-            return;
+        if (!save()) {
+            // mounted read-write but refusing writes (full, damaged): play anyway
+            QString error;
+            if (m_opt.tempPlaylist.isEmpty() || !writeSafely(m_opt.tempPlaylist, playlistJson(), &error))
+                return;
+        }
     }
     QCoreApplication::exit(kPlayExitCode);
 }
@@ -509,6 +575,11 @@ void MediaController::play()
 void MediaController::back()
 {
     QCoreApplication::exit(0);
+}
+
+void MediaController::playSaved()
+{
+    QCoreApplication::exit(kPlayExitCode);
 }
 
 void MediaController::setDirty(bool d)

@@ -778,6 +778,16 @@
         "border_radius": 20
       },
       {
+        "id": "usb-media-autostart",
+        "enabled": true,
+        "visible": false,
+        "page": "_internal",
+        "text": "USB Media (autostart)",
+        "program": "/usr/share/qt-apps/usb-media.sh",
+        "arguments": ["--autostart"],
+        "working_directory": "/tmp"
+      },
+      {
         "id": "display-analysis-color-gamut-rendering",
         "enabled": true,
         "visible": false,

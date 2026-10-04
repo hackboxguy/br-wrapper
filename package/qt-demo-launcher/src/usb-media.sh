@@ -14,11 +14,26 @@
 # Launched by qt-demo-launcher as its tracked child; the launcher's stop-app
 # (SIGTERM) is forwarded to whichever child runs, so it stops in time.
 #
-# --check: play nothing; exit 0 if a stick is there, else print the reason on
-# one line and exit 1 (the button's available_command: dims the tile).
+# --check            play nothing; exit 0 if a stick is there, else print the
+#                    reason on one line and exit 1 (the button's
+#                    available_command: dims the tile)
+# --autostart-check  exit 0 if the stick's playlist asks for autostart and
+#                    has something playable, else print why and exit 1
+#                    (usb-media-autostart.sh, at boot)
+# --autostart        the hidden usb-media-autostart launcher entry: countdown
+#                    (a tap cancels into the app), then playback; while
+#                    nobody has touched the unit, a failed playback (a display
+#                    that stopped for a moment, ...) is retried
+#                    AUTOSTART_RETRIES times, AUTOSTART_RETRY_PAUSE s apart
 
+MODE=run
+case "$1" in
+    --check) MODE=check ;;
+    --autostart-check) MODE=autostart-check ;;
+    --autostart) MODE=autostart ;;
+esac
 CHECK=0
-[ "$1" = "--check" ] && CHECK=1
+[ "$MODE" = check ] || [ "$MODE" = autostart-check ] && CHECK=1
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$SCRIPT_DIR/../../bin"
@@ -27,6 +42,10 @@ PLAYER="$BIN_DIR/dual-video-player"
 APP="$BIN_DIR/usb-media-app"
 [ -x "$APP" ] || APP="$(command -v usb-media-app)"
 TMP_PLAYLIST=/tmp/usb-media-playlist.json
+PLAYLIST_NAME=micropanel-playlist.json
+COUNTDOWN=${AUTOSTART_COUNTDOWN:-5}
+RETRIES=${AUTOSTART_RETRIES:-3}
+RETRY_PAUSE=${AUTOSTART_RETRY_PAUSE:-5}
 
 . "$SCRIPT_DIR/kodi-usb-common.sh"
 
@@ -40,10 +59,28 @@ find_stick() {
     echo "${root%/.}"
 }
 
+# wants_autostart <stick>: the playlist says autostart and something in it
+# plays (the player's own parser and classifier decide); else print why
+wants_autostart() {
+    list=$("$PLAYER" --list --playlist "$1/$PLAYLIST_NAME" 2>&1)
+    rc=$?
+    case "$(printf '%s\n' "$list" | head -n 1)" in
+        PLAYLIST*"	autostart=1	"*) ;;
+        PLAYLIST*) echo "the playlist does not ask for autostart"; return 1 ;;
+        *) echo "no usable $PLAYLIST_NAME on the stick"; return 1 ;;
+    esac
+    [ "$rc" = 0 ] || { echo "nothing in the playlist can be played"; return 1; }
+    return 0
+}
+
 usb_root=$(find_stick) || unavailable "Insert a USB stick with pictures or videos"
 [ -n "$PLAYER" ] || unavailable "dual-video-player not installed"
 [ -n "$APP" ] || unavailable "usb-media-app not installed"
-[ "$CHECK" = 1 ] && exit 0
+[ "$MODE" = check ] && exit 0
+if [ "$MODE" = autostart-check ]; then
+    why=$(wants_autostart "$usb_root") || unavailable "$why"
+    exit 0
+fi
 
 child=""
 stop=0
@@ -63,7 +100,61 @@ run() {
     return "$rc"
 }
 
+play() {
+    if [ -s "$TMP_PLAYLIST" ]; then
+        run "$PLAYER" --playlist "$TMP_PLAYLIST" --root="$usb_root"
+    else
+        run "$PLAYER" --playlist "$usb_root/$PLAYLIST_NAME"
+    fi
+}
+
+message_for() {
+    case "$1" in
+        0) echo "" ;;
+        1) echo "Nothing in the playlist could be played" ;;
+        3) echo "The USB stick was removed during playback" ;;
+        *) echo "Playback stopped (error $1)" ;;
+    esac
+}
+
 message=""
+rm -f "$TMP_PLAYLIST"
+if [ "$MODE" = autostart ]; then
+    # Started at boot: only if the stick (still) asks for it, else the app
+    if why=$(wants_autostart "$usb_root"); then
+        run "$APP" --root "$usb_root" --player "$PLAYER" --countdown "$COUNTDOWN"
+        rc=$?
+        if [ "$stop" = 0 ] && [ "$rc" = 10 ]; then
+            # nobody at the unit: retry what can recover (exit 3 and a user's
+            # EXIT, exit 0, are final)
+            attempt=0
+            while :; do
+                play
+                rc=$?
+                [ "$stop" = 0 ] || break
+                case "$rc" in 0|3) break ;; esac
+                attempt=$((attempt + 1))
+                [ "$attempt" -le "$RETRIES" ] || break
+                echo "usb-media: playback ended with $rc, retry $attempt of $RETRIES in ${RETRY_PAUSE}s" >&2
+                sleep "$RETRY_PAUSE" &
+                child=$!
+                wait "$child"
+                child=""
+                [ "$stop" = 0 ] || break
+            done
+            message=$(message_for "$rc")
+            if [ "$rc" = 3 ]; then
+                sleep 1
+                usb_root=$(find_stick) || exit 0
+            fi
+        elif [ "$stop" = 0 ] && [ "$rc" = 0 ]; then
+            message="Autostart cancelled - the playlist starts again at the next power-on"
+        fi
+    else
+        echo "usb-media: autostart skipped: $why" >&2
+    fi
+fi
+
 while [ "$stop" = 0 ]; do
     rm -f "$TMP_PLAYLIST"
     if [ -n "$message" ]; then
@@ -74,19 +165,10 @@ while [ "$stop" = 0 ]; do
     rc=$?
     [ "$stop" = 0 ] && [ "$rc" = 10 ] || break
 
-    if [ -s "$TMP_PLAYLIST" ]; then
-        run "$PLAYER" --playlist "$TMP_PLAYLIST" --root="$usb_root"
-    else
-        run "$PLAYER" --playlist "$usb_root/micropanel-playlist.json"
-    fi
+    play
     rc=$?
     [ "$stop" = 0 ] || break
-    case "$rc" in
-        0) message="" ;;
-        1) message="Nothing in the playlist could be played" ;;
-        3) message="The USB stick was removed during playback" ;;
-        *) message="Playback stopped (error $rc)" ;;
-    esac
+    message=$(message_for "$rc")
     if [ "$rc" = 3 ]; then
         # the stick may be back (or another one); without one, leave
         sleep 1

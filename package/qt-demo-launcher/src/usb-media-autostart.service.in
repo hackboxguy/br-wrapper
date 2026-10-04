@@ -1,0 +1,19 @@
+[Unit]
+Description=USB Media: play the USB stick's playlist at boot when it asks for autostart
+Documentation=file://@CMAKE_INSTALL_PREFIX@/share/qt-apps/usb-media-autostart.sh
+After=qt-demo-launcher.service
+Wants=qt-demo-launcher.service
+
+[Service]
+# exec, not oneshot: multi-user.target must not wait for the stick
+Type=exec
+User=pi
+Group=video
+ExecStart=@CMAKE_INSTALL_PREFIX@/share/qt-apps/usb-media-autostart.sh
+TimeoutStartSec=30
+
+[Install]
+# graphical.target, not multi-user.target: qt-demo-launcher.service is
+# After=multi-user.target, so this unit (After= the launcher) under
+# multi-user.target would be an ordering cycle and systemd drops its job
+WantedBy=graphical.target

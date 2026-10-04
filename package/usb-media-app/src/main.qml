@@ -43,6 +43,17 @@ Window {
         Keys.onEscapePressed: media.back()
     }
 
+    // ---- autostart countdown (usb-media.sh --autostart), above everything ----
+    property int countdownLeft: countdownSeconds
+    Timer {
+        running: countdownSeconds > 0 && win.countdownLeft > 0
+        interval: 1000; repeat: true
+        onTriggered: {
+            win.countdownLeft--
+            if (win.countdownLeft <= 0) media.playSaved()
+        }
+    }
+
     // ---- backdrop grid -----------------------------------------------------
     Repeater {
         model: Math.ceil(win.width / 48)
@@ -425,6 +436,48 @@ Window {
             text: "Plays on both displays. Tap the screen during playback for EXIT."
             color: t.sub
             font.family: t.font; font.pixelSize: 17 * s
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        visible: countdownSeconds > 0
+        z: 100
+        color: t.bg
+        MouseArea { anchors.fill: parent; onClicked: media.back() }   // cancel: this boot only
+        Column {
+            anchors.centerIn: parent
+            spacing: 28 * s
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "Starting the playlist"
+                color: t.text
+                font.family: t.font; font.pixelSize: 48 * s; font.weight: Font.Bold
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: win.countdownLeft
+                color: t.accent
+                font.family: t.font; font.pixelSize: 160 * s; font.weight: Font.Bold
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: "from " + media.root
+                color: t.sub
+                font.family: t.font; font.pixelSize: 22 * s
+            }
+            Rectangle {
+                anchors.horizontalCenter: parent.horizontalCenter
+                width: cancelText.implicitWidth + 80 * s; height: 84 * s; radius: 20 * s
+                color: "transparent"; border.color: t.border; border.width: 2
+                Text {
+                    id: cancelText
+                    anchors.centerIn: parent
+                    text: "Tap anywhere to cancel"
+                    color: t.text
+                    font.family: t.font; font.pixelSize: 26 * s; font.weight: Font.DemiBold
+                }
+            }
         }
     }
 }

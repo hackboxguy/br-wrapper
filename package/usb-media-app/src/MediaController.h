@@ -2,6 +2,7 @@
 #define MEDIACONTROLLER_H
 
 #include <QAbstractListModel>
+#include <QHash>
 #include <QJsonObject>
 #include <QProcess>
 #include <QStringList>
@@ -67,6 +68,7 @@ public:
         QString player;
         QString tempPlaylist;
         QString message;
+        QString probeCache;    // classifications kept across the app <-> player loop
     };
     explicit MediaController(const Options &options, QObject *parent = nullptr);
 
@@ -95,6 +97,7 @@ public:
     Q_INVOKABLE bool save();
     Q_INVOKABLE void play();
     Q_INVOKABLE void back();
+    Q_INVOKABLE void playSaved();   // the autostart countdown ran out: play the stick's playlist
 
     static const int kPlayExitCode = 10;
     static const char *kPlaylistName;
@@ -112,7 +115,10 @@ private:
     void loadPlaylist(QVector<MediaFile> &files);
     void probeNext();
     void onProbeFinished();
-    void applyProbeLine(const QString &line);
+    bool applyProbeLine(const QString &line);
+    void loadProbeCache();
+    void saveProbeCache();
+    QString fileStamp(const QString &path) const;
     QByteArray playlistJson() const;
     bool writeSafely(const QString &path, const QByteArray &data, QString *error) const;
     void setDirty(bool d);
@@ -135,6 +141,8 @@ private:
     QProcess m_probe;
     QStringList m_batch;       // absolute paths in the running probe
     int m_nextProbe = 0;
+    QHash<QString, QString> m_cache;   // absolute path -> "<size>:<mtime>\t<PROBE line>"
+    bool m_cacheDirty = false;
 };
 
 #endif

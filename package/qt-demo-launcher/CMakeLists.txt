@@ -89,6 +89,7 @@ install(PROGRAMS
     src/kodi-usb-common.sh
     src/dual-video.sh
     src/usb-media.sh
+    src/usb-media-autostart.sh
     update-config-paths.sh
     update-service-paths.sh
     DESTINATION ${DATA_DIR}
@@ -111,6 +112,13 @@ if(INSTALL_SYSTEMD_SERVICES)
     # Install to systemd location within install prefix
     install(FILES
         src/qt-demo-launcher.service
+        DESTINATION lib/systemd/system
+    )
+    # USB Media autostart at boot (paths are the install prefix's)
+    configure_file(src/usb-media-autostart.service.in
+                   ${CMAKE_CURRENT_BINARY_DIR}/usb-media-autostart.service @ONLY)
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/usb-media-autostart.service
         DESTINATION lib/systemd/system
     )
 
