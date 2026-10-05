@@ -1,0 +1,28 @@
+#!/bin/sh
+# 90-net-ctl-guard - NetworkManager dispatcher script: the DHCP guard of
+# br-wrapper's network-manager-app.
+#
+# A wired port in the app's DHCP-server mode (NetworkManager's shared mode)
+# that comes up - at boot, or when a cable goes in - first asks the network
+# for another DHCP server; if one answers, the port is taken down and the
+# launcher says so. The logic is net-ctl.sh's ("dhcp-guard"); this only
+# passes the events on:
+#   pre-up  close the gate on the port's DHCP replies, start the check in its
+#           own unit (returns at once: nothing waits for the probe)
+#   down    open the gate
+# Ports in other modes cost one nmcli call. NetworkManager runs it only when
+# it is owned by root and not writable by others; pre-up reaches it through
+# a symlink in pre-up.d/.
+NET_CTL=${NET_CTL:-@NET_CTL@}
+
+[ -x "$NET_CTL" ] || exit 0
+case ${DEVICE_IFACE:-$1} in ''|lo) exit 0 ;; esac
+# test seams for the veth bench (NET_CTL_INCLUDE_VETH=1), never on an image
+# shellcheck disable=SC1091
+[ -r /run/net-ctl-guard.env ] && . /run/net-ctl-guard.env
+
+case $2 in
+    pre-up) exec "$NET_CTL" dhcp-guard --iface="$1" --event=pre-up >/dev/null 2>&1 ;;
+    down) exec "$NET_CTL" dhcp-guard --iface="$1" --event=down >/dev/null 2>&1 ;;
+esac
+exit 0

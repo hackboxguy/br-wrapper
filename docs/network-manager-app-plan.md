@@ -517,9 +517,12 @@ Each needs the owner's go-ahead; none belongs in a br-wrapper commit.
 
 - **micropanel:** make `dhcp-net-settings-pios.sh` call `net-ctl.sh` (or at least read
   `ipv4.method=shared` as its `dhcp-server`), so the OLED menu and the app show the same mode and
-  the OLED menu's server mode starts surviving A/B reboots.
+  the OLED menu's server mode starts surviving A/B reboots. *Done in round 4:* a new
+  `dhcp-net-settings-netctl.sh` adapter, chosen by `dhcp-net-settings.sh` on Pi OS when
+  `net-ctl.sh` is found and NetworkManager runs.
 - **Stronger DHCP guard:** a NetworkManager dispatcher script that probes when a serving port's
-  link comes up and stops serving if another server answers.
+  link comes up and stops serving if another server answers. *Done in round 4* (README, "The
+  DHCP guard"); misc-tools' network hook installs it.
 - **Later features:** access-point mode ("join the rig from a phone"), an "internet sharing"
   switch on a serving port, a QR code on the Overview with the rig's SSH/API address, the
   launcher header's IP chip showing which interface it is.
@@ -548,3 +551,10 @@ Where the implementation differs from this plan, one line each; the package READ
 - **Buildroot:** no tile in `qt-demo-launcher.json` (no NetworkManager there).
 - **Image:** besides section 5.4, misc-tools declares `curl`, `ca-certificates` and `iproute2` for the Tools.
 - **Icon** stroke 2.6 as the neighbouring launcher icons, not 3.
+- **Round 4, DHCP guard:** a `pre-up` hook cannot keep NetworkManager's dnsmasq from starting
+  (it runs before any dispatcher event); an nftables gate on the port's DHCP replies closes
+  ~0.1 s later, and the probe runs in its own systemd unit. A stopped port is taken down, not
+  reconfigured.
+- **Round 4, `--iface=`:** every command checks it against `list_devices`.
+- **Round 4, launcher:** the header's notice chip was the first chip dropped when space ran out
+  (never shown at 1920 wide); now the others give way.

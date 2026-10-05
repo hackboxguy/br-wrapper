@@ -47,6 +47,12 @@
 #   iperf-client --host=H [--secs=5|10|30] [--udp] [--reverse]
 #                                   kind=iperf per second, kind=iperf-sum, kind=iperf-done
 # The tools are reads: they never detach, and stop with their caller.
+#   dhcp-guard --iface=IF --event=pre-up|check|down   (root; the dispatcher script)
+#                                   a serving port that comes up: gate its DHCP replies,
+#                                   probe; another server -> the port down, the notice
+#   dhcp-guard --iface=IF --retry   (root, a change) the port up again; the guard decides
+#                                   RESULT kind=guard iface= action=serving|stopped|checking|none
+#                                   [server=]
 # Changes take --dry-run: say what would run, change nothing.
 #
 # A change outlives its caller (plan rule 6a): run as root with systemd-run
@@ -63,7 +69,9 @@
 # NET_CTL_SHARED_DIR (NetworkManager's dnsmasq-shared.d), NET_CTL_PROBE (the
 # probe program), NET_CTL_INET=yes|no|skip (the internet check's answer, or
 # none), NET_CTL_INET_TARGETS, NET_CTL_UID (the uid the detach rule sees),
-# NET_CTL_DETACHED=1 (set inside the transient unit).
+# NET_CTL_DETACHED=1 (set inside the transient unit), NET_CTL_GUARD_DIR
+# (/run/net-ctl-guard), NET_CTL_NOTICE_FILE (/tmp/micropanel-notice),
+# NET_CTL_GUARD_INLINE=1 (the guard's check without systemd-run).
 
 # nft, iw and rfkill live in /usr/sbin, which is not in pi's non-login PATH.
 # Appended, not prepended: on merged-/usr hosts /usr/sbin also holds nmcli, and
@@ -378,6 +386,15 @@ iface_result() { # <dev> <type> <active uuid or ""> <default dev> <legacy iface>
         kv profileuuid "$profuuid"; kv cfgprofile "$profname"; kv saved "$saved"; kv binding "$binding"
         kv cfgip "${cfgaddr%/*}"; kv cfgprefix "$(case $cfgaddr in */*) echo "${cfgaddr#*/}" ;; esac)"
         kv cfggateway "$cfggw"; kv cfgdns "$cfgdns"
+        # the DHCP guard's verdict on a serving port (dhcp-guard)
+        if [ -f "$GUARD_DIR/$dev.stopped" ]; then
+            kv guard stopped; kv guardserver "$(sed -n 's/^server=//p' "$GUARD_DIR/$dev.stopped")"
+            kv guardtime "$(sed -n 's/^time=//p' "$GUARD_DIR/$dev.stopped")"
+        elif [ -f "$GUARD_DIR/$dev.checking" ]; then
+            kv guard checking; kv guardserver ""; kv guardtime ""
+        else
+            kv guard ""; kv guardserver ""; kv guardtime ""
+        fi
     } | emit iface
 }
 
@@ -944,6 +961,12 @@ cmd_wired_set() {
         { kv iface "$iface"; kv mode "$opt_mode"; kv ok 1; kv dryrun 1; } | emit wired
         exit 0
     fi
+    # the owner chose a mode: a DHCP guard's "stopped" for this port is answered
+    # (server mode again: the guard probes again when the port comes up)
+    if [ -f "$GUARD_DIR/$iface.stopped" ]; then
+        rm -f "$GUARD_DIR/$iface.stopped"
+        notice_remove "$iface"
+    fi
 
     # From here on the change runs to its end (rule 6a: detached, and deaf
     # to the signals of a caller that goes away)
@@ -1042,15 +1065,7 @@ cmd_dhcp_probe() {
         echo "RESULT kind=probe iface=$iface servers=0 carrier=0"
         exit 0
     fi
-    own=$(ip -4 -o addr show 2>/dev/null | awk '{ split($4, a, "/"); printf "%s ", a[1] }')
-    out=$("$PROBE" --iface "$iface" --timeout 4.5 2>&1) || fail 2 probe failed "$out"
-    # "OFFER server=a.b.c.d offered=a.b.c.d [router=a.b.c.d]" per server
-    offers=$(printf '%s\n' "$out" | awk -v own=" $own " '
-        $1 == "OFFER" { s = o = r = ""
-            for (i = 2; i <= NF; i++) { p = index($i, "="); k = substr($i, 1, p - 1); v = substr($i, p + 1)
-                if (k == "server") s = v; else if (k == "offered") o = v; else if (k == "router") r = v }
-            if (s == "" || index(own, " " s " ") || seen[s]++) next
-            print s "\037" o "\037" r }')
+    offers=$(probe_offers "$iface" 2>&1) || fail 2 probe failed "$offers"
     n=0
     while IFS="$us" read -r server offered router; do
         [ -n "$server" ] || continue
@@ -1330,12 +1345,183 @@ cmd_iperf_client() {
     echo "RESULT kind=iperf-done ok=1 host=$opt_host"
 }
 
+# ---- the DHCP guard -----------------------------------------------------------
+# A port in server mode serves as soon as it has link - at boot, or when a
+# cable goes in, with the app open or not. NetworkManager starts its dnsmasq
+# before any dispatcher event (measured on 1.42.4: it already runs at
+# pre-up), so no hook can keep it from starting. What pre-up can do, ~0.1 s
+# later, is close a gate: an nftables rule that drops the port's outgoing
+# DHCP replies (UDP source port 67). The probe then asks the network; if
+# another server answers, the port is taken down (its profile stays in
+# server mode, for the owner to decide), the launcher's notice chip and badge
+# say so, and the Wired card shows it. If none answers, the gate opens.
+#
+# The dispatcher script (src/90-net-ctl-guard) calls
+#   dhcp-guard --iface=IF --event=pre-up    gate, then the check in its own unit
+#   dhcp-guard --iface=IF --event=down      gate open (the port is gone anyway)
+# and the app calls dhcp-guard --iface=IF --retry ("Try again": the port up
+# again; the guard's probe decides).
+GUARD_DIR=${NET_CTL_GUARD_DIR:-/run/net-ctl-guard}
+NOTICE_FILE=${NET_CTL_NOTICE_FILE:-/tmp/micropanel-notice}
+
+guard_log() { logger -t net-ctl.sh -- "dhcp-guard: $*" 2>/dev/null; return 0; }
+notice_line() { echo "DHCP serving stopped: $1"; }
+
+# The launcher shows the notice file's first line as a header chip. Another
+# writer's line (System Manager's "Power cycle required") stays first; the
+# file stays writable by the user who runs the launcher's apps.
+notice_add() {
+    line=$(notice_line "$1")
+    if [ -f "$NOTICE_FILE" ]; then
+        grep -qxF "$line" "$NOTICE_FILE" 2>/dev/null || printf '%s\n' "$line" >> "$NOTICE_FILE"
+    else
+        printf '%s\n' "$line" > "$NOTICE_FILE" && chmod 0666 "$NOTICE_FILE"
+    fi
+}
+notice_remove() {
+    [ -f "$NOTICE_FILE" ] || return 0
+    line=$(notice_line "$1")
+    grep -qxF "$line" "$NOTICE_FILE" 2>/dev/null || return 0
+    rest=$(grep -vxF "$line" "$NOTICE_FILE")
+    if [ -n "$rest" ]; then printf '%s\n' "$rest" > "$NOTICE_FILE"; else rm -f "$NOTICE_FILE"; fi
+}
+
+gate_on() {
+    nft list table inet net_ctl_guard >/dev/null 2>&1 || nft -f - <<'EOF'
+table inet net_ctl_guard {
+    set gated { type ifname; }
+    chain out {
+        type filter hook output priority 0; policy accept;
+        oifname @gated udp sport 67 drop
+    }
+}
+EOF
+    nft add element inet net_ctl_guard gated "{ \"$1\" }"
+}
+gate_off() { nft delete element inet net_ctl_guard gated "{ \"$1\" }" 2>/dev/null; return 0; }
+
+# The active profile on the port is in the app's server mode
+port_serves() {
+    u=$(nmcli -t -e yes -f DEVICE,UUID connection show --active 2>/dev/null | untab \
+        | awk -F "$us" -v d="$1" '$1 == d { print $2; exit }')
+    [ -n "$u" ] && [ "$(nm_get "$u" ipv4.method)" = shared ]
+}
+
+# Other DHCP servers on the port: "server US offered US router" lines; the
+# rig's own addresses are not "other"
+probe_offers() {
+    own=$(ip -4 -o addr show 2>/dev/null | awk '{ split($4, a, "/"); printf "%s ", a[1] }')
+    out=$("$PROBE" --iface "$1" --timeout 4.5 2>&1) || { printf '%s' "$out" >&2; return 2; }
+    printf '%s\n' "$out" | awk -v own=" $own " '
+        $1 == "OFFER" { s = o = r = ""
+            for (i = 2; i <= NF; i++) { p = index($i, "="); k = substr($i, 1, p - 1); v = substr($i, p + 1)
+                if (k == "server") s = v; else if (k == "offered") o = v; else if (k == "router") r = v }
+            if (s == "" || index(own, " " s " ") || seen[s]++) next
+            print s "\037" o "\037" r }'
+}
+
+guard_check() {
+    : > "$GUARD_DIR/$iface.checking"
+    trap 'gate_off "$iface"; rm -f "$GUARD_DIR/$iface.checking"' EXIT
+    trap 'exit 143' HUP INT TERM
+    t0=$(date +%s)
+    if ! offers=$(probe_offers "$iface" 2>/dev/null); then
+        # no verdict: serve, as without the guard, and say so
+        guard_log "$iface: the probe failed; serving"
+        echo "RESULT kind=guard iface=$iface action=serving reason=probe-failed"
+        exit 2
+    fi
+    server=$(printf '%s\n' "$offers" | awk -F "$us" 'NF { print $1; exit }')
+    if [ -n "$server" ]; then
+        printf 'server=%s\ntime=%s\n' "$server" "$t0" > "$GUARD_DIR/$iface.stopped"
+        nmcli device disconnect "$iface" >/dev/null 2>&1
+        notice_add "$iface"
+        guard_log "$iface: another DHCP server ($server) answered; serving stopped, $iface taken down (its mode is still DHCP server)"
+        echo "RESULT kind=guard iface=$iface action=stopped server=$server"
+        exit 0
+    fi
+    rm -f "$GUARD_DIR/$iface.stopped"
+    notice_remove "$iface"
+    guard_log "$iface: no other DHCP server answered; serving"
+    echo "RESULT kind=guard iface=$iface action=serving"
+}
+
+# "Try again": forget the verdict, bring the profile up; the guard's pre-up
+# gates and probes before the port serves. Waits for that verdict.
+guard_retry() {
+    if [ "$dry_run" = 1 ]; then
+        dry_note "forget the guard's verdict on $iface; nmcli connection up its profile; the guard probes first"
+        echo "RESULT kind=guard iface=$iface action=serving dryrun=1"
+        exit 0
+    fi
+    need_unlocked guard
+    profiles=$(eth_profiles)
+    mac=$(read_sys "$iface" address)
+    uuid=$(port_profile "$profiles" "$iface" "$mac" "" | cut -d "$us" -f1)
+    [ -n "$uuid" ] || fail 1 guard bad-arguments "$iface has no saved profile"
+    rm -f "$GUARD_DIR/$iface.stopped"
+    notice_remove "$iface"
+    notice "bringing $iface up; the guard probes before it serves"
+    up_out=$(nmcli --wait 60 connection up uuid "$uuid" ifname "$iface" 2>&1) \
+        || fail 2 guard activation-failed "$up_out"
+    n=0
+    # the check starts with pre-up and takes ~5 s
+    while { [ -e "$GUARD_DIR/$iface.checking" ] || [ $n -lt 4 ]; } && [ $n -lt 60 ]; do sleep 0.5; n=$((n + 1)); done
+    if [ -f "$GUARD_DIR/$iface.stopped" ]; then
+        server=$(sed -n 's/^server=//p' "$GUARD_DIR/$iface.stopped")
+        echo "RESULT kind=guard iface=$iface action=stopped server=$server"
+        exit 2
+    fi
+    echo "RESULT kind=guard iface=$iface action=serving"
+    exit 0
+}
+
+cmd_dhcp_guard() {
+    need_nm
+    [ -n "$iface" ] || fail 1 guard bad-arguments "--iface= is required"
+    [ "${NET_CTL_UID:-$(id -u)}" = 0 ] || fail 1 guard bad-arguments "dhcp-guard runs as root"
+    mkdir -p "$GUARD_DIR" && chmod 0755 "$GUARD_DIR"
+    [ "$opt_retry" = 1 ] && guard_retry
+    case $opt_event in
+        pre-up)
+            if ! port_serves "$iface"; then
+                echo "RESULT kind=guard iface=$iface action=none reason=not-serving"
+                exit 0
+            fi
+            gate_on "$iface" || guard_log "$iface: could not close the gate (nft)"
+            : > "$GUARD_DIR/$iface.checking"
+            # the check in its own unit: the dispatcher does not wait for it,
+            # and its exit when idle cannot end the check halfway
+            if [ -z "${NET_CTL_GUARD_INLINE:-}" ] && command -v systemd-run >/dev/null 2>&1; then
+                envs=''
+                for v in $(env | sed -n 's/^\(NET_CTL_[A-Z0-9_]*\)=.*/\1/p'); do envs="$envs --setenv=$v"; done
+                # shellcheck disable=SC2086
+                systemd-run --quiet --collect --no-block --unit="net-ctl-guard-$iface" \
+                    --description="net-ctl.sh DHCP guard $iface" $envs \
+                    "$(readlink -f "$0")" dhcp-guard --iface="$iface" --event=check >/dev/null 2>&1 \
+                    || guard_log "$iface: a check is already running"
+                echo "RESULT kind=guard iface=$iface action=checking"
+            else
+                guard_check
+            fi ;;
+        check) guard_check ;;
+        down)
+            gate_off "$iface"
+            echo "RESULT kind=guard iface=$iface action=none" ;;
+        *) fail 1 guard bad-arguments "--event= is pre-up, check or down; or --retry" ;;
+    esac
+}
+
 # ---- a change outlives its caller ------------------------------------------------
 
 # Rule 6a: as a transient unit. Only for changes, only as root, only once,
 # never in a dry run; without systemd-run (Buildroot) the change runs here.
 detach() { # <command> <args...>
-    case $1 in wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set) ;; *) return 0 ;; esac
+    case $1 in
+        wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set) ;;
+        dhcp-guard) [ "$opt_retry" = 1 ] || return 0 ;;
+        *) return 0 ;;
+    esac
     [ "$dry_run" = 1 ] && return 0
     [ -z "${NET_CTL_DETACHED:-}" ] || return 0
     [ "${NET_CTL_UID:-$(id -u)}" = 0 ] || return 0
@@ -1357,6 +1543,7 @@ cmd=${1:-}
 iface='' ssid_enc='' opt_hidden=0 opt_security='' opt_rescan=0 opt_onoff='' dry_run=0
 opt_mode='' opt_ip='' opt_prefix='' opt_gateway='' opt_dns=''
 opt_target='' opt_count='' opt_host='' opt_secs='' opt_udp=0 opt_reverse=0 opt_stop=0
+opt_event='' opt_retry=0
 for arg in "$@"; do
     case $arg in
         --iface=*) iface=${arg#--iface=} ;;
@@ -1373,6 +1560,8 @@ for arg in "$@"; do
         --reverse) opt_reverse=1 ;;
         --start) opt_stop=0 ;;
         --stop) opt_stop=1 ;;
+        --event=*) opt_event=${arg#--event=} ;;
+        --retry) opt_retry=1 ;;
         --ssid=*) ssid_enc=${arg#--ssid=} ;;
         --hidden) opt_hidden=1 ;;
         --security=*) opt_security=${arg#--security=} ;;
@@ -1384,6 +1573,19 @@ for arg in "$@"; do
     esac
 done
 case $opt_security in ''|open|wpa2|wpa3) ;; *) fail 1 connect bad-arguments "--security= is open, wpa2 or wpa3" ;; esac
+
+# One rule for --iface= (review v3, 2.2): a device NetworkManager lists
+# (list_devices), for every command that takes one
+case $cmd in
+    leases|wired-set|dhcp-probe|dhcp-guard|ping|internet-check)
+        if [ -n "$iface" ]; then
+            case $cmd in leases) k=lease ;; wired-set) k=wired ;; dhcp-probe) k=probe ;; dhcp-guard) k=guard ;;
+                         ping) k=ping ;; *) k=internet ;; esac
+            need_nm
+            list_devices | awk -F "$us" -v d="$iface" '$1 == d { f = 1 } END { exit !f }' \
+                || fail 1 "$k" bad-arguments "$iface is not a network port here"
+        fi ;;
+esac
 
 detach "$cmd" "$@"
 if [ -n "${NET_CTL_DETACHED:-}" ]; then
@@ -1407,11 +1609,12 @@ case $cmd in
     wifi-radio) cmd_wifi_radio ;;
     wired-set) cmd_wired_set ;;
     dhcp-probe) cmd_dhcp_probe ;;
+    dhcp-guard) cmd_dhcp_guard ;;
     ping) cmd_ping ;;
     internet-check) cmd_internet_check ;;
     iperf-server) cmd_iperf_server ;;
     iperf-client) cmd_iperf_client ;;
     *)
-        echo "usage: net-ctl.sh available|status|monitor|leases|wifi-scan|wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set|dhcp-probe|ping|internet-check|iperf-server|iperf-client [options]" >&2
+        echo "usage: net-ctl.sh available|status|monitor|leases|wifi-scan|wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set|dhcp-probe|dhcp-guard|ping|internet-check|iperf-server|iperf-client [options]" >&2
         exit 1 ;;
 esac

@@ -27,6 +27,7 @@
 #include <QMap>
 #include <QPainter>
 #include <QPainterPath>
+#include <QVector>
 #include <QImageReader>
 #include <QTimer>
 #include <QDateTime>
@@ -466,8 +467,9 @@ protected:
             right = m_pulseRect.left() - H * 0.15;
         }
 
-        // Status chips, dropped from the left if they would hit the title.
-        // A notice comes first in the list so it is the last one dropped.
+        // Status chips, left to right: a notice, then SW-VER, RES, IP, API.
+        // When they would hit the title, the leftmost of the others go first;
+        // the notice is the last to go (it says something has to be done).
         QList<QPair<QString, QString>> chips;
         if (!m_notice.isEmpty()) chips << qMakePair(QString("!"), m_notice);
         if (m_theme.showImageVersion && !m_imageVersion.isEmpty()) chips << qMakePair(QString("SW-VER"), m_imageVersion);
@@ -480,12 +482,27 @@ protected:
         QFontMetricsF fmL(labelFont), fmV(valueFont);
         qreal chipH = bodyH * 0.44;
         qreal pad = chipH * 0.42;
+        const qreal chipGap = H * 0.12;
+        auto chipWidth = [&](int i) {
+            return pad + fmL.horizontalAdvance(chips[i].first) + pad * 0.6
+                   + fmV.horizontalAdvance(chips[i].second) + pad;
+        };
+        // Which chips fit: the notice first, then the others from the right
+        QVector<bool> shown(chips.size(), false);
+        qreal room = right - titleRight;
+        const int first = m_notice.isEmpty() ? 0 : 1;
+        if (first == 1 && chipWidth(0) <= room) { shown[0] = true; room -= chipWidth(0) + chipGap; }
+        for (int i = chips.size() - 1; i >= first; --i) {
+            if (chipWidth(i) > room) break;
+            shown[i] = true;
+            room -= chipWidth(i) + chipGap;
+        }
         for (int i = chips.size() - 1; i >= 0; --i) {
+            if (!shown[i]) continue;
             qreal labelW = fmL.horizontalAdvance(chips[i].first);
             qreal valueW = fmV.horizontalAdvance(chips[i].second);
-            qreal chipW = pad + labelW + pad * 0.6 + valueW + pad;
+            qreal chipW = chipWidth(i);
             qreal left = right - chipW;
-            if (left < titleRight) break;
             QRectF chip(left, (bodyH - chipH) / 2, chipW, chipH);
             const bool isNotice = !m_notice.isEmpty() && i == 0;
             const QColor amber("#FBBF24");
@@ -500,7 +517,7 @@ protected:
             p.setPen(isNotice ? amber : text);
             p.drawText(QRectF(chip.left() + pad + labelW + pad * 0.6, chip.top(), valueW + 1, chipH),
                        Qt::AlignVCenter, chips[i].second);
-            right = left - H * 0.12;
+            right = left - chipGap;
         }
 
         // SMPTE 75% bars

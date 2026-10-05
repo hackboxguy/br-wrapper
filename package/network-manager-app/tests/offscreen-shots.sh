@@ -116,6 +116,14 @@ FAKE_NET_STEP=2 shot wired-applying wired-static --section wired --open-sheet ap
 FAKE_NET_STEP=0.1 shot wired-applied wired-static --section wired --open-sheet apply-client --screenshot-delay 2000
 FAKE_NET_STEP=0.1 shot wired-apply-failed wired-fail --section wired --open-sheet apply-static:eth1 --screenshot-delay 2000
 
+# The DHCP guard (round 4): a serving port taken down, checking, try again
+shot overview-guard-stopped guard-stopped --screenshot-delay 1000
+shot wired-guard-stopped guard-stopped --section wired --open-sheet wired-server:eth1 --screenshot-delay 1000
+shot wired-guard-checking guard-checking --section wired --open-sheet wired-server:eth1 --screenshot-delay 1000
+FAKE_NET_STEP=2 shot wired-guard-retrying guard-stopped --section wired --open-sheet guard-retry:eth1 --screenshot-delay 2500
+FAKE_NET_STEP=0.1 shot wired-guard-retry-ok guard-stopped --section wired --open-sheet guard-retry:eth1 --screenshot-delay 2000
+FAKE_NET_STEP=0.1 FAKE_TOOL=still shot wired-guard-retry-still guard-stopped --section wired --open-sheet guard-retry:eth1 --screenshot-delay 2000
+
 # Tools (Phase 4): each tool's states; FAKE_TOOL picks the outcome
 shot tools-ping-idle online-serving --section tools --screenshot-delay 1000
 FAKE_TOOL_STEP=0.6 shot tools-ping-running online-serving --section tools --open-sheet ping:192.168.1.1:live --screenshot-delay 100

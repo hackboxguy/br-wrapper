@@ -43,6 +43,7 @@ of screen 2. Built the way `system-manager-app` is built; the design is
 | `src/net-ctl.sh` | the only thing that talks to NetworkManager (`nmcli`); POSIX `sh`, line protocol `RESULT` / `PROGRESS` / `NOTICE` |
 | `src/net-dhcp-probe.py` | one DHCPDISCOVER on a port, every DHCPOFFER for 4.5 s; never a REQUEST (`--self-test` checks the packet code) |
 | `src/net-badge.sh` | the launcher tile's `available_command` and `badge_command` |
+| `src/90-net-ctl-guard.in` | the DHCP guard's NetworkManager dispatcher script (installed to `share/network-manager-app/`; the image copies it to `/etc/NetworkManager/dispatcher.d/`) |
 | `src/NetTool.*` | runs `net-ctl.sh` (one command at a time per controller), parses its lines, logs to `/tmp/network-manager-app.log` |
 | `src/StatusController.*` | Overview and header: `status`, `monitor`, `leases`; byte counters and carrier from `/sys/class/net` once a second |
 | `src/WifiController.*` | WiFi section: `wifi-scan`, `wifi-connect` (password on stdin), `wifi-forget`, `wifi-autoconnect`, `wifi-disconnect`, `wifi-radio` |
@@ -76,7 +77,8 @@ In `qt-demo-launcher-pios.json`: `id` `network`, row 4 column 0 (second row of s
 - `available_command`: `net-badge.sh --available` — exit 0 when `net-ctl.sh available` says
   NetworkManager is there; else it prints `Needs NetworkManager` and the launcher dims the tile
   with that subtitle (taps are ignored; the API's `start-app` still starts it).
-- `badge_command`: `net-badge.sh` — `Serving addresses` while a port hands out addresses
+- `badge_command`: `net-badge.sh` — `Serving stopped: eth1` when the DHCP guard took a serving
+  port down, else `Serving addresses` while a port hands out addresses
   (NetworkManager's shared-mode dnsmasq, or the OLED menu's server), nothing otherwise. Being
   offline is not badged: a bench rig is often offline on purpose. No `nmcli`, no `sudo`, no
   ping: a process list and a file test, 36 ms on the rig (`--available` 54 ms).
@@ -103,6 +105,8 @@ previous settings were restored · `4` NetworkManager not available.
 | `wired-set --iface= --mode=client` | yes | `PROGRESS phase=activating\|checking`, `RESULT kind=wired ok= ip= binding= [reason=activation-failed\|check-failed\|overlap\|bad-arguments\|locked]` |
 | `wired-set --iface= --mode=static --ip= --prefix= [--gateway=] [--dns=a,b]` | yes | as above |
 | `wired-set --iface= --mode=server --ip= [--prefix=24]` | yes | as above; stops and masks the system `dnsmasq.service` and writes the no-gateway drop-in if needed |
+| `dhcp-guard --iface= --event=pre-up\|check\|down` | yes | the DHCP guard (the dispatcher script calls it): `RESULT kind=guard iface= action=none\|checking\|serving\|stopped [server=]` |
+| `dhcp-guard --iface= --retry` | yes | a change: the port up again, the guard decides; `action=serving\|stopped` |
 | `dhcp-probe --iface=` | yes | `RESULT kind=offer server= offered= router=` per other server, `RESULT kind=probe servers=N carrier=0\|1` |
 | `ping --target= [--iface=] [--count=1..100]` | no | `RESULT kind=reply seq= ms= from=` / `kind=lost seq= [reason=unreachable]` as they happen, then `kind=ping target= sent= received= avg= loss= [reason=unknown-host\|unreachable\|bad-interface]` |
 | `internet-check [--iface=]` | binds | `RESULT kind=check step=gateway\|dns\|https ok= [ms= target= server= addr= code=] [reason=…]` per step, then `kind=internet iface= ok=`; without `--iface` the default route's port |
@@ -149,7 +153,10 @@ internet. Measured on the rig (NetworkManager 1.42.4):
   the probe before serving (one DISCOVER, every OFFER within 4.5 s — a dnsmasq once took 3.1 s
   with its ping check), a warning that names the other server, and a probe again whenever a
   serving port's cable comes in while the Wired section is shown.
-- **The OLED menu's server** (`dhcp-net-settings.sh --mode=dhcp-server`) is the system dnsmasq
+- **The OLED menu** (micropanel's `dhcp-net-settings.sh`) goes through `net-ctl.sh` on Pi OS
+  when it finds it (`$NET_CTL`, `PATH`, `$MICROPANEL_HOME/bin`, `/usr/bin`) and NetworkManager is
+  available: its server is then this shared mode too. Without them it works as before:
+- **The OLED menu's old server** (`dhcp-net-settings.sh --mode=dhcp-server`) is the system dnsmasq
   with `/etc/dnsmasq.d/micropanel-dhcp-server.conf`, `.100–.200`, 12-hour leases, the rig as
   gateway. `status` reports such a port as `mode=legacy-server`; the app shows it as "DHCP
   server (set from the panel menu)" with that server's leases. Any `wired-set` on it first does
@@ -157,6 +164,38 @@ internet. Measured on the rig (NetworkManager 1.42.4):
   run for real on a veth pair for all three modes. The card's tiles show what Apply would set
   up, not the menu server's own range.
 - `wired-set` refuses a server subnet that overlaps another port's.
+
+### The DHCP guard (a serving port that comes up)
+
+A port in server mode serves as soon as it has link — at boot, or when a cable goes in — with
+the app open or not. The guard, a NetworkManager dispatcher script calling
+`net-ctl.sh dhcp-guard`, checks every time:
+
+1. **pre-up**: if the port's active profile is in shared mode, an nftables gate (`table inet
+   net_ctl_guard`) drops the port's outgoing DHCP replies (UDP source port 67), and the check
+   starts in its own systemd unit — the dispatcher returns at once; boot and other ports wait for
+   nothing. Ports in other modes cost one `nmcli` call.
+2. **The check**: the same probe as the Wired section (4.5 s). Another server answers → the port
+   is taken down (`nmcli device disconnect`: its profile stays in server mode, and NetworkManager
+   does not bring it back on its own), `/run/net-ctl-guard/<port>.stopped` records the other
+   server, the launcher's notice chip says `DHCP serving stopped: <port>`, the tile's badge
+   `Serving stopped: <port>`, the Wired card shows the red card with **Probe and try again**, and
+   the journal (`-t net-ctl.sh`) has the line. Nothing answers → the gate opens; nothing is
+   shown.
+
+Measured on NetworkManager 1.42.4 (rig 1, veth pair): **NetworkManager starts the port's dnsmasq
+before any dispatcher event** — at `pre-up` it already runs, and a slow `pre-up` script only
+delays "connected", not dnsmasq. No hook can keep the port from serving altogether; the gate
+closes about 0.1 s after dnsmasq starts. With a client asking once a second, **no offer of the
+rig reached it** on a network with another server (the guard took the port down 5 s after
+`pre-up`); without the guard the first offer came 2.3 s after the cable. On a clean network
+serving starts ~5.7 s after the cable instead of 2.3 s.
+
+"Try again" (and any `wired-set` on the port) forgets the verdict; the port comes up and the
+guard probes again. The notice keeps another writer's line (System Manager's "Power cycle
+required") first and stays writable for the launcher's user. The badge appears at the
+launcher's next `badge_command` run (its start, or when an app exits); the notice chip within a
+second.
 
 ### Is there internet — and through which port?
 

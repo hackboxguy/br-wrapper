@@ -35,6 +35,8 @@ class WiredController : public QObject
     // idle | applying | probing
     Q_PROPERTY(QString busyState READ busyState NOTIFY busyChanged)
     Q_PROPERTY(QString applyingIface READ applyingIface NOTIFY busyChanged)
+    // client | static | server, or "retry" (the DHCP guard's try again)
+    Q_PROPERTY(QString applyingMode READ applyingMode NOTIFY busyChanged)
     Q_PROPERTY(QString phase READ phase NOTIFY busyChanged)
     // iface -> { state: running|done, carrier: 0|1, servers: [{server, offered, router}] }
     Q_PROPERTY(QVariantMap probes READ probes NOTIFY probesChanged)
@@ -54,6 +56,7 @@ public:
 
     QString busyState() const { return m_busyState; }
     QString applyingIface() const { return m_applyingIface; }
+    QString applyingMode() const { return m_applyMode; }
     QString phase() const { return m_phase; }
     QVariantMap probes() const { return m_probes; }
     QVariantMap leases() const { return m_leases; }
@@ -67,6 +70,9 @@ public:
     Q_INVOKABLE void apply(const QString &iface, const QString &mode, const QString &ip, const QString &prefix,
                            const QString &gateway, const QString &dns);
     Q_INVOKABLE void clearOutcome();
+    // The DHCP guard took a serving port down: bring it up again; the guard
+    // probes before it serves (sudo net-ctl.sh dhcp-guard --retry)
+    Q_INVOKABLE void guardRetry(const QString &iface);
     // the lease tables of the serving ports, once (Tools: ping a client)
     Q_INVOKABLE void refreshLeases();
 
@@ -80,7 +86,7 @@ signals:
     void outcomeChanged();
 
 private:
-    enum class Op { None, Apply, Probe, Leases };
+    enum class Op { None, Apply, Probe, Leases, Retry };
     void run(Op op, const QString &iface, const QStringList &args);
     void onResult(const QVariantMap &fields);
     void onProgress(const QVariantMap &fields);

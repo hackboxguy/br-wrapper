@@ -8,8 +8,8 @@
 # parsing, the per-port internet check, the systemd-run detach and the Tools
 # (ping, internet-check, iperf3 against output captured on the rig). No root,
 # no network, no NetworkManager: nmcli, ip, ping, systemctl, pgrep,
-# systemd-run, iw, rfkill, curl, iperf3, ss, the DNS question and the probe
-# are stand-ins.
+# systemd-run, iw, rfkill, curl, iperf3, ss, nft, the DNS question and the
+# probe are stand-ins. Also the DHCP guard and its dispatcher script.
 #   tests/test_net_ctl.sh            (also run by ctest with -DBUILD_TESTS=ON)
 here=$(cd "$(dirname "$0")" && pwd)
 script=$here/../src/net-ctl.sh
@@ -125,6 +125,15 @@ FAKE
 cat > "$work/bin/ss" <<'FAKE'
 #!/bin/sh
 [ -f "${FAKE_NM:?}/ss-busy" ] && echo "LISTEN 0      5            *:5201            *:*"
+exit 0
+FAKE
+cat > "$work/bin/nft" <<'FAKE'
+#!/bin/sh
+# records the call (and an nft -f script); "list" finds no table
+d=${FAKE_NM:?}
+echo "nft $*" >> "$d/calls"
+[ "$1" = -f ] && cat >> "$d/calls"
+[ "$1" = list ] && exit 1
 exit 0
 FAKE
 cat > "$work/bin/probe" <<'FAKE'
@@ -722,6 +731,89 @@ n=0
 while ls "$TMPDIR"/net-ctl-st.* >/dev/null 2>&1 && [ $n -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
 check "a status stopped with TERM removes its directory" sh -c "! ls \"\$TMPDIR\"/net-ctl-st.* >/dev/null 2>&1"
 wait "$st" 2>/dev/null
+
+echo "== one rule for --iface= (review v3, 2.2)"
+reset ok
+for c in "leases" "dhcp-probe" "internet-check" "ping --target=192.168.1.1" "wired-set --mode=client" "dhcp-guard --event=pre-up"; do
+    # shellcheck disable=SC2086
+    NET_CTL_UID=0 run $c --iface=nosuch0
+    check "$c --iface=nosuch0: refused" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'reason=bad-arguments' && printf '%s' \"\$1\" | grep -q 'nosuch0%20is%20not%20a%20network%20port'" _ "$out"
+done
+NET_CTL_UID=0 run ping --target=192.168.1.1 --iface='eth0;reboot'
+check "shell characters in --iface=: refused" [ "$rc" = 1 ]
+run leases --iface=vethnm
+check "a veth is no port without NET_CTL_INCLUDE_VETH=1" [ "$rc" = 1 ]
+
+echo "== the DHCP guard"
+# eth1 (the USB adapter) in the app's server mode; the probe answers from $FAKE_NM/offers
+guard_reset() {
+    reset ok
+    sed 's/^\(aaaaaaaa-0000-0000-0000-000000000002|Wired connection 2|\)auto|/\1shared|/' "$FAKE_NM/eth" > "$FAKE_NM/eth.new"
+    mv "$FAKE_NM/eth.new" "$FAKE_NM/eth"
+    NET_CTL_GUARD_DIR="$FAKE_NM/guard"; NET_CTL_NOTICE_FILE="$FAKE_NM/notice"; NET_CTL_GUARD_INLINE=1
+    export NET_CTL_GUARD_DIR NET_CTL_NOTICE_FILE NET_CTL_GUARD_INLINE
+}
+guard_reset
+NET_CTL_UID=0 run dhcp-guard --iface=eth0 --event=pre-up
+check "a port in client mode: the guard does nothing" sh -c "[ $rc = 0 ] && printf '%s' \"\$1\" | grep -q 'action=none reason=not-serving'" _ "$out"
+check "  no gate, no probe" not_called "nft "
+echo "OFFER server=192.168.1.1 offered=192.168.1.57 router=192.168.1.1" > "$FAKE_NM/offers"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=pre-up
+check "another server answers: stopped" out_has "RESULT kind=guard iface=eth1 action=stopped server=192.168.1.1"
+check "  the gate closed first (UDP sport 67 out of eth1)" sh -c "grep -q 'oifname @gated udp sport 67 drop' \"\$FAKE_NM/calls\" && grep -q 'nft add element inet net_ctl_guard gated { \"eth1\" }' \"\$FAKE_NM/calls\""
+check "  the port taken down" called "device|disconnect|eth1|"
+check "  its profile not touched" not_called "connection|modify"
+check "  the gate open again" called 'nft delete element inet net_ctl_guard gated { "eth1" }'
+check "  the verdict kept" grep -qx "server=192.168.1.1" "$FAKE_NM/guard/eth1.stopped"
+check "  the notice" grep -qx "DHCP serving stopped: eth1" "$FAKE_NM/notice"
+check "  the notice is writable for the launcher's user" sh -c "[ \"\$(stat -c %a \"\$FAKE_NM/notice\")\" = 666 ]"
+check "  the badge" sh -c "[ \"\$(NET_CTL_GUARD_DIR=\"\$FAKE_NM/guard\" \"$here/../src/net-badge.sh\")\" = 'Serving stopped: eth1' ]"
+run status
+check "  status: guard=stopped and the other server" out_has "guard=stopped guardserver=192.168.1.1 guardtime="
+check "  no 'checking' left" [ ! -e "$FAKE_NM/guard/eth1.checking" ]
+run dhcp-guard --iface=eth1 --event=pre-up
+check "not as root: refused" [ "$rc" = 1 ]
+
+guard_reset
+echo "Power cycle required" > "$FAKE_NM/notice"
+echo "OFFER server=192.168.1.1 offered=192.168.1.57 router=192.168.1.1" > "$FAKE_NM/offers"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=pre-up
+check "another writer's notice stays first" sh -c "[ \"\$(head -n 1 \"\$FAKE_NM/notice\")\" = 'Power cycle required' ] && grep -qx 'DHCP serving stopped: eth1' \"\$FAKE_NM/notice\""
+: > "$FAKE_NM/offers"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=pre-up
+check "then no other server: serving" out_has "RESULT kind=guard iface=eth1 action=serving"
+check "  the verdict gone, the port not taken down again" sh -c "[ ! -e \"\$FAKE_NM/guard/eth1.stopped\" ] && [ \$(grep -c 'device|disconnect|eth1|' \"\$FAKE_NM/calls\") = 1 ]"
+check "  only our notice line gone" sh -c "[ \"\$(cat \"\$FAKE_NM/notice\")\" = 'Power cycle required' ]"
+echo "OFFER server=192.168.20.164 offered=192.168.20.99 router=" > "$FAKE_NM/offers"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=pre-up
+check "the rig's own address is not another server" out_has "action=serving"
+
+guard_reset
+echo "OFFER server=192.168.1.1 offered=192.168.1.57 router=192.168.1.1" > "$FAKE_NM/offers"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=pre-up
+: > "$FAKE_NM/offers"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --retry
+check "try again: the verdict forgotten, the profile up" sh -c "[ $rc = 0 ] && grep -q '^--wait|60|connection|up|uuid|aaaaaaaa-0000-0000-0000-000000000002|ifname|eth1|' \"\$FAKE_NM/calls\" && [ ! -e \"\$FAKE_NM/guard/eth1.stopped\" ] && [ ! -e \"\$FAKE_NM/notice\" ]" _ "$out"
+check "  it detaches (a change)" called "systemd-run --quiet --collect --pipe --wait --description=net-ctl.sh dhcp-guard"
+check "  and reports serving" out_has "RESULT kind=guard iface=eth1 action=serving"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --retry --dry-run
+check "  a dry run changes nothing" sh -c "printf '%s' \"\$1\" | grep -q 'dryrun=1' && [ \$(grep -c 'connection|up|' \"\$FAKE_NM/calls\") = 1 ]" _ "$out"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=down
+check "down: the gate open" sh -c "[ $rc = 0 ] && [ \$(grep -c 'nft delete element inet net_ctl_guard gated { \"eth1\" }' \"\$FAKE_NM/calls\") -ge 1 ]"
+echo "OFFER server=192.168.1.1 offered=192.168.1.57 router=192.168.1.1" > "$FAKE_NM/offers"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=pre-up
+run wired-set --iface=eth1 --mode=client
+check "a stopped port given a mode by wired-set loses the verdict and the notice" sh -c "[ ! -e \"\$FAKE_NM/guard/eth1.stopped\" ] && [ ! -e \"\$FAKE_NM/notice\" ]"
+unset NET_CTL_GUARD_DIR NET_CTL_NOTICE_FILE NET_CTL_GUARD_INLINE
+
+echo "== the dispatcher script"
+sed "s|@NET_CTL@|$work/bin/guard-spy|" "$here/../src/90-net-ctl-guard.in" > "$work/90-net-ctl-guard"
+printf '#!/bin/sh\necho "$*" >> "%s/spy"\n' "$work" > "$work/bin/guard-spy"; chmod +x "$work/bin/guard-spy"
+: > "$work/spy"
+for ev in pre-up up down dhcp4-change connectivity-change; do sh "$work/90-net-ctl-guard" eth1 "$ev"; done
+sh "$work/90-net-ctl-guard" lo pre-up
+check "pre-up and down reach net-ctl.sh, nothing else" sh -c "[ \"\$(cat \"$work/spy\")\" = 'dhcp-guard --iface=eth1 --event=pre-up
+dhcp-guard --iface=eth1 --event=down' ]"
 
 if [ "$failures" -gt 0 ]; then echo "net-ctl: $failures failure(s)"; exit 1; fi
 echo "net-ctl: PASS"

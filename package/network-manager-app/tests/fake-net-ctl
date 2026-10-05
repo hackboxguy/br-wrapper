@@ -7,7 +7,7 @@
 #                      connect-ok | connect-bad-password | connect-not-found |
 #                      connect-no-address | connect-timeout |
 #                      wired-static | probe-found | probe-none | probe-no-cable |
-#                      legacy-server | wired-fail
+#                      legacy-server | wired-fail | guard-stopped | guard-checking
 #   FAKE_NET_STEP      seconds between PROGRESS lines of a change (default 0.4)
 #   FAKE_TOOL          the Tools' outcome: ok (default) | loss | no-reply | unknown-host
 #                      (ping) · dns-fail | gateway-fail | captive | tls (internet-check)
@@ -56,6 +56,9 @@ sum() { # <internet> <via> <defaultdev> <wifi> <country>
     echo "RESULT kind=summary internet=$1 via=$2 defaultdev=$3 connectivity=full wifi=$4 country=$5 volatile=1 wifiboot=on"
 }
 
+# the DHCP guard took the serving adapter down (another server answered), or is checking
+eth1_stopped=$(printf '%s' "$eth1_serving" | sed 's/ carrier=1 / carrier=1 /; s/ state=connected / state=disconnected /; s/ ip=192.168.50.1 prefix=24 / ip= prefix= /')" guard=stopped guardserver=192.168.1.1 guardtime=1791259200"
+eth1_checking="$eth1_serving guard=checking guardserver= guardtime="
 status() {
     case $scenario in
         offline)
@@ -76,6 +79,10 @@ status() {
             echo "$eth0_nocable"; echo "$wlan_default"; echo "$eth1_serving"; sum yes wlan0 wlan0 on DE ;;
         legacy-server)
             echo "$eth0_legacy"; echo "$wlan_default"; sum yes wlan0 wlan0 on DE ;;
+        guard-stopped)
+            echo "$eth0_up"; echo "$wlan_on"; echo "$eth1_stopped"; sum yes eth0 eth0 on DE ;;
+        guard-checking)
+            echo "$eth0_up"; echo "$wlan_on"; echo "$eth1_checking"; sum yes eth0 eth0 on DE ;;
         *)
             echo "$eth0_up"; echo "$wlan_on"
             case $scenario in online-serving|wired-fail) echo "$eth1_serving" ;; esac
@@ -191,6 +198,13 @@ case $cmd in
     wifi-forget) echo "RESULT kind=forget ssid=$ssid ok=1" ;;
     wifi-autoconnect) echo "RESULT kind=autoconnect ssid=$ssid ok=1" ;;
     wifi-radio) sleep "$step"; echo "RESULT kind=radio ok=1" ;;
+    dhcp-guard)
+        # --retry: FAKE_TOOL=still -> the other server still answers
+        echo "NOTICE detached"
+        sleep "$step"; echo "NOTICE bringing $iface up; the guard probes before it serves"
+        sleep "$step"; sleep "$step"
+        if [ "$tool" = still ]; then echo "RESULT kind=guard iface=$iface action=stopped server=192.168.1.1"; exit 2; fi
+        echo "RESULT kind=guard iface=$iface action=serving" ;;
     ping)
         case $tool in
             unknown-host) echo "RESULT kind=ping target=$target sent=0 received=0 avg= loss=100 reason=unknown-host"; exit 2 ;;

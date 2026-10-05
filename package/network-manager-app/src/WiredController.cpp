@@ -69,7 +69,7 @@ void WiredController::run(Op op, const QString &iface, const QStringList &args)
     m_collectServers.clear();
     m_collectLeases.clear();
     QStringList full = args;
-    if (op == Op::Apply && m_options.dryRun) full << "--dry-run";
+    if ((op == Op::Apply || op == Op::Retry) && m_options.dryRun) full << "--dry-run";
     m_tool->run(full, true);
 }
 
@@ -97,6 +97,18 @@ void WiredController::probe(const QString &iface)
 void WiredController::forgetProbe(const QString &iface)
 {
     if (m_probes.remove(iface)) emit probesChanged();
+}
+
+void WiredController::guardRetry(const QString &iface)
+{
+    if (m_busyState == "applying" || iface.isEmpty()) return;
+    m_busyState = "applying";
+    m_applyingIface = iface;
+    m_applyMode = "retry";
+    m_phase.clear();
+    clearOutcome();
+    emit busyChanged();
+    run(Op::Retry, iface, {"dhcp-guard", "--iface=" + iface, "--retry"});
 }
 
 void WiredController::apply(const QString &iface, const QString &mode, const QString &ip, const QString &prefix,
@@ -261,6 +273,25 @@ void WiredController::onFinished(int exitCode)
         emit busyChanged();
         if (m_status) m_status->refresh();
         if (mode == "server" || exitCode != 0) QTimer::singleShot(1500, this, &WiredController::refreshLeases);
+    } else if (op == Op::Retry) {
+        m_busyState = "idle";
+        m_applyingIface.clear();
+        const QString action = m_lastResult.value("action").toString();
+        const QString server = m_lastResult.value("server").toString();
+        if (m_lastResult.value("dryrun") == "1")
+            setOutcome("info", "Dry run", "Nothing was changed.", iface);
+        else if (action == "serving")
+            setOutcome("ok", "Serving again", "No other DHCP server answered on " + iface + ": it serves addresses again.", iface);
+        else if (action == "stopped")
+            setOutcome("error", "Another DHCP server is still there",
+                       server + " still answers on " + iface + ". The port stays down; its mode is still DHCP server.", iface);
+        else {
+            m_outcome = failureOutcome(m_lastResult.value("reason").toString(), iface, "server",
+                                       m_lastResult.value("detail").toString(), exitCode);
+            emit outcomeChanged();
+        }
+        emit busyChanged();
+        if (m_status) m_status->refresh();
     }
     next();
 }

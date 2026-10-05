@@ -56,5 +56,16 @@ install(TARGETS network-manager-app
 # The app's only link to NetworkManager (reads as the user, changes through sudo -n)
 install(PROGRAMS src/net-ctl.sh src/net-dhcp-probe.py src/net-badge.sh DESTINATION ${CMAKE_INSTALL_BINDIR})
 
+# The DHCP guard's NetworkManager dispatcher script, with the path of this
+# install's net-ctl.sh. Not installed into /etc here: NetworkManager runs a
+# dispatcher script only when root owns it, so the image puts it in place
+# (misc-tools' micropanel-network-hook.sh copies it to
+# /etc/NetworkManager/dispatcher.d/ with a pre-up.d/ symlink).
+set(NET_CTL "${CMAKE_INSTALL_FULL_BINDIR}/net-ctl.sh")
+configure_file(src/90-net-ctl-guard.in ${CMAKE_CURRENT_BINARY_DIR}/90-net-ctl-guard @ONLY)
+install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/90-net-ctl-guard
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/network-manager-app)
+
 message(STATUS "network-manager-app: configured")
 message(STATUS "  Install binary + net-ctl.sh, net-dhcp-probe.py, net-badge.sh to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")
+message(STATUS "  Install the DHCP guard's dispatcher script to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_DATADIR}/network-manager-app")

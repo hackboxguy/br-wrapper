@@ -453,7 +453,10 @@ Window {
                                               : { label: "Connected", tint: t.info }
             return { label: "Not connected", tint: t.dim }
         }
+        // the DHCP guard (net-ctl.sh dhcp-guard): another server answered when it came up
+        if (f.guard === "stopped") return { label: "Serving stopped", tint: t.bad }
         if (carrierOf(f) !== 1) return { label: "No cable", tint: t.dim }
+        if (f.guard === "checking") return { label: "Checking for DHCP servers…", tint: t.info }
         if (f.mode === "server" || f.mode === "legacy-server") return { label: "Serving addresses", tint: t.accent }
         if (f.state === "connecting") return { label: "Connecting…", tint: t.info }
         if (f.state === "connected") {
@@ -1976,8 +1979,11 @@ Window {
                             readonly property bool showOutcome: o.kind !== undefined && o.iface === portCard.p.name
                             readonly property var pr: wiredSection.probe
                             readonly property int found: pr && pr.state === "done" ? pr.servers.length : 0
-                            // which card: outcome | lease-held | no-cable | probing | found | none | leases | ""
+                            // which card: outcome | guard | guard-checking | lease-held | no-cable | probing | found | none | leases | ""
                             readonly property string what: showOutcome ? "outcome"
+                                : portCard.p.guard === "stopped" && !wiredSection.applying ? "guard"
+                                : portCard.p.guard === "checking"
+                                  || (wiredSection.applying && wired.applyingMode === "retry" && wired.applyingIface === portCard.p.name) ? "guard-checking"
                                 : wiredSection.wantsProbe && wiredSection.holdsLease ? "lease-held"
                                 : wiredSection.wantsProbe && parseInt(portCard.p.carrier) !== 1 ? "no-cable"
                                 : pr && pr.state === "running" && (wiredSection.wantsProbe || wiredSection.serving) ? "probing"
@@ -1986,7 +1992,7 @@ Window {
                                 : wiredSection.serving && win.draft.mode === "server" ? "leases"
                                 : ""
                             readonly property color tone: what === "outcome" ? (o.kind === "ok" ? t.ok : o.kind === "error" ? t.bad : t.info)
-                                : what === "found" || what === "lease-held" ? t.bad
+                                : what === "found" || what === "lease-held" || what === "guard" ? t.bad
                                 : what === "none" ? t.ok
                                 : what === "no-cable" ? t.warn : t.info
 
@@ -1995,19 +2001,19 @@ Window {
                                 width: parent.width
                                 height: Math.min(parent.height, Math.max(76 * s, infoText.implicitHeight + 28 * s))
                                 radius: 16 * s
-                                color: withAlpha(infoArea.tone, infoArea.what === "found" || infoArea.what === "lease-held" ? 0.18 : 0.12)
+                                color: withAlpha(infoArea.tone, infoArea.tone === t.bad ? 0.18 : 0.12)
                                 border.color: withAlpha(infoArea.tone, 0.6)
                                 Rectangle { width: 6 * s; height: parent.height; radius: 3 * s; color: infoArea.tone }
                                 Spinner {
                                     id: infoSpin
-                                    visible: infoArea.what === "probing"
+                                    visible: infoArea.what === "probing" || infoArea.what === "guard-checking"
                                     x: 26 * s; anchors.verticalCenter: parent.verticalCenter
                                     width: 40 * s
                                 }
                                 Column {
                                     id: infoText
                                     anchors.left: parent.left; anchors.leftMargin: infoSpin.visible ? 84 * s : 28 * s
-                                    anchors.right: infoClose.visible ? infoClose.left : parent.right
+                                    anchors.right: infoClose.visible ? infoClose.left : guardRetry.visible ? guardRetry.left : parent.right
                                     anchors.rightMargin: 16 * s
                                     anchors.verticalCenter: parent.verticalCenter
                                     spacing: 2 * s
@@ -2016,6 +2022,8 @@ Window {
                                         text: {
                                             switch (infoArea.what) {
                                             case "outcome": return infoArea.o.title
+                                            case "guard": return "Serving stopped: another DHCP server (" + portCard.p.guardserver + ") answered"
+                                            case "guard-checking": return "Checking for another DHCP server before serving…"
                                             case "lease-held": return "Another DHCP server (" + portCard.p.dhcpserver + ") is already on this network"
                                             case "no-cable": return "No cable: the port could not be checked"
                                             case "probing": return "Checking for another DHCP server on " + portCard.p.name + "…"
@@ -2039,11 +2047,15 @@ Window {
                                         text: {
                                             switch (infoArea.what) {
                                             case "outcome": return infoArea.o.detail
+                                            case "guard": return "When " + portCard.p.name + " came up"
+                                                                 + (portCard.p.guardtime ? " (" + Qt.formatTime(new Date(parseInt(portCard.p.guardtime) * 1000), "HH:mm") + ")" : "")
+                                                                 + " the DHCP guard took it down. Its mode is still DHCP server: try again, or choose another mode."
+                                            case "guard-checking": return "Addresses are handed out once no other server answers (about five seconds)."
                                             case "lease-held": return "This port holds a lease from it. Serving addresses here will disrupt other devices on it."
                                             case "no-cable": return "Plug in the other end first, or apply and check when it is connected."
                                             case "probing": return "One DHCP request, answers collected for about five seconds. Nothing is taken."
                                             case "found": return wiredSection.serving ? "This port serves addresses on a network that has its own DHCP server: other devices on it may get the wrong address. Switch it to another mode."
-                                                                                      : "Serving addresses here will disrupt other devices on it. Hold to apply anyway."
+                                                                                      : "Serving addresses here would disrupt other devices on it. If you apply, the DHCP guard takes the port down again as soon as it comes up."
                                             case "none": return "Hold to apply."
                                             }
                                             return ""
@@ -2051,6 +2063,15 @@ Window {
                                         color: t.text
                                         font.family: t.font; font.pixelSize: 17 * s
                                     }
+                                }
+                                ActionButton {
+                                    id: guardRetry
+                                    visible: infoArea.what === "guard"
+                                    height: 60 * s; width: 300 * s
+                                    anchors.right: parent.right; anchors.rightMargin: 14 * s
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    label: "Probe and try again"
+                                    onClicked: wired.guardRetry(portCard.p.name)
                                 }
                                 CloseButton {
                                     id: infoClose
@@ -2139,7 +2160,9 @@ Window {
                                 anchors.verticalCenter: parent.verticalCenter
                                 wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight
                                 text: wiredSection.applying
-                                      ? (wired.phase === "checking" ? "Checking that " + wired.applyingIface + " works…"
+                                      ? (wired.applyingMode === "retry"
+                                           ? "Bringing " + wired.applyingIface + " up again: the DHCP guard asks the network first, and it serves only if no other server answers…"
+                                         : wired.phase === "checking" ? "Checking that " + wired.applyingIface + " works…"
                                          : win.draft.mode === "client"
                                            ? "Waiting for an address from the network — this can take up to 45 seconds. "
                                              + "The previous settings come back if none comes."
@@ -3254,6 +3277,11 @@ Window {
             sheet.openHidden(false)
             hiddenName.text = "Bench-Hidden"
             if (parts[1]) keyboard.keyLayer = parts[1]
+        } else if (parts[0] === "guard-retry") {
+            // the DHCP guard's "Probe and try again", as if tapped
+            if (parts[1]) win.wiredPort = parts[1]
+            win.resetDraft()
+            wired.guardRetry(win.wport.name)
         } else if (parts[0].indexOf("apply-") === 0) {
             // an Apply as if held (screenshots of the applying and outcome states)
             if (parts[1]) win.wiredPort = parts[1]

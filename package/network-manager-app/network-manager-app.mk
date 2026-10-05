@@ -19,6 +19,10 @@ define NETWORK_MANAGER_APP_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/net-ctl.sh $(TARGET_DIR)/usr/bin/net-ctl.sh
 	$(INSTALL) -D -m 0755 $(@D)/net-dhcp-probe.py $(TARGET_DIR)/usr/bin/net-dhcp-probe.py
 	$(INSTALL) -D -m 0755 $(@D)/net-badge.sh $(TARGET_DIR)/usr/bin/net-badge.sh
+	sed 's|@NET_CTL@|/usr/bin/net-ctl.sh|' $(@D)/90-net-ctl-guard.in > $(@D)/90-net-ctl-guard
+	$(INSTALL) -D -m 0755 $(@D)/90-net-ctl-guard $(TARGET_DIR)/etc/NetworkManager/dispatcher.d/90-net-ctl-guard
+	mkdir -p $(TARGET_DIR)/etc/NetworkManager/dispatcher.d/pre-up.d
+	ln -sf ../90-net-ctl-guard $(TARGET_DIR)/etc/NetworkManager/dispatcher.d/pre-up.d/90-net-ctl-guard
 endef
 
 $(eval $(generic-package))
