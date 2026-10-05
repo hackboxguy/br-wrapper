@@ -1,0 +1,134 @@
+#!/bin/sh
+# fake-nmcli - stands in for nmcli under tests/test_net_ctl.sh.
+#
+# Every call is recorded, one line per call, arguments joined by "|", in
+# $FAKE_NM/calls. What a call reads on stdin (the passwd-file of
+# "connection up") goes to $FAKE_NM/stdin - never into the calls log, which
+# is exactly what the test checks.
+#
+# State lives in $FAKE_NM:
+#   profiles   uuid<TAB>ssid<TAB>autoconnect(yes|no)<TAB>active(yes|no)  WiFi profiles
+#   mode       how an activation goes: ok | bad-password | no-address | timeout
+#   radio      enabled | disabled
+#   running    running | (anything else: NetworkManager down)
+#   down       created by "connection down": ends a looping activation
+d=${FAKE_NM:?FAKE_NM is not set}
+joined=$(for a in "$@"; do printf '%s|' "$a"; done)
+# one write per call: the monitor and the activation run at the same time
+printf '%s\n' "$joined" >> "$d/calls"
+mode=$(cat "$d/mode" 2>/dev/null || echo ok)
+tab=$(printf '\t')
+
+has() { case "|$joined" in *"|$1|"*) return 0 ;; esac; return 1; }
+
+case $joined in
+    "-t|-f|RUNNING|general|") cat "$d/running" 2>/dev/null || echo running ;;
+    "-t|-f|CONNECTIVITY|general|") echo full ;;
+    "-t|-f|WIFI|radio|") cat "$d/radio" 2>/dev/null || echo enabled ;;
+    "-t|-e|yes|-f|DEVICE,TYPE|device|")
+        # NetworkManager 1.42 lists a veth as "ethernet" (seen on the rig)
+        printf 'eth0:ethernet\nwlan0:wifi\np2p-dev-wlan0:wifi-p2p\nlo:loopback\nvethnm:ethernet\ndocker0:bridge\n' ;;
+    "-t|-e|yes|-f|DEVICE,UUID|connection|show|--active|")
+        echo "eth0:aaaaaaaa-0000-0000-0000-000000000001"
+        awk -F "$tab" '$4 == "yes" { print "wlan0:" $1 }' "$d/profiles" 2>/dev/null ;;
+    "-t|-f|ipv4.method|connection|show|uuid|aaaaaaaa-0000-0000-0000-000000000001|") echo "ipv4.method:auto" ;;
+    "-t|-f|ipv4.method|connection|show|uuid|"*) echo "ipv4.method:auto" ;;
+    "-t|-f|GENERAL,IP4,DHCP4,IP6|device|show|eth0|")
+        cat <<'EOF'
+GENERAL.DEVICE:eth0
+GENERAL.TYPE:ethernet
+GENERAL.HWADDR:2C:CF:67:4F:66:CA
+GENERAL.STATE:100 (connected)
+GENERAL.CONNECTION:Wired connection 1
+IP4.ADDRESS[1]:192.168.1.170/24
+IP4.GATEWAY:192.168.1.1
+IP4.DNS[1]:192.168.1.1
+IP4.DNS[2]:9.9.9.9
+DHCP4.OPTION[1]:dhcp_lease_time = 86400
+DHCP4.OPTION[2]:dhcp_server_identifier = 192.168.1.1
+IP6.ADDRESS[1]:fe80::76f9:b550:2848:fea0/64
+EOF
+        ;;
+    "-t|-f|GENERAL,IP4,DHCP4,IP6|device|show|"*)
+        printf 'GENERAL.DEVICE:%s\nGENERAL.HWADDR:2C:CF:67:4F:66:CB\nGENERAL.STATE:30 (disconnected)\nGENERAL.CONNECTION:\n' "$6" ;;
+    "-t|-f|IP4.ADDRESS|device|show|wlan0|") echo "IP4.ADDRESS[1]:192.168.20.138/24" ;;
+    "-t|-e|yes|-f|ACTIVE,SSID,SIGNAL,FREQ|device|wifi|list|ifname|wlan0|--rescan|no|") echo "no:Workshop:71:5180 MHz" ;;
+    "-t|-e|yes|-f|IN-USE,SSID,SIGNAL,SECURITY,FREQ|device|wifi|list|--rescan|"*)
+        # two BSSIDs of one network (the stronger wins), an escaped colon,
+        # an enterprise network, a hidden one (empty SSID)
+        printf ' :Workshop:40:WPA2:2412 MHz\n'
+        printf ' :Workshop:71:WPA2:5180 MHz\n'
+        printf ' :Caf\303\251 Am Markt:52::2437 MHz\n'
+        printf ' :softliQ\\:MC_ab0f32:47:WPA1 WPA2:2412 MHz\n'
+        printf ' :Lab-Bench:58:WPA3:5500 MHz\n'
+        printf ' :Corp:41:WPA2 802.1X:5200 MHz\n'
+        printf ' ::30:WPA2:2462 MHz\n' ;;
+    "-t|-e|yes|-f|UUID,TYPE,AUTOCONNECT,ACTIVE|connection|show|")
+        echo "aaaaaaaa-0000-0000-0000-000000000001:802-3-ethernet:yes:yes"
+        awk -F "$tab" '{ print $1 ":802-11-wireless:" $3 ":" $4 }' "$d/profiles" 2>/dev/null ;;
+    "-t|-f|802-11-wireless.ssid,802-11-wireless.hidden|connection|show|uuid|"*|"-t|-f|802-11-wireless.ssid|connection|show|uuid|"*)
+        u=$7
+        awk -F "$tab" -v u="$u" '$1 == u { print "802-11-wireless.ssid:" $2; print "802-11-wireless.hidden:no" }' "$d/profiles" ;;
+    "connection|add|"*)
+        # "con-name" is the 4th argument pair; the new profile is inactive until up
+        name=$6
+        touch "$d/profiles"
+        n=$(( $(wc -l < "$d/profiles") + 1 ))
+        u="bbbbbbbb-0000-0000-0000-00000000000$n"
+        printf '%s\t%s\tyes\tno\n' "$u" "$name" >> "$d/profiles"
+        echo "Connection '$name' ($u) successfully added." ;;
+    "connection|delete|uuid|"*)
+        awk -F "$tab" -v u="$4" '$1 != u' "$d/profiles" > "$d/.p" && mv "$d/.p" "$d/profiles"
+        echo "Connection deleted." ;;
+    "connection|down|uuid|"*)
+        : > "$d/down"
+        awk -F "$tab" -v OFS="$tab" -v u="$4" '$1 == u { $4 = "no" } 1' "$d/profiles" > "$d/.p" && mv "$d/.p" "$d/profiles" ;;
+    "connection|modify|uuid|"*) echo "modified" ;;
+    "device|disconnect|"*) echo "Device '$3' successfully disconnected." ;;
+    "radio|wifi|on|") echo enabled > "$d/radio" ;;
+    "radio|wifi|off|") echo disabled > "$d/radio" ;;
+    "monitor|") echo "NetworkManager is running"; exec sleep 30 ;;
+    "device|monitor|"*)
+        echo "$3: using connection"
+        echo "$3: connecting (prepare)"
+        echo "$3: connecting (configuring)"
+        echo "$3: connecting (need authentication)"   # the key fetch, every time
+        echo "$3: connecting (prepare)"
+        echo "$3: connecting (configuring)"
+        case $mode in
+            bad-password) echo "$3: connecting (need authentication)" ;;
+            ok|no-address) echo "$3: connecting (getting IP configuration)" ;;
+        esac
+        [ "$mode" = ok ] && echo "$3: connected"
+        exec sleep 30 ;;
+    "--wait|"*"|connection|up|uuid|"*)
+        u=$6
+        if has "passwd-file"; then cat > "$d/stdin"; fi
+        rm -f "$d/down"
+        sleep 0.3
+        # only the first activation goes the mode's way: the restore of the
+        # previous connection after it succeeds
+        [ -f "$d/upped" ] && mode=ok
+        : > "$d/upped"
+        case $mode in
+            ok)
+                awk -F "$tab" -v OFS="$tab" -v u="$u" '{ $4 = ($1 == u) ? "yes" : "no" } 1' "$d/profiles" > "$d/.p" \
+                    && mv "$d/.p" "$d/profiles"
+                echo "Connection successfully activated (D-Bus active path: /org/freedesktop/NetworkManager/ActiveConnection/9)"
+                exit 0 ;;
+            bad-password)
+                # loops on the refused key until "connection down"
+                i=0
+                while [ ! -f "$d/down" ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done
+                echo "Error: Connection activation failed: The base network connection was interrupted"
+                exit 4 ;;
+            no-address)
+                echo "Error: Connection activation failed: IP configuration could not be reserved (no available address, timeout, etc.)."
+                exit 4 ;;
+            timeout)
+                echo "Error: Timeout expired (60 seconds)"
+                exit 3 ;;
+        esac ;;
+    *) echo "fake-nmcli: unhandled: $joined" >&2; exit 2 ;;
+esac
+exit 0
