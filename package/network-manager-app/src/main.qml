@@ -56,11 +56,177 @@ Window {
         return true
     }
     readonly property bool shotReady: dataReady && (initialSheet === "" || sheetOpened)
+                                      && (initialSheet !== "probe-warning" || (!!wport && !!wired.probes[wport.name]
+                                                                               && wired.probes[wport.name].state === "done"))
 
     // A WiFi change runs: the app stays until it has finished or restored
     readonly property bool changing: wifi.busyState === "connecting" || wifi.busyState === "working"
-    onSectionChanged: wifi.setActive(section === "wifi")
-    Component.onCompleted: wifi.setActive(section === "wifi")
+    onSectionChanged: sectionHooks()
+    Component.onCompleted: sectionHooks()
+    function sectionHooks() {
+        wifi.setActive(section === "wifi")
+        wired.setActive(section === "wired")
+        status.setLeasesWanted(section === "overview" || section === "wired")
+    }
+
+    // ---- Wired: the selected port and the settings being edited ("draft")
+    property string wiredPort: ""
+    readonly property var wiredPorts: {
+        var out = [], list = status.interfaces
+        for (var i = 0; i < list.length; ++i) if (list[i].type === "ethernet") out.push(list[i])
+        return out
+    }
+    readonly property var wport: {
+        for (var i = 0; i < wiredPorts.length; ++i) if (wiredPorts[i].name === wiredPort) return wiredPorts[i]
+        return wiredPorts.length > 0 ? wiredPorts[0] : null
+    }
+    property var draft: ({ mode: "client", ip: "", prefix: "24", gateway: "", dns: "" })
+    property bool draftDirty: false
+    onWportChanged: if (wport && (!draftDirty || draft.iface !== wport.name) && wired.busyState !== "applying") resetDraft()
+
+    function currentMode(p) { return !p ? "client" : p.mode === "legacy-server" ? "server" : p.mode === "off" ? "client" : p.mode }
+    function resetDraft() {
+        var p = wport
+        if (!p) return
+        var m = currentMode(p)
+        draft = { iface: p.name, mode: m,
+                  ip: m === "client" ? (p.ip || "") : (p.cfgip || p.ip || ""),
+                  prefix: m === "client" ? (p.prefix || "24") : (p.cfgprefix || p.prefix || "24"),
+                  gateway: m === "static" ? (p.cfggateway || "") : (p.gateway || ""),
+                  dns: m === "static" ? (p.cfgdns || "") : (p.dns || "") }
+        draftDirty = false
+    }
+    function setDraft(key, value) {
+        var d = {}
+        for (var k in draft) d[k] = draft[k]
+        d[key] = value
+        draft = d
+        draftDirty = true
+    }
+    function setDraftMode(m) {
+        var p = wport
+        if (!p || draft.mode === m) return
+        var d = { iface: p.name, mode: m, ip: draft.ip, prefix: draft.prefix, gateway: draft.gateway, dns: draft.dns }
+        if (m === "server") {
+            d.ip = currentMode(p) === "server" && p.cfgip ? p.cfgip : suggestServerIp(p)
+            d.prefix = "24"; d.gateway = ""; d.dns = ""
+        } else if (m === "static") {
+            if (currentMode(p) === "static") { d.ip = p.cfgip; d.prefix = p.cfgprefix; d.gateway = p.cfggateway; d.dns = p.cfgdns }
+            else { d.ip = p.ip || ""; d.prefix = p.prefix || "24"; d.gateway = p.gateway || ""; d.dns = p.dns || "" }
+        }
+        draft = d
+        draftDirty = true
+    }
+
+    function ipNum(a) {
+        var p = String(a).split(".")
+        return ((parseInt(p[0]) * 256 + parseInt(p[1])) * 256 + parseInt(p[2])) * 256 + parseInt(p[3])
+    }
+    function ipOk(a) {
+        if (!/^[0-9]{1,3}(\.[0-9]{1,3}){3}$/.test(a)) return false
+        var p = a.split(".")
+        for (var i = 0; i < 4; ++i) if (parseInt(p[i]) > 255) return false
+        return true
+    }
+    function prefixOk(v) { return /^[0-9]{1,2}$/.test(v) && parseInt(v) >= 1 && parseInt(v) <= 30 }
+    function dnsOk(v) {
+        if (v === "") return true
+        var parts = v.split(",")
+        if (parts.length > 3) return false
+        for (var i = 0; i < parts.length; ++i) if (!ipOk(parts[i])) return false
+        return true
+    }
+    function maskText(prefix) {
+        var n = parseInt(prefix), out = []
+        for (var i = 0; i < 4; ++i) { var b = Math.max(0, Math.min(8, n - 8 * i)); out.push(256 - Math.pow(2, 8 - b)) }
+        return out.join(".")
+    }
+    function sameNet(a, pa, b, pb) {
+        var bits = Math.min(parseInt(pa), parseInt(pb)), div = Math.pow(2, 32 - bits)
+        return Math.floor(ipNum(a) / div) === Math.floor(ipNum(b) / div)
+    }
+    // Another interface whose subnet overlaps a.b.c.d/n (plan 4.3), or null
+    function overlapWith(iface, ip, prefix) {
+        var list = status.interfaces
+        for (var i = 0; i < list.length; ++i) {
+            var f = list[i]
+            if (f.name === iface || !f.ip || !f.prefix) continue
+            if (sameNet(ip, prefix, f.ip, f.prefix)) return f
+        }
+        return null
+    }
+    // 192.168.50.1 for the first serving port, .51.1 for the next (plan 4.3)
+    function suggestServerIp(p) {
+        for (var k = 50; k < 100; ++k) {
+            var ip = "192.168." + k + ".1", taken = overlapWith(p.name, ip, 24) !== null
+            for (var i = 0; i < wiredPorts.length && !taken; ++i) {
+                var o = wiredPorts[i]
+                if (o.name !== p.name && currentMode(o) === "server" && o.cfgip && sameNet(o.cfgip, 24, ip, 24)) taken = true
+            }
+            if (!taken) return ip
+        }
+        return "192.168.50.1"
+    }
+    readonly property string draftError: {
+        var d = draft, p = wport
+        if (!p || d.mode === "client") return ""
+        if (!ipOk(d.ip)) return "Enter the address, e.g. 192.168.50.1"
+        var last = parseInt(d.ip.split(".")[3])
+        if (last === 0 || last === 255) return d.ip + " is not a host address"
+        if (d.mode === "static") {
+            if (!prefixOk(d.prefix)) return "The prefix is 1 to 30"
+            if (d.gateway !== "" && !ipOk(d.gateway)) return "The gateway is not an address"
+            if (d.gateway !== "" && !sameNet(d.ip, d.prefix, d.gateway, d.prefix)) return "The gateway is not in " + d.ip + "/" + d.prefix
+            if (!dnsOk(d.dns)) return "DNS: up to three addresses, separated by commas"
+        }
+        if (d.mode === "server") {
+            var o = overlapWith(p.name, d.ip, 24)
+            if (o) return d.ip + "/24 overlaps " + o.name + "'s " + o.ip + "/" + o.prefix + ": choose another subnet"
+        }
+        return ""
+    }
+    readonly property bool draftChanged: {
+        var d = draft, p = wport
+        if (!p) return false
+        if (p.mode === "legacy-server") return true
+        var m = currentMode(p)
+        if (d.mode !== m) return true
+        if (m === "static") return d.ip !== p.cfgip || String(d.prefix) !== String(p.cfgprefix)
+                                   || d.gateway !== (p.cfggateway || "") || d.dns !== (p.cfgdns || "")
+        if (m === "server") return d.ip !== p.cfgip
+        return false
+    }
+    // The line above Apply: what happens, and the address that goes away
+    function whatHappens() {
+        var d = draft, p = wport
+        if (!p) return ""
+        if (!draftChanged) return "These are the settings " + p.name + " has. Nothing to apply."
+        var t
+        if (d.mode === "client") t = p.name + " gets its address from the network (DHCP client)."
+        else if (d.mode === "static") t = p.name + " uses the fixed address " + d.ip + "/" + d.prefix
+                                          + (d.gateway ? ", gateway " + d.gateway : ", no gateway") + "."
+        else t = p.name + " serves addresses " + d.ip.split(".").slice(0, 3).join(".") + ".10–254 as " + d.ip
+                 + " (one-hour leases, no gateway announced)."
+        if (p.mode === "legacy-server") t += " The panel menu's DHCP server on this port stops."
+        if (parseInt(p.carrier) !== 1) return t + " No cable: the settings are saved and used when one is plugged in."
+        if (p.ip && (d.mode === "client" || p.ip !== d.ip))
+            t += " This rig will no longer be reachable at " + p.ip + " on " + p.name + "."
+        if (p["default"] === "1" && (d.mode === "server" || (d.mode === "static" && !d.gateway)))
+            t += " It carries this rig's default route, which goes away."
+        return t
+    }
+    // WiFi: is this rig reached over WiFi? (report v1, 6.13)
+    readonly property string wifiReachNote: {
+        var w = wlan
+        if (!w || w.state !== "connected" || !w.ip) return ""
+        var others = 0, list = status.interfaces
+        for (var i = 0; i < list.length; ++i) if (list[i].name !== w.name && list[i].ip) ++others
+        if (summary.defaultdev === w.name)
+            return "This rig's default route uses WiFi (" + w.ip + "): Disconnect, Forget or WiFi off drop it."
+        if (others === 0)
+            return "WiFi is this rig's only address (" + w.ip + "): Disconnect, Forget or WiFi off cut it off."
+        return ""
+    }
 
     function withAlpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
     function rateText(bits) {
@@ -107,11 +273,15 @@ Window {
     // The role pill of an interface card: label and tint
     function role(f) {
         if (!f) return { label: "", tint: t.dim }
-        var internet = summary.internet === "yes" && f["default"] === "1"
+        // net-ctl.sh's own check per port (inet=yes|no); NetworkManager's word otherwise
+        var internet = f.inet === "yes" || (f.inet === "" && summary.internet === "yes" && f["default"] === "1")
+        var dead = f.inet === "no"
         if (f.type === "wifi") {
             if (radio !== "on") return { label: "Off", tint: t.dim }
             if (f.state === "connecting") return { label: "Connecting…", tint: t.info }
-            if (f.state === "connected") return internet ? { label: "Internet", tint: t.ok } : { label: "Connected", tint: t.info }
+            if (f.state === "connected") return internet ? { label: "Internet", tint: t.ok }
+                                              : dead ? { label: "Connected, no internet", tint: t.warn }
+                                              : { label: "Connected", tint: t.info }
             return { label: "Not connected", tint: t.dim }
         }
         if (carrierOf(f) !== 1) return { label: "No cable", tint: t.dim }
@@ -119,6 +289,7 @@ Window {
         if (f.state === "connecting") return { label: "Connecting…", tint: t.info }
         if (f.state === "connected") {
             if (internet) return { label: "Internet", tint: t.ok }
+            if (dead) return { label: "Connected, no internet", tint: t.warn }
             if (f.mode === "static") return { label: "Fixed address", tint: t.sub }
             return { label: "Connected", tint: t.info }
         }
@@ -215,6 +386,87 @@ Window {
             font.family: t.font; font.pixelSize: (parent.height < 70 * s ? 21 : 24) * s; font.weight: Font.DemiBold
         }
         MouseArea { id: btnArea; anchors.fill: parent; onClicked: parent.clicked() }
+    }
+
+    // Hold to confirm (1.5 s): a stray tap must not cut the rig off the network
+    component HoldButton: Rectangle {
+        id: hb
+        property string label
+        property color tint: t.accent
+        signal done()
+        height: 80 * s; radius: 22 * s
+        opacity: enabled ? 1 : 0.4
+        color: withAlpha(tint, 0.18)
+        border.color: tint; border.width: 2
+        clip: true
+        property real progress: 0
+        Rectangle {
+            width: parent.width * parent.progress; height: parent.height
+            radius: parent.radius
+            color: hb.tint
+        }
+        Text {
+            anchors.centerIn: parent
+            text: hbArea.pressed ? "Keep holding…" : hb.label
+            color: hb.progress > 0.5 ? "#081018" : t.text
+            font.family: t.font; font.pixelSize: 24 * s; font.weight: Font.Bold
+        }
+        NumberAnimation {
+            id: hbAnim
+            target: hb; property: "progress"
+            from: 0; to: 1; duration: 1500
+            onFinished: if (hb.progress >= 1) { hb.progress = 0; hb.done() }
+        }
+        MouseArea {
+            id: hbArea
+            anchors.fill: parent
+            enabled: hb.enabled
+            onPressed: hbAnim.restart()
+            onReleased: if (hb.progress < 1) { hbAnim.stop(); hb.progress = 0 }
+            onCanceled: { hbAnim.stop(); hb.progress = 0 }
+        }
+    }
+
+    // A tappable value of the Wired section: opens the numeric pad
+    component FieldTile: Rectangle {
+        id: ft
+        property string label
+        property string value
+        property string note
+        property bool editable: true
+        property bool bad: false
+        signal tapped()
+        height: 92 * s
+        radius: 16 * s
+        color: ftArea.pressed && editable ? t.cardPressed : editable ? "#101828" : "transparent"
+        border.color: bad ? withAlpha(t.bad, 0.8) : editable ? t.border : withAlpha(t.border, 0.6)
+        Column {
+            anchors.left: parent.left; anchors.leftMargin: 20 * s
+            anchors.right: parent.right; anchors.rightMargin: 16 * s
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: 4 * s
+            Text {
+                text: ft.label
+                color: t.sub
+                font.family: t.font; font.pixelSize: 15 * s; font.weight: Font.DemiBold; font.letterSpacing: 1 * s
+            }
+            Row {
+                spacing: 12 * s
+                Text {
+                    text: ft.value === "" ? (ft.editable ? "Tap to set" : "—") : ft.value
+                    color: ft.value === "" ? t.dim : t.text
+                    font.family: t.font; font.pixelSize: 24 * s; font.weight: Font.Medium
+                }
+                Text {
+                    anchors.baseline: parent.children[0].baseline
+                    visible: ft.note !== ""
+                    text: ft.note
+                    color: t.sub
+                    font.family: t.font; font.pixelSize: 17 * s
+                }
+            }
+        }
+        MouseArea { id: ftArea; anchors.fill: parent; enabled: ft.editable; onClicked: ft.tapped() }
     }
 
     // A switch without Quick Controls (the package needs none)
@@ -682,10 +934,10 @@ Window {
                     visible: !win.nmMissing
                     label: !status.loaded ? "Checking…"
                            : summary.internet === "yes" ? "Internet via " + summary.via
-                           : summary.internet === "unknown" && summary.via ? "Connected via " + summary.via
+                           : summary.internet === "unknown" && summary.defaultdev ? "Connected via " + summary.defaultdev
                            : "No internet"
                     tint: !status.loaded ? t.sub : summary.internet === "yes" ? t.ok
-                          : summary.internet === "unknown" && summary.via ? t.info : t.dim
+                          : summary.internet === "unknown" && summary.defaultdev ? t.info : t.dim
                 }
             }
         }
@@ -868,7 +1120,7 @@ Window {
                     // The connection now
                     Rectangle {
                         id: currentCard
-                        width: parent.width; height: 138 * s
+                        width: parent.width; height: (win.wifiReachNote !== "" && up ? 172 : 138) * s
                         radius: 18 * s
                         color: t.card; border.color: t.border
                         readonly property bool joining: wifi.busyState === "connecting"
@@ -915,6 +1167,14 @@ Window {
                                         : "Choose a network on the right."
                                 color: t.sub
                                 font.family: t.font; font.pixelSize: 19 * s
+                            }
+                            Text {
+                                width: parent.width
+                                visible: win.wifiReachNote !== "" && currentCard.up
+                                wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                                text: win.wifiReachNote
+                                color: t.warn
+                                font.family: t.font; font.pixelSize: 16 * s; font.weight: Font.DemiBold
                             }
                         }
                         ActionButton {
@@ -1185,15 +1445,458 @@ Window {
                 }
             }
 
-            // ==== Wired, Tools (later phases) ================================
+            // ==== Wired =====================================================
+            Item {
+                id: wiredSection
+                anchors.fill: parent
+                visible: win.section === "wired" && status.loaded && !win.nmMissing
+                readonly property var p: win.wport
+                readonly property bool applying: wired.busyState === "applying"
+                readonly property bool serving: !!p && (p.mode === "server" || p.mode === "legacy-server")
+                // Server mode asked for on a port that does not serve yet: probe (plan 4.3)
+                readonly property bool wantsProbe: !!p && win.draft.mode === "server" && !serving
+                readonly property bool holdsLease: !!p && p.mode === "client" && !!p.dhcpserver && p.state === "connected"
+                readonly property var probe: p ? (wired.probes[p.name] || null) : null
+                onWantsProbeChanged: maybeProbe()
+                onPChanged: maybeProbe()
+                function maybeProbe() {
+                    if (!visible || !p) return
+                    if (wantsProbe && parseInt(p.carrier) === 1 && !holdsLease && !probe) wired.probe(p.name)
+                    if (!wantsProbe && probe && !serving) wired.forgetProbe(p.name)
+                }
+                onVisibleChanged: maybeProbe()
+
+                EmptyState {
+                    anchors.fill: parent
+                    visible: win.wiredPorts.length === 0
+                    glyph: "info"; tint: t.sub
+                    title: "No wired port"
+                    detail: "NetworkManager lists no Ethernet port on this system."
+                }
+
+                // ---- left: the ports ------------------------------------------
+                Column {
+                    id: portList
+                    visible: win.wiredPorts.length > 0
+                    width: parent.width * 0.27
+                    spacing: 14 * s
+                    SectionLabel { text: "WIRED PORTS" }
+                    Repeater {
+                        model: win.wiredPorts
+                        Rectangle {
+                            id: portRow
+                            readonly property var f: modelData
+                            readonly property bool sel: win.wport && win.wport.name === f.name
+                            readonly property var r: role(f)
+                            width: portList.width; height: 112 * s
+                            radius: 16 * s
+                            color: prArea.pressed ? t.cardPressed : t.card
+                            border.color: sel ? withAlpha(t.accent, 0.8) : t.border
+                            border.width: sel ? 2 : 1
+                            Rectangle { width: 6 * s; height: parent.height; radius: 3 * s; color: portRow.r.tint }
+                            Column {
+                                anchors.left: parent.left; anchors.leftMargin: 24 * s
+                                anchors.right: parent.right; anchors.rightMargin: 16 * s
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 3 * s
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: portRow.f.friendly + "  ·  " + portRow.f.name
+                                    color: t.text
+                                    font.family: t.font; font.pixelSize: 21 * s; font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: modeText(portRow.f.mode)
+                                    color: t.sub
+                                    font.family: t.font; font.pixelSize: 17 * s
+                                }
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: parseInt(portRow.f.carrier) !== 1 ? "No cable"
+                                          : portRow.f.ip ? portRow.f.ip + "/" + portRow.f.prefix + "   ·   " + portRow.r.label
+                                          : portRow.r.label
+                                    color: parseInt(portRow.f.carrier) !== 1 ? t.dim : portRow.r.tint
+                                    font.family: t.font; font.pixelSize: 17 * s; font.weight: Font.Medium
+                                }
+                            }
+                            MouseArea {
+                                id: prArea
+                                anchors.fill: parent
+                                enabled: !wiredSection.applying
+                                onClicked: { win.wiredPort = portRow.f.name; win.resetDraft(); wired.clearOutcome() }
+                            }
+                        }
+                    }
+                }
+
+                // ---- right: the selected port --------------------------------------
+                Rectangle {
+                    id: portCard
+                    visible: !!wiredSection.p
+                    anchors.left: portList.right; anchors.leftMargin: 30 * s
+                    anchors.right: parent.right
+                    height: parent.height
+                    radius: 22 * s
+                    color: t.card
+                    border.color: t.border
+                    readonly property var p: wiredSection.p || ({})
+
+                    Item {
+                        anchors.fill: parent
+                        anchors.margins: 26 * s
+
+                        // title
+                        Rectangle {
+                            id: pcBadge
+                            width: 60 * s; height: width; radius: 18 * s
+                            color: withAlpha(role(portCard.p).tint, 0.16)
+                            border.color: withAlpha(role(portCard.p).tint, 0.45)
+                            Image {
+                                anchors.centerIn: parent
+                                width: parent.width * 0.6; height: width
+                                sourceSize: Qt.size(width, height)
+                                source: "qrc:/icons/ethernet.svg"
+                            }
+                        }
+                        Column {
+                            anchors.left: pcBadge.right; anchors.leftMargin: 18 * s
+                            anchors.right: pcPill.left; anchors.rightMargin: 14 * s
+                            anchors.verticalCenter: pcBadge.verticalCenter
+                            spacing: 2 * s
+                            Text {
+                                width: parent.width; elide: Text.ElideRight
+                                text: (portCard.p.friendly || "") + "  ·  " + (portCard.p.name || "")
+                                color: t.text
+                                font.family: t.font; font.pixelSize: 26 * s; font.weight: Font.DemiBold
+                            }
+                            Text {
+                                width: parent.width; elide: Text.ElideRight
+                                text: (portCard.p.mac || "")
+                                      + (portCard.p.speed && parseInt(portCard.p.carrier) === 1 ? "   ·   " + speedText(portCard.p.speed) : "")
+                                      + (portCard.p.saved === "1" ? "   ·   saved, bound to its " + (portCard.p.binding === "mac" ? "MAC" : "name")
+                                         : portCard.p.profileuuid ? "   ·   NetworkManager's automatic profile" : "   ·   no profile yet")
+                                color: t.sub
+                                font.family: t.font; font.pixelSize: 16 * s
+                            }
+                        }
+                        Pill {
+                            id: pcPill
+                            anchors.right: parent.right
+                            anchors.verticalCenter: pcBadge.verticalCenter
+                            label: portCard.p.mode === "legacy-server" ? "DHCP server (panel menu)"
+                                   : parseInt(portCard.p.carrier) !== 1 ? "No cable · " + modeText(portCard.p.mode)
+                                   : modeText(portCard.p.mode)
+                            tint: parseInt(portCard.p.carrier) !== 1 ? t.dim : role(portCard.p).tint
+                        }
+
+                        // the three modes
+                        Rectangle {
+                            id: modeSwitch
+                            anchors.top: pcBadge.bottom; anchors.topMargin: 16 * s
+                            width: parent.width; height: 60 * s
+                            radius: height / 2
+                            color: "#101828"
+                            border.color: t.border
+                            opacity: wiredSection.applying ? 0.5 : 1
+                            Row {
+                                x: 5 * s; anchors.verticalCenter: parent.verticalCenter
+                                Repeater {
+                                    model: [{ key: "client", label: "Automatic (DHCP client)" },
+                                            { key: "static", label: "Fixed address" },
+                                            { key: "server", label: "DHCP server" }]
+                                    Rectangle {
+                                        readonly property bool sel: win.draft.mode === modelData.key
+                                        width: (modeSwitch.width - 10 * s) / 3; height: modeSwitch.height - 10 * s
+                                        radius: height / 2
+                                        color: sel ? withAlpha(t.accent, 0.22) : "transparent"
+                                        border.color: sel ? withAlpha(t.accent, 0.7) : "transparent"
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: modelData.label
+                                            color: parent.sel ? t.text : t.sub
+                                            font.family: t.font; font.pixelSize: 20 * s; font.weight: Font.DemiBold
+                                        }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: !wiredSection.applying
+                                            onClicked: { win.setDraftMode(modelData.key); wired.clearOutcome() }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // the mode's fields
+                        Item {
+                            id: fieldsArea
+                            anchors.top: modeSwitch.bottom; anchors.topMargin: 16 * s
+                            width: parent.width; height: 92 * s
+                            readonly property real w4: (width - 3 * 14 * s) / 4
+
+                            Text {
+                                visible: win.draft.mode === "client"
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: parent.width
+                                wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                                text: "Gets its address, gateway and DNS from the network. "
+                                      + (parseInt(portCard.p.carrier) !== 1 ? "No cable at the moment."
+                                         : portCard.p.mode === "client" && portCard.p.ip
+                                           ? "Now: " + portCard.p.ip + "/" + portCard.p.prefix
+                                             + (portCard.p.dhcpserver ? " from " + portCard.p.dhcpserver : "")
+                                             + (portCard.p.leasetime ? ", lease " + durationText(portCard.p.leasetime) : "")
+                                             + (portCard.p.gateway ? ", gateway " + portCard.p.gateway : "")
+                                           : "")
+                                color: t.sub
+                                font.family: t.font; font.pixelSize: 20 * s
+                            }
+                            Row {
+                                visible: win.draft.mode === "static"
+                                spacing: 14 * s
+                                FieldTile {
+                                    width: fieldsArea.w4; label: "ADDRESS"; value: win.draft.ip
+                                    bad: !win.ipOk(win.draft.ip)
+                                    enabled: !wiredSection.applying
+                                    onTapped: sheet.openNumpad("ip")
+                                }
+                                FieldTile {
+                                    width: fieldsArea.w4; label: "PREFIX"
+                                    value: win.draft.prefix ? "/" + win.draft.prefix : ""
+                                    note: win.prefixOk(win.draft.prefix) ? win.maskText(win.draft.prefix) : ""
+                                    bad: !win.prefixOk(win.draft.prefix)
+                                    enabled: !wiredSection.applying
+                                    onTapped: sheet.openNumpad("prefix")
+                                }
+                                FieldTile {
+                                    width: fieldsArea.w4; label: "GATEWAY (OPTIONAL)"; value: win.draft.gateway
+                                    enabled: !wiredSection.applying
+                                    onTapped: sheet.openNumpad("gateway")
+                                }
+                                FieldTile {
+                                    width: fieldsArea.w4; label: "DNS (OPTIONAL)"; value: win.draft.dns.split(",").join("  ")
+                                    enabled: !wiredSection.applying
+                                    onTapped: sheet.openNumpad("dns")
+                                }
+                            }
+                            Row {
+                                visible: win.draft.mode === "server"
+                                spacing: 14 * s
+                                FieldTile {
+                                    width: fieldsArea.w4; label: "THIS RIG'S ADDRESS"; value: win.draft.ip
+                                    bad: win.draftError !== ""
+                                    enabled: !wiredSection.applying
+                                    onTapped: sheet.openNumpad("ip")
+                                }
+                                FieldTile { width: fieldsArea.w4; editable: false; label: "PREFIX"; value: "/24"; note: "255.255.255.0" }
+                                FieldTile {
+                                    width: fieldsArea.w4; editable: false; label: "ADDRESSES HANDED OUT"
+                                    value: win.ipOk(win.draft.ip) ? "." + "10 – .254" : ""
+                                    note: win.ipOk(win.draft.ip) ? win.draft.ip.split(".").slice(0, 3).join(".") + ".x" : ""
+                                }
+                                FieldTile { width: fieldsArea.w4; editable: false; label: "LEASES"; value: "1 hour"; note: "no gateway, no DNS" }
+                            }
+                        }
+
+                        // probe, lease table or the last outcome
+                        Item {
+                            id: infoArea
+                            anchors.top: fieldsArea.bottom; anchors.topMargin: 14 * s
+                            anchors.bottom: applyRow.top; anchors.bottomMargin: 14 * s
+                            width: parent.width
+                            readonly property var o: wired.outcome
+                            readonly property bool showOutcome: o.kind !== undefined && o.iface === portCard.p.name
+                            readonly property var pr: wiredSection.probe
+                            readonly property int found: pr && pr.state === "done" ? pr.servers.length : 0
+                            // which card: outcome | lease-held | no-cable | probing | found | none | leases | ""
+                            readonly property string what: showOutcome ? "outcome"
+                                : wiredSection.wantsProbe && wiredSection.holdsLease ? "lease-held"
+                                : wiredSection.wantsProbe && parseInt(portCard.p.carrier) !== 1 ? "no-cable"
+                                : pr && pr.state === "running" && (wiredSection.wantsProbe || wiredSection.serving) ? "probing"
+                                : pr && pr.state === "done" && found > 0 ? "found"
+                                : wiredSection.wantsProbe && pr && pr.state === "done" ? "none"
+                                : wiredSection.serving && win.draft.mode === "server" ? "leases"
+                                : ""
+                            readonly property color tone: what === "outcome" ? (o.kind === "ok" ? t.ok : o.kind === "error" ? t.bad : t.info)
+                                : what === "found" || what === "lease-held" ? t.bad
+                                : what === "none" ? t.ok
+                                : what === "no-cable" ? t.warn : t.info
+
+                            Rectangle {
+                                visible: infoArea.what !== "" && infoArea.what !== "leases"
+                                width: parent.width
+                                height: Math.min(parent.height, Math.max(76 * s, infoText.implicitHeight + 28 * s))
+                                radius: 16 * s
+                                color: withAlpha(infoArea.tone, infoArea.what === "found" || infoArea.what === "lease-held" ? 0.18 : 0.12)
+                                border.color: withAlpha(infoArea.tone, 0.6)
+                                Rectangle { width: 6 * s; height: parent.height; radius: 3 * s; color: infoArea.tone }
+                                Spinner {
+                                    id: infoSpin
+                                    visible: infoArea.what === "probing"
+                                    x: 26 * s; anchors.verticalCenter: parent.verticalCenter
+                                    width: 40 * s
+                                }
+                                Column {
+                                    id: infoText
+                                    anchors.left: parent.left; anchors.leftMargin: infoSpin.visible ? 84 * s : 28 * s
+                                    anchors.right: infoClose.visible ? infoClose.left : parent.right
+                                    anchors.rightMargin: 16 * s
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    spacing: 2 * s
+                                    Text {
+                                        width: parent.width; elide: Text.ElideRight
+                                        text: {
+                                            switch (infoArea.what) {
+                                            case "outcome": return infoArea.o.title
+                                            case "lease-held": return "Another DHCP server (" + portCard.p.dhcpserver + ") is already on this network"
+                                            case "no-cable": return "No cable: the port could not be checked"
+                                            case "probing": return "Checking for another DHCP server on " + portCard.p.name + "…"
+                                            case "found":
+                                                var names = []
+                                                for (var i = 0; i < infoArea.pr.servers.length; ++i) names.push(infoArea.pr.servers[i].server)
+                                                return (names.length === 1 ? "Another DHCP server (" + names[0] + ") is"
+                                                                           : "Other DHCP servers (" + names.join(", ") + ") are")
+                                                       + " already on this network"
+                                            case "none": return "No other DHCP server found on this port"
+                                            }
+                                            return ""
+                                        }
+                                        color: infoArea.tone
+                                        font.family: t.font; font.pixelSize: 22 * s; font.weight: Font.DemiBold
+                                    }
+                                    Text {
+                                        width: parent.width
+                                        wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                                        visible: text !== ""
+                                        text: {
+                                            switch (infoArea.what) {
+                                            case "outcome": return infoArea.o.detail
+                                            case "lease-held": return "This port holds a lease from it. Serving addresses here will disrupt other devices on it."
+                                            case "no-cable": return "Plug in the other end first, or apply and check when it is connected."
+                                            case "probing": return "One DHCP request, answers collected for about five seconds. Nothing is taken."
+                                            case "found": return wiredSection.serving ? "This port serves addresses on a network that has its own DHCP server: other devices on it may get the wrong address. Switch it to another mode."
+                                                                                      : "Serving addresses here will disrupt other devices on it. Hold to apply anyway."
+                                            case "none": return "Hold to apply."
+                                            }
+                                            return ""
+                                        }
+                                        color: t.text
+                                        font.family: t.font; font.pixelSize: 17 * s
+                                    }
+                                }
+                                CloseButton {
+                                    id: infoClose
+                                    visible: infoArea.what === "outcome"
+                                    width: 48 * s
+                                    anchors.right: parent.right; anchors.rightMargin: 14 * s
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    onClicked: wired.clearOutcome()
+                                }
+                            }
+
+                            // the lease table of a serving port
+                            Item {
+                                visible: infoArea.what === "leases"
+                                anchors.fill: parent
+                                readonly property var rows: wired.leases[portCard.p.name] || []
+                                Row {
+                                    id: leaseHead
+                                    spacing: 0
+                                    Repeater {
+                                        model: [{ t: "ADDRESS", w: 0.25 }, { t: "MAC", w: 0.3 }, { t: "HOST NAME", w: 0.27 }, { t: "LEASE ENDS", w: 0.18 }]
+                                        Text {
+                                            width: infoArea.width * modelData.w
+                                            text: modelData.t
+                                            color: t.sub
+                                            font.family: t.font; font.pixelSize: 14 * s; font.weight: Font.DemiBold; font.letterSpacing: 1 * s
+                                        }
+                                    }
+                                }
+                                ListView {
+                                    anchors.top: leaseHead.bottom; anchors.topMargin: 8 * s
+                                    anchors.bottom: parent.bottom
+                                    width: parent.width
+                                    clip: true
+                                    boundsBehavior: Flickable.StopAtBounds
+                                    model: parent.rows
+                                    delegate: Row {
+                                        height: 34 * s
+                                        Repeater {
+                                            model: [{ v: modelData.ip, w: 0.25 }, { v: modelData.mac, w: 0.3 },
+                                                    { v: modelData.host || "—", w: 0.27 },
+                                                    { v: Qt.formatTime(new Date(parseInt(modelData.expires) * 1000), "HH:mm"), w: 0.18 }]
+                                            Text {
+                                                width: infoArea.width * modelData.w
+                                                elide: Text.ElideRight
+                                                text: modelData.v
+                                                color: t.text
+                                                font.family: t.font; font.pixelSize: 18 * s
+                                            }
+                                        }
+                                    }
+                                    Text {
+                                        visible: parent.count === 0
+                                        text: "No client has an address from this port yet."
+                                        color: t.dim
+                                        font.family: t.font; font.pixelSize: 18 * s
+                                    }
+                                }
+                            }
+                        }
+
+                        // what will happen, and Apply
+                        Item {
+                            id: applyRow
+                            anchors.bottom: parent.bottom
+                            width: parent.width; height: 80 * s
+                            Text {
+                                anchors.left: parent.left
+                                anchors.right: applyButton.left; anchors.rightMargin: 24 * s
+                                anchors.verticalCenter: parent.verticalCenter
+                                wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight
+                                text: wiredSection.applying
+                                      ? (wired.phase === "checking" ? "Checking that " + wired.applyingIface + " works…"
+                                         : "Applying to " + wired.applyingIface + "… The previous settings come back if the new ones do not work.")
+                                      : win.draftError !== "" ? win.draftError : win.whatHappens()
+                                color: wiredSection.applying ? t.info : win.draftError !== "" ? t.bad
+                                       : win.draftChanged ? t.text : t.sub
+                                font.family: t.font; font.pixelSize: 18 * s
+                            }
+                            HoldButton {
+                                id: applyButton
+                                anchors.right: parent.right
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 340 * s
+                                readonly property bool risky: win.draftChanged
+                                                              && (infoArea.what === "found" || infoArea.what === "lease-held")
+                                tint: risky ? t.bad : t.accent
+                                label: wiredSection.applying ? "" : wired.dryRun ? "Hold to apply (dry run)"
+                                       : risky ? "Hold to apply anyway" : "Hold to apply"
+                                enabled: win.draftChanged && win.draftError === "" && !wiredSection.applying
+                                         && infoArea.what !== "probing"
+                                onDone: wired.apply(portCard.p.name, win.draft.mode, win.draft.ip, String(win.draft.prefix),
+                                                    win.draft.gateway, win.draft.dns)
+                                Spinner {
+                                    visible: wiredSection.applying
+                                    anchors.centerIn: parent
+                                    width: 44 * s
+                                }
+                            }
+                        }
+                    }
+                }
+                Connections {
+                    target: wired
+                    function onBusyChanged() { if (wired.busyState === "idle" && wired.outcome.kind === "ok") win.draftDirty = false }
+                }
+            }
+
+            // ==== Tools (a later phase) ======================================
             EmptyState {
                 anchors.fill: parent
-                visible: (win.section === "wired" || win.section === "tools") && status.loaded && !win.nmMissing
+                visible: win.section === "tools" && status.loaded && !win.nmMissing
                 glyph: "info"; tint: t.sub
-                title: win.section === "wired" ? "Wired port settings" : "Network tools"
-                detail: "Coming in a later version. "
-                        + (win.section === "wired" ? "The Overview shows each port's address and traffic now."
-                                                   : "Ping, internet check and iperf3 will be here.")
+                title: "Network tools"
+                detail: "Coming in a later version. Ping, internet check and iperf3 will be here."
             }
         }
     }
@@ -1202,7 +1905,7 @@ Window {
     Item {
         id: sheet
         anchors.fill: parent
-        // "" | detail | password | hidden
+        // "" | detail | password | hidden | numpad
         property string mode: ""
         property string detailName: ""
         property string ssid: ""
@@ -1239,6 +1942,39 @@ Window {
             mode = "hidden"
             hiddenName.forceActiveFocus()
         }
+        // ---- numeric pad: one field of the Wired draft at a time
+        property string numField: "ip"
+        readonly property var numFields: win.draft.mode === "server" ? ["ip"] : ["ip", "prefix", "gateway", "dns"]
+        readonly property var numLabels: ({ ip: "Address", prefix: "Prefix", gateway: "Gateway (optional)",
+                                            dns: "DNS servers (optional, up to three, separated by commas)" })
+        readonly property bool numValid: {
+            var v = numInput.text
+            switch (numField) {
+            case "ip": return win.ipOk(v)
+            case "prefix": return win.prefixOk(v)
+            case "gateway": return v === "" || win.ipOk(v)
+            case "dns": return win.dnsOk(v)
+            }
+            return false
+        }
+        readonly property bool numLast: numFields.indexOf(numField) === numFields.length - 1
+        function openNumpad(field) {
+            numField = field
+            numInput.text = String(win.draft[field] || "")
+            numInput.cursorPosition = numInput.text.length
+            mode = "numpad"
+            numInput.forceActiveFocus()
+        }
+        function numSave() { if (numValid) win.setDraft(numField, numInput.text) }
+        function numNext() {
+            if (!numValid) return
+            numSave()
+            var i = numFields.indexOf(numField)
+            if (i + 1 < numFields.length) openNumpad(numFields[i + 1])
+            else close()
+        }
+        function numDone() { if (numValid) { numSave(); close() } }
+
         readonly property Item editing: mode === "password" ? passwordInput
                                       : mode === "hidden" ? (hiddenPassword.activeFocus ? hiddenPassword : hiddenName)
                                       : null
@@ -1287,6 +2023,7 @@ Window {
             id: panel
             width: parent.width
             readonly property real wanted: sheet.mode === "detail" ? detailBody.height
+                                          : sheet.mode === "numpad" ? numBar.height + numPad.height
                                           : fieldBar.height + keyboard.height
             height: wanted
             y: sheet.mode !== "" ? parent.height - height : parent.height
@@ -1345,7 +2082,11 @@ Window {
                             anchors.verticalCenter: parent.verticalCenter
                             height: 60 * s
                             label: detailBody.f.type === "wifi" ? "WiFi settings" : "Wired settings"
-                            onClicked: { win.section = detailBody.f.type === "wifi" ? "wifi" : "wired"; sheet.close() }
+                            onClicked: {
+                                if (detailBody.f.type !== "wifi") { win.wiredPort = detailBody.f.name; win.resetDraft() }
+                                win.section = detailBody.f.type === "wifi" ? "wifi" : "wired"
+                                sheet.close()
+                            }
                         }
                         CloseButton { anchors.verticalCenter: parent.verticalCenter; onClicked: sheet.close() }
                     }
@@ -1540,6 +2281,102 @@ Window {
                 }
             }
 
+            // ---- the numeric pad's field, just above it
+            Item {
+                id: numBar
+                visible: sheet.mode === "numpad"
+                width: parent.width
+                height: 118 * s
+                Item {
+                    anchors.fill: parent
+                    anchors.leftMargin: 40 * s; anchors.rightMargin: 40 * s
+                    Column {
+                        anchors.left: parent.left
+                        anchors.right: numFieldBox.left; anchors.rightMargin: 24 * s
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 4 * s
+                        Text {
+                            width: parent.width; elide: Text.ElideRight
+                            text: (win.wport ? win.wport.name + "  ·  " : "") + (win.draft.mode === "server" ? "DHCP server" : "Fixed address")
+                            color: t.sub
+                            font.family: t.font; font.pixelSize: 17 * s
+                        }
+                        Text {
+                            width: parent.width
+                            wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                            text: sheet.numLabels[sheet.numField] || ""
+                            color: t.text
+                            font.family: t.font; font.pixelSize: 24 * s; font.weight: Font.DemiBold
+                        }
+                    }
+                    Rectangle {
+                        id: numFieldBox
+                        anchors.right: numButtons.left; anchors.rightMargin: 24 * s
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 560 * s; height: 66 * s
+                        radius: 14 * s
+                        color: "#101828"
+                        border.color: sheet.numValid ? t.accent : withAlpha(t.bad, 0.8)
+                        border.width: 2
+                        TextInput {
+                            id: numInput
+                            anchors.fill: parent
+                            anchors.leftMargin: 20 * s; anchors.rightMargin: 150 * s
+                            verticalAlignment: TextInput.AlignVCenter
+                            color: t.text
+                            selectionColor: withAlpha(t.accent, 0.5)
+                            font.family: t.font; font.pixelSize: 28 * s
+                            clip: true
+                            maximumLength: sheet.numField === "dns" ? 47 : 15
+                            // digits, dots and (for DNS) commas only: a USB keyboard types here too
+                            validator: RegExpValidator { regExp: sheet.numField === "dns" ? /[0-9.,]*/ : /[0-9.]*/ }
+                            inputMethodHints: Qt.ImhFormattedNumbersOnly
+                            Keys.onEscapePressed: sheet.close()
+                            Keys.onReturnPressed: sheet.numLast ? sheet.numDone() : sheet.numNext()
+                            Keys.onEnterPressed: sheet.numLast ? sheet.numDone() : sheet.numNext()
+                            Keys.onTabPressed: sheet.numNext()
+                        }
+                        Text {
+                            anchors.right: parent.right; anchors.rightMargin: 20 * s
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: sheet.numField === "prefix" && win.prefixOk(numInput.text) ? win.maskText(numInput.text)
+                                  : sheet.numValid ? "" : (numInput.text === "" ? "needed" : "not valid")
+                            color: sheet.numValid ? t.sub : t.bad
+                            font.family: t.font; font.pixelSize: 18 * s
+                        }
+                        MouseArea { anchors.fill: parent; onPressed: { numInput.forceActiveFocus(); mouse.accepted = false } }
+                    }
+                    Row {
+                        id: numButtons
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 16 * s
+                        ActionButton { height: 66 * s; width: 150 * s; label: "Cancel"; onClicked: sheet.close() }
+                        ActionButton {
+                            height: 66 * s; width: 150 * s
+                            primary: true
+                            enabled: sheet.numValid
+                            label: "Done"
+                            onClicked: sheet.numDone()
+                        }
+                    }
+                }
+            }
+            NumPad {
+                id: numPad
+                visible: numBar.visible
+                anchors.top: numBar.bottom
+                width: parent.width
+                s: win.s
+                theme: t
+                target: sheet.mode === "numpad" ? numInput : null
+                listAllowed: sheet.numField === "dns"
+                nextEnabled: sheet.numValid && !sheet.numLast
+                doneEnabled: sheet.numValid
+                onNext: sheet.numNext()
+                onDone: sheet.numDone()
+            }
+
             Keyboard {
                 id: keyboard
                 visible: fieldBar.visible
@@ -1590,6 +2427,19 @@ Window {
             sheet.openHidden(false)
             hiddenName.text = "Bench-Hidden"
             if (parts[1]) keyboard.keyLayer = parts[1]
+        } else if (parts[0].indexOf("apply-") === 0) {
+            // an Apply as if held (screenshots of the applying and outcome states)
+            if (parts[1]) win.wiredPort = parts[1]
+            win.resetDraft()
+            win.setDraftMode(parts[0].substring(6))
+            wired.apply(win.wport.name, win.draft.mode, win.draft.ip, String(win.draft.prefix), win.draft.gateway, win.draft.dns)
+        } else if (parts[0].indexOf("wired-") === 0 || parts[0] === "numpad" || parts[0] === "probe-warning") {
+            // the Wired section with a mode chosen (and the pad open)
+            if (parts[0].indexOf("wired-") === 0 && parts[1]) win.wiredPort = parts[1]
+            win.resetDraft()
+            var m = parts[0] === "numpad" ? "static" : parts[0] === "probe-warning" ? "server" : parts[0].substring(6)
+            win.setDraftMode(m)
+            if (parts[0] === "numpad") sheet.openNumpad(parts[1] || "ip")
         }
         sheetOpened = true
     }

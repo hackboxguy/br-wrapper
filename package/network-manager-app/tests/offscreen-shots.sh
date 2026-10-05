@@ -13,7 +13,7 @@ work=$(mktemp -d)
 mkdir -p "$out"
 
 # Fake counters: eth0, wlan0, eth1, eth2
-for i in eth0 wlan0 eth1 eth2; do
+for i in eth0 wlan0 eth1 eth2 eth3; do
     mkdir -p "$work/sys/$i/statistics"
     for c in rx_bytes tx_bytes rx_packets tx_packets; do echo 1000 > "$work/sys/$i/statistics/$c"; done
     for c in rx_errors tx_errors rx_dropped tx_dropped; do echo 0 > "$work/sys/$i/statistics/$c"; done
@@ -86,4 +86,32 @@ FAKE_NET_STEP=0.1 shot wifi-fail-no-address connect-no-address --section wifi --
 FAKE_NET_STEP=0.1 shot wifi-fail-timeout connect-timeout --section wifi --auto-connect Lab-Bench --screenshot-delay 2500
 # An enterprise network: listed dimmed, refused with a reason
 shot wifi-unsupported online-serving --section wifi --auto-connect "Corp Wireless" --screenshot-delay 1500
+# WiFi carries the default route: Disconnect, Forget and WiFi off say what they cut
+echo 0 > "$work/sys/eth0/carrier"
+shot wifi-reach-note wifi-default --section wifi --screenshot-delay 1500
+echo 1 > "$work/sys/eth0/carrier"
+
+# Round two: a dead uplink (A2), the Wired section (Phase 3)
+shot overview-dead-uplink dead-uplink
+shot wired-client online-serving --section wired --screenshot-delay 1000
+shot wired-serving online-serving --section wired --open-sheet wired-server:eth1 --screenshot-delay 1500
+shot wired-static wired-static --section wired --screenshot-delay 1000
+shot wired-static-edit online-serving --section wired --open-sheet wired-static --screenshot-delay 1000
+shot wired-server-draft probe-none --section wired --open-sheet wired-server --screenshot-delay 1000
+shot wired-usb-unplugged wired-static --section wired --open-sheet wired-client:eth2 --screenshot-delay 1000
+shot wired-numpad-ip wired-static --section wired --open-sheet numpad:ip --screenshot-delay 1000
+shot wired-numpad-prefix wired-static --section wired --open-sheet numpad:prefix --screenshot-delay 1000
+shot wired-numpad-dns wired-static --section wired --open-sheet numpad:dns --screenshot-delay 1000
+FAKE_NET_STEP=0.3 shot wired-probe-running probe-found --section wired --open-sheet wired-server --screenshot-delay 100
+FAKE_NET_STEP=0.1 shot wired-probe-found probe-found --section wired --open-sheet probe-warning --screenshot-delay 800
+FAKE_NET_STEP=0.1 shot wired-probe-none probe-none --section wired --open-sheet probe-warning --screenshot-delay 800
+echo 0 > "$work/sys/eth0/carrier"
+shot wired-probe-no-cable probe-no-cable --section wired --open-sheet wired-server:eth0 --screenshot-delay 1000
+echo 1 > "$work/sys/eth0/carrier"
+shot wired-lease-held online-serving --section wired --open-sheet wired-server:eth0 --screenshot-delay 1000
+shot wired-legacy-server legacy-server --section wired --screenshot-delay 1000
+shot wired-legacy-takeover legacy-server --section wired --open-sheet wired-client:eth0 --screenshot-delay 1000
+FAKE_NET_STEP=2 shot wired-applying wired-static --section wired --open-sheet apply-client --screenshot-delay 2500
+FAKE_NET_STEP=0.1 shot wired-applied wired-static --section wired --open-sheet apply-client --screenshot-delay 2000
+FAKE_NET_STEP=0.1 shot wired-apply-failed wired-fail --section wired --open-sheet apply-static:eth1 --screenshot-delay 2000
 ls -1 "$out"

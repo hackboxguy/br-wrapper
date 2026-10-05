@@ -2,6 +2,7 @@
 
 #include <QDateTime>
 #include <QFile>
+#include <QProcessEnvironment>
 #include <QRegularExpression>
 #include <QTextStream>
 #include <QDebug>
@@ -103,7 +104,14 @@ NetTool::~NetTool()
 {
     if (m_process && m_process->state() != QProcess::NotRunning) {
         m_stopping = true;
-        if (quietCommand(m_command) || m_command == "monitor") {
+        if (m_detached) {
+            // A change that runs as its own systemd unit (rule 6a): the client
+            // (sudo, systemd-run) goes; the unit finishes or restores alone.
+            // SIGKILL, not SIGTERM: sudo would relay a SIGTERM to systemd-run
+            log(m_command + " runs on as its own unit");
+            m_process->kill();
+            m_process->waitForFinished(1000);
+        } else if (quietCommand(m_command) || m_command == "monitor") {
             m_process->terminate();
             if (!m_process->waitForFinished(1000)) m_process->kill();
             m_process->waitForFinished(1000);
@@ -139,12 +147,18 @@ void NetTool::run(const QStringList &args, bool elevated, const QByteArray &stdi
     }
     m_pending.clear();
     m_stopping = false;
+    m_detached = false;
     m_command = args.value(0);
 
     QString program = m_tool;
     QStringList fullArgs = args;
     if (elevated && !m_dryRun && ::geteuid() != 0) {
         fullArgs.prepend(program);
+        // sudo resets the environment: the script's NET_CTL_* settings (test
+        // seams such as NET_CTL_INCLUDE_VETH) go along as VAR=value
+        for (const QString &kv : QProcessEnvironment::systemEnvironment().toStringList()) {
+            if (kv.startsWith("NET_CTL_")) fullArgs.prepend(kv);
+        }
         fullArgs.prepend("-n");
         program = "sudo";
     }
@@ -200,6 +214,7 @@ void NetTool::handle(const QString &raw)
         emit progress(line.fields);
         break;
     case Line::Notice:
+        if (line.text == "detached") m_detached = true;
         if (line.text != "changed") log(raw.trimmed());
         emit notice(line.text);
         break;

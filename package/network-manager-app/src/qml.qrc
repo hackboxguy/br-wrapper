@@ -2,6 +2,7 @@
     <qresource prefix="/">
         <file>main.qml</file>
         <file>Keyboard.qml</file>
+        <file>NumPad.qml</file>
         <file>icons/wifi.svg</file>
         <file>icons/ethernet.svg</file>
         <file>icons/lock.svg</file>

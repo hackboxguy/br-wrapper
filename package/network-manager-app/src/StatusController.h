@@ -59,6 +59,9 @@ public:
     Q_INVOKABLE void start();
     Q_INVOKABLE void refresh();
     Q_INVOKABLE QVariantMap iface(const QString &name) const;
+    // Lease counts need a sudo run per serving port: only while a section
+    // that shows them (Overview, Wired) is on screen
+    Q_INVOKABLE void setLeasesWanted(bool wanted);
 
     // Friendly names for the cards: "WiFi", "Ethernet", "USB adapter (ASIX)"
     static QString friendlyName(const QVariantMap &iface);
@@ -93,6 +96,7 @@ private:
     bool m_loaded = false;
     bool m_refreshPending = false;
     bool m_sampleAfter = false;
+    bool m_leasesWanted = true;
     QVariantList m_interfaces;
     QVariantList m_collecting;
     QVariantMap m_summary;

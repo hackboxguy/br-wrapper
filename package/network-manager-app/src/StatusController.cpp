@@ -61,6 +61,13 @@ void StatusController::refresh()
     m_tool->run({"status"});
 }
 
+void StatusController::setLeasesWanted(bool wanted)
+{
+    if (m_leasesWanted == wanted) return;
+    m_leasesWanted = wanted;
+    if (wanted) refresh();
+}
+
 QVariantMap StatusController::iface(const QString &name) const
 {
     for (const QVariant &v : m_interfaces) {
@@ -153,7 +160,7 @@ void StatusController::onStatusFinished(int exitCode)
             for (auto it = m_clients.begin(); it != m_clients.end();) {
                 if (!serving.contains(it.key())) it = m_clients.erase(it); else ++it;
             }
-            m_leaseQueue = serving;
+            if (m_leasesWanted) m_leaseQueue = serving;
             m_sampleAfter = true;
         } else if (exitCode == 4) {
             m_available = false;

@@ -3,9 +3,12 @@
 # scenario, no NetworkManager, no root, no network.
 #
 #   FAKE_NET_SCENARIO  online-serving (default) | offline | usb-adapter | no-nm |
-#                      wifi-blocked | wifi-absent | connect-ok | connect-bad-password |
-#                      connect-not-found | connect-no-address | connect-timeout
-#   FAKE_NET_STEP      seconds between PROGRESS lines of a join (default 0.4)
+#                      wifi-blocked | wifi-absent | wifi-default | dead-uplink |
+#                      connect-ok | connect-bad-password | connect-not-found |
+#                      connect-no-address | connect-timeout |
+#                      wired-static | probe-found | probe-none | probe-no-cable |
+#                      legacy-server | wired-fail
+#   FAKE_NET_STEP      seconds between PROGRESS lines of a change (default 0.4)
 #
 # Values are percent-encoded as net-ctl.sh encodes them. The app runs this
 # script without sudo in a dry run, and fake-net-ctl ignores --dry-run: the
@@ -21,40 +24,63 @@ if [ "$scenario" = no-nm ]; then
     esac
 fi
 
-eth0_up='RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected profile=Wired%20connection%201 mode=client ip=192.168.1.170 prefix=24 gateway=192.168.1.1 dns=192.168.1.1 ssid= signal= band= default=1 driver=bcmgenet product= ip6=fdac:d87e:4f12::538/128,fe80::76f9:b550:2848:fea0/64 dhcpserver=192.168.1.1 leasetime=86400 leaseexpiry='
-eth0_nocable='RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=0 speed= state=unavailable profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=bcmgenet product= ip6= dhcpserver= leasetime= leaseexpiry='
-eth0_lan='RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected profile=Wired%20connection%201 mode=client ip=192.168.1.170 prefix=24 gateway=192.168.1.1 dns=192.168.1.1 ssid= signal= band= default=0 driver=bcmgenet product= ip6=fe80::76f9:b550:2848:fea0/64 dhcpserver=192.168.1.1 leasetime=86400 leaseexpiry='
-wlan_on='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=1 speed= state=connected profile=Workshop mode=client ip=192.168.20.138 prefix=24 gateway=192.168.20.1 dns=192.168.20.1 ssid=Workshop signal=71 band=5 default=0 driver=brcmfmac product= ip6=fe80::4eef:9377:8662:a1bc/64 dhcpserver=192.168.20.1 leasetime=43200 leaseexpiry='
-wlan_idle='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=0 speed= state=disconnected profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=brcmfmac product= ip6= dhcpserver= leasetime= leaseexpiry='
-wlan_off='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=0 speed= state=unavailable profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=brcmfmac product= ip6= dhcpserver= leasetime= leaseexpiry='
-eth1_serving='RESULT kind=iface name=eth1 type=ethernet usb=1 mac=00:0E:C6:A1:B2:C3 carrier=1 speed=100 state=connected profile=eth1 mode=server ip=192.168.50.1 prefix=24 gateway= dns= ssid= signal= band= default=0 driver=asix product=AX88772B ip6= dhcpserver= leasetime= leaseexpiry='
-eth1_uplink='RESULT kind=iface name=eth1 type=ethernet usb=1 mac=00:E0:4C:68:00:12 carrier=1 speed=1000 state=connected profile=Wired%20connection%202 mode=client ip=10.0.0.57 prefix=24 gateway=10.0.0.1 dns=10.0.0.1 ssid= signal= band= default=1 driver=r8152 product=USB%2010/100/1000%20LAN ip6= dhcpserver=10.0.0.1 leasetime=3600 leaseexpiry='
-eth2_nocable='RESULT kind=iface name=eth2 type=ethernet usb=1 mac=00:0E:C6:11:22:33 carrier=0 speed= state=unavailable profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=ax88179_178a product=AX88179 ip6= dhcpserver= leasetime= leaseexpiry='
+# The fields after the round-two additions; "cfg" is the profile that is (or
+# would be) active on the port
+cfg() { # <profile uuid> <profile name> <saved> <binding> <ip> <prefix> <gateway> <dns>
+    printf 'profileuuid=%s cfgprofile=%s saved=%s binding=%s cfgip=%s cfgprefix=%s cfggateway=%s cfgdns=%s' "$@"
+}
+W1=$(cfg 6a787e8b-9525-3f87-acef-5559ddfc8258 Wired%20connection%201 0 name '' '' '' '')
+W2=$(cfg f3d397f2-484d-3505-97c2-d373aede5a20 Wired%20connection%202 0 name '' '' '' '')
+
+eth0_up="RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected profile=Wired%20connection%201 mode=client ip=192.168.1.170 prefix=24 gateway=192.168.1.1 dns=192.168.1.1 ssid= signal= band= default=1 driver=bcmgenet product= ip6=fdac:d87e:4f12::538/128,fe80::76f9:b550:2848:fea0/64 dhcpserver=192.168.1.1 leasetime=86400 leaseexpiry= inet=yes $W1"
+eth0_up2="RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected profile=Wired%20connection%201 mode=client ip=192.168.1.170 prefix=24 gateway=192.168.1.1 dns=192.168.1.1 ssid= signal= band= default=0 driver=bcmgenet product= ip6=fe80::76f9:b550:2848:fea0/64 dhcpserver=192.168.1.1 leasetime=86400 leaseexpiry= inet=yes $W1"
+eth0_nocable="RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=0 speed= state=unavailable profile= mode=client ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=bcmgenet product= ip6= dhcpserver= leasetime= leaseexpiry= inet= $W1"
+eth0_lan="RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected profile=Wired%20connection%201 mode=client ip=192.168.1.170 prefix=24 gateway=192.168.1.1 dns=192.168.1.1 ssid= signal= band= default=0 driver=bcmgenet product= ip6=fe80::76f9:b550:2848:fea0/64 dhcpserver=192.168.1.1 leasetime=86400 leaseexpiry= inet=no $W1"
+eth0_static="RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected profile=eth0 mode=static ip=192.168.1.170 prefix=24 gateway=192.168.1.1 dns=192.168.1.1 ssid= signal= band= default=1 driver=bcmgenet product= ip6=fe80::76f9:b550:2848:fea0/64 dhcpserver= leasetime= leaseexpiry= inet=yes $(cfg 0d1e2f30-0000-4000-8000-000000000001 eth0 1 name 192.168.1.170 24 192.168.1.1 192.168.1.1)"
+eth0_legacy="RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected profile=eth0 mode=legacy-server ip=192.168.60.1 prefix=24 gateway= dns= ssid= signal= band= default=0 driver=bcmgenet product= ip6= dhcpserver= leasetime= leaseexpiry= inet= $(cfg 0d1e2f30-0000-4000-8000-000000000001 eth0 1 name 192.168.60.1 24 '' '')"
+wlan_on='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=1 speed= state=connected profile=Workshop mode=client ip=192.168.20.138 prefix=24 gateway=192.168.20.1 dns=192.168.20.1 ssid=Workshop signal=71 band=5 default=0 driver=brcmfmac product= ip6=fe80::4eef:9377:8662:a1bc/64 dhcpserver=192.168.20.1 leasetime=43200 leaseexpiry= inet=yes'
+wlan_default='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=1 speed= state=connected profile=Workshop mode=client ip=192.168.20.138 prefix=24 gateway=192.168.20.1 dns=192.168.20.1 ssid=Workshop signal=71 band=5 default=1 driver=brcmfmac product= ip6=fe80::4eef:9377:8662:a1bc/64 dhcpserver=192.168.20.1 leasetime=43200 leaseexpiry= inet=yes'
+wlan_idle='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=0 speed= state=disconnected profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=brcmfmac product= ip6= dhcpserver= leasetime= leaseexpiry= inet='
+wlan_off='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=0 speed= state=unavailable profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=brcmfmac product= ip6= dhcpserver= leasetime= leaseexpiry= inet='
+eth1_serving="RESULT kind=iface name=eth1 type=ethernet usb=1 mac=00:0E:C6:A1:B2:C3 carrier=1 speed=100 state=connected profile=USB%20adapter%2000:0E:C6:A1:B2:C3 mode=server ip=192.168.50.1 prefix=24 gateway= dns= ssid= signal= band= default=0 driver=asix product=AX88772B ip6= dhcpserver= leasetime= leaseexpiry= inet= $(cfg 1a2b3c4d-0000-4000-8000-000000000002 USB%20adapter%2000:0E:C6:A1:B2:C3 1 mac 192.168.50.1 24 '' '')"
+eth1_uplink="RESULT kind=iface name=eth1 type=ethernet usb=1 mac=00:E0:4C:68:00:12 carrier=1 speed=1000 state=connected profile=Wired%20connection%202 mode=client ip=10.0.0.57 prefix=24 gateway=10.0.0.1 dns=10.0.0.1 ssid= signal= band= default=1 driver=r8152 product=USB%2010/100/1000%20LAN ip6= dhcpserver=10.0.0.1 leasetime=3600 leaseexpiry= inet=yes $W2"
+eth1_dead="RESULT kind=iface name=eth1 type=ethernet usb=1 mac=00:E0:4C:69:B1:0E carrier=1 speed=1000 state=connected profile=Wired%20connection%202 mode=client ip=192.168.20.164 prefix=24 gateway=192.168.20.1 dns=192.168.20.1 ssid= signal= band= default=1 driver=r8152 product=USB%2010/100/1000%20LAN ip6= dhcpserver=192.168.20.1 leasetime=43200 leaseexpiry= inet=no $W2"
+eth2_nocable="RESULT kind=iface name=eth2 type=ethernet usb=1 mac=00:0E:C6:11:22:33 carrier=0 speed= state=unavailable profile= mode=client ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=ax88179_178a product=AX88179 ip6= dhcpserver= leasetime= leaseexpiry= inet= $(cfg 5e6f7a8b-0000-4000-8000-000000000003 USB%20adapter%2000:0E:C6:11:22:33 1 mac '' '' '' '')"
+
+sum() { # <internet> <via> <defaultdev> <wifi> <country>
+    echo "RESULT kind=summary internet=$1 via=$2 defaultdev=$3 connectivity=full wifi=$4 country=$5 volatile=1 wifiboot=on"
+}
 
 status() {
     case $scenario in
         offline)
-            echo "$eth0_nocable"; echo "$wlan_idle"
-            echo "RESULT kind=summary internet=no via= connectivity=none wifi=on country=DE volatile=1 wifiboot=off" ;;
+            echo "$eth0_nocable"; echo "$wlan_idle"; sum no '' '' on DE ;;
         usb-adapter)
-            echo "$eth0_lan"; echo "$wlan_idle"; echo "$eth1_uplink"; echo "$eth2_nocable"
-            echo "RESULT kind=summary internet=yes via=eth1 connectivity=full wifi=on country=DE volatile=1 wifiboot=off" ;;
+            echo "$eth0_lan"; echo "$wlan_idle"; echo "$eth1_uplink"; echo "$eth2_nocable"; sum yes eth1 eth1 on DE ;;
+        dead-uplink)
+            echo "$eth1_dead"; echo "$eth0_up2"; echo "$wlan_idle"; sum yes eth0 eth1 on DE ;;
         wifi-blocked)
-            echo "$eth0_up"; echo "$wlan_off"
-            echo "RESULT kind=summary internet=yes via=eth0 connectivity=full wifi=off country=00 volatile=1 wifiboot=off" ;;
+            echo "$eth0_up"; echo "$wlan_off"; sum yes eth0 eth0 off DE ;;
         wifi-absent)
-            echo "$eth0_up"
-            echo "RESULT kind=summary internet=yes via=eth0 connectivity=full wifi=absent country= volatile=1 wifiboot=off" ;;
+            echo "$eth0_up"; sum yes eth0 eth0 absent '' ;;
+        wifi-default)
+            echo "$eth0_nocable"; echo "$wlan_default"; sum yes wlan0 wlan0 on DE ;;
+        wired-static|probe-found|probe-none)
+            echo "$eth0_static"; echo "$wlan_on"; echo "$eth2_nocable"; sum yes eth0 eth0 on DE ;;
+        probe-no-cable)
+            echo "$eth0_nocable"; echo "$wlan_default"; echo "$eth1_serving"; sum yes wlan0 wlan0 on DE ;;
+        legacy-server)
+            echo "$eth0_legacy"; echo "$wlan_default"; sum yes wlan0 wlan0 on DE ;;
         *)
             echo "$eth0_up"; echo "$wlan_on"
-            case $scenario in online-serving) echo "$eth1_serving" ;; esac
-            echo "RESULT kind=summary internet=yes via=eth0 connectivity=full wifi=on country=DE volatile=1 wifiboot=off" ;;
+            case $scenario in online-serving|wired-fail) echo "$eth1_serving" ;; esac
+            sum yes eth0 eth0 on DE ;;
     esac
 }
 
 scan() {
     active_workshop=1
-    case $scenario in offline|usb-adapter) active_workshop=0 ;; esac
+    case $scenario in offline|usb-adapter|dead-uplink) active_workshop=0 ;; esac
     echo "RESULT kind=ap ssid=Workshop signal=71 security=wpa2 band=5 saved=1 active=$active_workshop"
     echo "RESULT kind=ap ssid=FRITZ%21Box%207590%20HR signal=64 security=wpa2 band=2.4 saved=0 active=0"
     echo "RESULT kind=ap ssid=Lab-Bench signal=58 security=wpa3 band=5 saved=1 active=0"
@@ -68,8 +94,14 @@ scan() {
     echo "RESULT kind=saved ssid=Home%20Office uuid=33333333-2222-3333-4444-555555555555 autoconnect=1 active=0 hidden=0 inrange=0"
 }
 
-ssid=
-for a in "$@"; do case $a in --ssid=*) ssid=${a#--ssid=} ;; esac; done
+ssid='' iface='' mode=''
+for a in "$@"; do
+    case $a in
+        --ssid=*) ssid=${a#--ssid=} ;;
+        --iface=*) iface=${a#--iface=} ;;
+        --mode=*) mode=${a#--mode=} ;;
+    esac
+done
 
 case $cmd in
     available) echo "RESULT kind=available ok=1" ;;
@@ -80,14 +112,34 @@ case $cmd in
     leases)
         echo "RESULT kind=lease ip=192.168.50.23 mac=B8:27:EB:01:02:03 host=pi-bench-2 expires=1791262000"
         echo "RESULT kind=lease ip=192.168.50.61 mac=3C:22:FB:AA:BB:CC host=laptop expires=1791262500"
-        echo "RESULT kind=leases iface=eth1 count=2" ;;
+        echo "RESULT kind=lease ip=192.168.50.88 mac=DC:A6:32:44:55:66 host= expires=1791263100"
+        echo "RESULT kind=leases iface=$iface count=3" ;;
+    dhcp-probe)
+        sleep "$step"; sleep "$step"
+        case $scenario in
+            probe-found)
+                echo "RESULT kind=offer iface=$iface server=192.168.1.1 offered=192.168.1.57 router=192.168.1.1"
+                echo "RESULT kind=probe iface=$iface servers=1 carrier=1" ;;
+            *) echo "RESULT kind=probe iface=$iface servers=0 carrier=1" ;;
+        esac ;;
+    wired-set)
+        echo "NOTICE detached"
+        sleep "$step"; echo "PROGRESS phase=activating"
+        sleep "$step"; echo "PROGRESS phase=checking"
+        sleep "$step"
+        if [ "$scenario" = wired-fail ]; then
+            echo "NOTICE restoring the previous settings"
+            echo "RESULT kind=wired iface=$iface mode=$mode ok=0 restored=1 detail=the%20address,%20NetworkManager's%20dnsmasq%20or%20the%20drop-in%20is%20missing reason=check-failed"
+            exit 3
+        fi
+        echo "RESULT kind=wired iface=$iface mode=$mode ok=1 ip=192.168.50.1" ;;
     wifi-scan)
         case $scenario in wifi-blocked|wifi-absent) exit 2 ;; esac
         scan ;;
     wifi-connect)
         # the password, if any, is the first line of stdin (never printed)
         IFS= read -r _pw || true
-        reason=
+        reason=''
         case $scenario in
             connect-bad-password) reason=bad-password ;;
             connect-not-found) reason=not-found ;;

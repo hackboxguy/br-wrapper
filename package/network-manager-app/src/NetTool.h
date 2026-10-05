@@ -76,6 +76,7 @@ private:
     QByteArray m_pending;
     QString m_command;
     bool m_stopping = false;
+    bool m_detached = false;    // the change said it runs as its own unit
     QStringList m_quietLines;   // a read's output, logged only if it fails
 };
 

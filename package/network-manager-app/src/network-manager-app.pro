@@ -7,12 +7,14 @@ SOURCES += \
     main.cpp \
     NetTool.cpp \
     StatusController.cpp \
-    WifiController.cpp
+    WifiController.cpp \
+    WiredController.cpp
 
 HEADERS += \
     NetTool.h \
     StatusController.h \
-    WifiController.h
+    WifiController.h \
+    WiredController.h
 
 RESOURCES += qml.qrc
 

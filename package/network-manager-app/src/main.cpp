@@ -21,6 +21,7 @@
 #include "NetTool.h"
 #include "StatusController.h"
 #include "WifiController.h"
+#include "WiredController.h"
 
 // SIGTERM (the launcher's stop-app), SIGINT, SIGHUP: quit through the event
 // loop, so the controllers stop their net-ctl.sh processes on the way out
@@ -67,7 +68,8 @@ int main(int argc, char *argv[])
                                QDir(binDir).filePath("net-ctl.sh"));
     QCommandLineOption dryRunOpt("dry-run", "Never elevate, never change anything; changes show what would run.");
     QCommandLineOption sectionOpt("section", "Section to open: overview, wifi, wired or tools.", "name", "overview");
-    QCommandLineOption sheetOpt("open-sheet", "Open an overlay at start (screenshots): detail[:if], keyboard[:layer[:shown]], hidden or scroll-end.",
+    QCommandLineOption sheetOpt("open-sheet", "Open an overlay at start (screenshots): detail[:if], keyboard[:layer[:shown]], hidden, scroll-end, "
+                                "numpad[:field], probe-warning, wired-<mode>[:if] or apply-<mode>[:if].",
                                 "name");
     QCommandLineOption logOpt("log-file", "Where the app logs net-ctl.sh's lines.", "path",
                               "/tmp/network-manager-app.log");
@@ -103,6 +105,11 @@ int main(int argc, char *argv[])
     wifiOptions.dryRun = parser.isSet(dryRunOpt);
     WifiController wifi(wifiOptions, &status);
 
+    WiredController::Options wiredOptions;
+    wiredOptions.tool = parser.value(toolOpt);
+    wiredOptions.dryRun = parser.isSet(dryRunOpt);
+    WiredController wired(wiredOptions, &status);
+
     QString section = parser.value(sectionOpt);
     if (section != "overview" && section != "wifi" && section != "wired" && section != "tools") section = "overview";
 
@@ -112,6 +119,7 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("status", &status);
     engine.rootContext()->setContextProperty("wifi", &wifi);
+    engine.rootContext()->setContextProperty("wired", &wired);
     engine.rootContext()->setContextProperty("initialSection", section);
     engine.rootContext()->setContextProperty("initialSheet", parser.value(sheetOpt));
     engine.rootContext()->setContextProperty("uiFont", haveRoboto ? QString("Roboto") : QString());
