@@ -86,6 +86,17 @@ addresses are shown, not edited), VPN, speed test, Bluetooth, changes to the mic
 | Tools' location | `nft`, `iw`, `rfkill` are in `/usr/sbin`, which is not in `pi`'s non-login `PATH` — scripts set `PATH` themselves |
 | `sudo -n` as `pi` | Works |
 
+Added 2026-10-05 after round one (same rig, measured by the reviewer and the implementer):
+
+| Question | Result |
+|---|---|
+| Why the radio is blocked at boot | `/etc/modprobe.d/rfkill_default.conf` (`options rfkill default_state=0`, from Pi OS) blocks every radio, and the image holds no saved rfkill state for the WiFi radio |
+| The 5.4 image changes, written into the rig's read-only image root and rebooted | Work as a set: WiFi enabled and unblocked at boot (the saved rfkill state wins over `default_state=0`), country DE from the cfg80211 module option, `dnsmasq.service` masked and inactive, drop-in present, no failed unit. Rig 1's slot B carries these changes since then |
+| A change run as a transient systemd unit (`sudo -n systemd-run --quiet --collect --pipe --wait <script>`) | stdin (the secret), stdout and the exit code pass through; the script runs in `system.slice`, and **finished its work after its caller was killed with SIGKILL** |
+| USB-Ethernet adapter (Realtek RTL8153) | Comes up as `eth1`; NetworkManager's auto profile `Wired connection 2` is in `/run` and bound by interface name, not MAC |
+| Two wired uplinks | Both get a default route, metrics 100 and 101 in activation order. NetworkManager reported `full` connectivity for a port whose gateway had no internet, so its connectivity word alone cannot be trusted for "Internet via X" |
+| A second DHCP server on the LAN | With one present, `eth0` took an address from either server at boot. The rig is then not at its usual address; it stays reachable over IPv6 link-local |
+
 The shared-mode test ran on a `veth` pair with the client (`busybox udhcpc`) in a network
 namespace, so the rig's `eth0` uplink was never touched. That is also how the implementer tests
 server mode (section 10).
@@ -136,6 +147,11 @@ Rules, all taken from the System Manager pattern:
    System Manager's fsync-to-`/data` logging is not needed).
 6. **Changes are refused while `/tmp/system-update.lock` is held by a live pid** (an image update
    may be downloading).
+6a. **A change outlives the app.** A launcher restart kills the app's whole cgroup with SIGKILL,
+   which no trap survives. `net-ctl.sh`, when it runs a change as root and `systemd-run` exists,
+   re-executes itself as a transient unit (`systemd-run --quiet --collect --pipe --wait`, measured
+   in 2.1) and ignores SIGPIPE, so the change and its restore run to the end even with nobody
+   reading. Without `systemd-run` (Buildroot) it runs in place, as before.
 7. **Refresh is event-driven where possible:** a long-running `nmcli monitor` (started through
    `net-ctl.sh monitor`) triggers a status refresh on any change; a 5 s timer is the fallback.
 
@@ -174,7 +190,9 @@ Which profile `wired-set` edits — the same rule as the OLED script, so the two
 NetworkManager has active on the interface; if none, a new one. New profiles are bound to the
 adapter's **MAC address**, not its name, so a USB adapter keeps its settings whichever port it is
 in. **VERIFY** in Phase 3, with a USB adapter on the rig: how it is named (`eth1` vs `enx…`) and
-that the profile NetworkManager auto-creates for it can be re-bound to the MAC this way.
+that the profile NetworkManager auto-creates for it can be re-bound to the MAC this way. Round
+one found the name to be `eth1` and the auto profile bound by interface name (2.1); the re-bind
+is still to be tried.
 
 ## 4. Screens
 
@@ -341,9 +359,14 @@ image build (the appliance hook or a package script there), in the image's root 
 
 | Change | Why |
 |---|---|
-| `systemctl disable dnsmasq.service` and mask it | It blocks shared mode (2.1). Nothing in the image needs it running: the OLED menu's DHCP-server mode unmasks and starts it itself |
+| Declare in `runtime-deps.txt` **and** `runtime-deps-ab.txt`: `network-manager`, `wpasupplicant`, `firmware-brcm80211`, `wireless-regdb`, `iw`, `rfkill`, `nftables`, `dnsmasq-base`, `python3` | All are on the 2.07 image already, but only as part of the Pi OS base. `slim-remove.txt` records a purge that once took `iw`, `rfkill` and twenty others with it; the lists' own rule is "present via the base, declared anyway". `nftables` is what shared mode uses (there is no `iptables`); `dnsmasq-base` is NetworkManager's dnsmasq; `python3` runs the DHCP probe. `dnsmasq` and `iperf3` are declared already |
+| `systemctl disable dnsmasq.service` and mask it (`/etc/systemd/system/dnsmasq.service` → `/dev/null`) | It blocks shared mode (2.1). Nothing in the image needs it running: the OLED menu's DHCP-server mode unmasks and starts it itself |
 | Install `/etc/NetworkManager/dnsmasq-shared.d/90-micropanel-no-gateway.conf` (content in 5.1) | A serving port that comes up at boot must not announce a gateway |
-| WiFi on by default, country **DE**: `WirelessEnabled=true` in `/var/lib/NetworkManager/NetworkManager.state`, no saved rfkill soft-block for the WiFi radio (`/var/lib/systemd/rfkill/*:wlan`), and `options cfg80211 ieee80211_regdom=DE` in `/etc/modprobe.d/` (cfg80211 is a module in this kernel) | Saved WiFi networks reconnect at boot without anyone opening the app. Germany as the default country is the owner's decision (2026-10-05) |
+| WiFi on by default, country **DE**: `WirelessEnabled=true` in `/var/lib/NetworkManager/NetworkManager.state`; a saved rfkill state `0` for the WiFi radio (`/var/lib/systemd/rfkill/platform-fe300000.mmcnr:wlan` on the Pi 4 — it overrides `rfkill_default.conf`); `options cfg80211 ieee80211_regdom=DE` in `/etc/modprobe.d/` (cfg80211 is a module in this kernel) | Saved WiFi networks reconnect at boot without anyone opening the app. Germany as the default country is the owner's decision (2026-10-05). `net-ctl.sh status` reports `wifiboot=on` from the regdom line, so keep that form |
+
+This exact set was written into rig 1's image root and booted (2.1). The rfkill file name is the
+Pi 4's; a Pi 5 board needs its own. `PERSISTENCE.md` gets a line that the WiFi radio state is
+volatile and comes from the image.
 
 A static test beside the existing ones (`tests/test_ab_layout_static.sh`) asserts the three.
 
@@ -482,8 +505,8 @@ the app.
 port; the tile dimmed with `Needs NetworkManager` when `nmcli` is hidden from `PATH`; open and
 close through the launcher API.
 
-**Phase 6 — image changes.** The three changes of 5.4 in misc-tools `board-configs/micropanel`,
-with the static test. Committed in misc-tools, **not pushed** — the owner builds the image
+**Phase 6 — image changes.** The package declarations and the three changes of 5.4 in misc-tools
+`board-configs/micropanel`, with the static test. Committed in misc-tools, **not pushed** — the owner builds the image
 (`build-image.sh --board=micropanel --base-profile=qt-bookworm --layout=ab …`) and decides.
 *Evidence:* the diff; the static tests pass; the same three changes applied by hand on the rig
 show, after a reboot, WiFi on with country DE, `dnsmasq.service` inactive, the drop-in present.
