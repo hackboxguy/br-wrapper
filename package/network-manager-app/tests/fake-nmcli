@@ -93,6 +93,7 @@ EOF
         printf 'GENERAL.DEVICE:%s\nGENERAL.HWADDR:%s\nGENERAL.STATE:30 (disconnected)\nGENERAL.CONNECTION:\n' \
             "$6" "$(tr 'a-f' 'A-F' < "${NET_CTL_SYSFS:-/nonexistent}/$6/address" 2>/dev/null)" ;;
     "-t|-f|IP4.ADDRESS|device|show|wlan0|") echo "IP4.ADDRESS[1]:192.168.20.138/24" ;;
+    "-t|-f|IP4.DNS|device|show|eth0|") printf 'IP4.DNS[1]:192.168.1.1\nIP4.DNS[2]:9.9.9.9\n' ;;
     "-t|-e|yes|-f|ACTIVE,SSID,SIGNAL,FREQ|device|wifi|list|ifname|wlan0|--rescan|no|") echo "no:Workshop:71:5180 MHz" ;;
     "-t|-e|yes|-f|IN-USE,SSID,SIGNAL,SECURITY,FREQ|device|wifi|list|--rescan|"*)
         # two BSSIDs of one network (the stronger wins), an escaped colon,

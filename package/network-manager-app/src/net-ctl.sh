@@ -38,6 +38,15 @@
 #                                   new ones do not come up (exit 3)
 #   dhcp-probe --iface=IF           RESULT kind=offer ... per answering DHCP server,
 #                                   then kind=probe servers=N carrier=0|1 (root)
+#   ping --target=HOST [--iface=IF] [--count=N]
+#                                   RESULT kind=reply|lost ... as they come, then kind=ping
+#   internet-check [--iface=IF]     RESULT kind=check step=gateway|dns|https ..., then
+#                                   kind=internet; root binds each step to the port
+#   iperf-server --start|--stop     runs iperf3 -s until stopped: kind=iperf-peer,
+#                                   kind=iperf ... per second; reason=port-busy when 5201 is taken
+#   iperf-client --host=H [--secs=5|10|30] [--udp] [--reverse]
+#                                   kind=iperf per second, kind=iperf-sum, kind=iperf-done
+# The tools are reads: they never detach, and stop with their caller.
 # Changes take --dry-run: say what would run, change nothing.
 #
 # A change outlives its caller (plan rule 6a): run as root with systemd-run
@@ -74,6 +83,16 @@ SHARED_DIR=${NET_CTL_SHARED_DIR:-/etc/NetworkManager/dnsmasq-shared.d}
 DROPIN=$SHARED_DIR/90-micropanel-no-gateway.conf
 PROBE=${NET_CTL_PROBE:-$(dirname "$(readlink -f "$0")")/net-dhcp-probe.py}
 INET_TARGETS=${NET_CTL_INET_TARGETS:-1.1.1.1 8.8.8.8}
+# The internet check (Tools) asks the port's DNS server for CHECK_NAME and
+# fetches CHECK_URL over HTTPS - only when someone presses the button. A
+# well-known, stable and tiny answer: HTTP 204, no body.
+CHECK_NAME=${NET_CTL_CHECK_NAME:-www.google.com}
+CHECK_URL=${NET_CTL_CHECK_URL:-https://www.google.com/generate_204}
+CHECK_CODE=${NET_CTL_CHECK_CODE:-204}   # anything else (a captive portal's 200 or 302) is no internet
+IPERF_PORT=5201
+PYTHON=${NET_CTL_PYTHON:-python3}
+# The OLED menu's own DHCP server (the system dnsmasq) keeps its leases here
+LEGACY_LEASES=${NET_CTL_LEGACY_LEASES:-/var/lib/misc/dnsmasq.leases}
 CONNECT_WAIT=60
 WIRED_WAIT=60
 
@@ -405,7 +424,10 @@ cmd_status() {
     profiles=$(eth_profiles)
     devices=$(list_devices)
     inetdir=$(mktemp -d "${TMPDIR:-/tmp}/net-ctl-st.XXXXXX") || exit 2
+    # dash runs no EXIT trap when a signal ends it: the app stops a status
+    # it no longer needs (TERM), and the directory must still go
     trap 'rm -rf "$inetdir"' EXIT
+    trap 'exit 143' HUP INT TERM
     # gateway and address per port, from the kernel (cheap), for the check
     printf '%s\n' "$devices" | while IFS="$us" read -r dev type; do
         [ -n "$dev" ] || continue
@@ -485,11 +507,15 @@ cmd_monitor() {
 cmd_leases() {
     [ -n "$iface" ] || fail 1 lease bad-arguments "--iface= is required"
     f="$LEASE_DIR/dnsmasq-$iface.leases"
+    # A port in the OLED menu's server mode: the system dnsmasq's lease file
+    [ "$(legacy_server_iface)" = "$iface" ] && f=$LEGACY_LEASES
     [ -r "$f" ] || { echo "RESULT kind=leases iface=$iface count=0"; exit 0; }
     n=0
     while read -r expires mac ip host _; do
         [ -n "$ip" ] || continue
         [ "$host" = "*" ] && host=
+        # MACs upper-case everywhere, as NetworkManager prints them
+        mac=$(printf '%s' "$mac" | tr 'a-f' 'A-F')
         { kv ip "$ip"; kv mac "$mac"; kv host "$host"; kv expires "$expires"; } | emit lease
         n=$((n + 1))
     done < "$f"
@@ -1036,6 +1062,274 @@ EOF_OFFERS
     echo "RESULT kind=probe iface=$iface servers=$n carrier=1"
 }
 
+# ---- tools: ping, internet check, iperf3 ---------------------------------------
+
+# A host name or an address: no option injection, nothing a shell would mind
+valid_host() {
+    case $1 in
+        ''|-*) return 1 ;;
+        *[!A-Za-z0-9.:_-]*) return 1 ;;
+    esac
+    return 0
+}
+
+# stream <parser> <command...>: runs a long tool with its output into a FIFO
+# that <parser> reads. The tool is stopped when this script is stopped
+# (TERM, HUP, INT) and - because the app may be killed with SIGKILL, which
+# reaches nobody - when the caller is gone: a watcher checks the caller every
+# second, as `monitor` does. No ping or iperf3 of ours outlives the app.
+stream_files=''   # more files for stream() to remove when it is stopped
+stream() {
+    parser=$1; shift
+    caller=$PPID
+    sfifo=$(mktemp -u "${TMPDIR:-/tmp}/net-ctl-tool.XXXXXX") && mkfifo -m 600 "$sfifo" || exit 2
+    "$@" > "$sfifo" 2>&1 &
+    child=$!
+    (while kill -0 "$caller" 2>/dev/null && kill -0 "$child" 2>/dev/null; do sleep 1; done
+     kill "$child" 2>/dev/null; rm -f "$sfifo") &
+    watch=$!
+    # shellcheck disable=SC2086 # stream_files: a list
+    trap 'kill "$child" "$watch" 2>/dev/null; rm -f "$sfifo" $stream_files; exit 130' HUP INT TERM
+    "$parser" < "$sfifo"
+    wait "$child"; stream_rc=$?
+    kill "$watch" 2>/dev/null
+    rm -f "$sfifo"
+    trap - HUP INT TERM
+}
+
+# ping: one RESULT line per reply or loss as they come, then the summary
+ping_parse() {
+    p_sent=0 p_recv=0 p_avg='' p_reason='' p_lost=''
+    while IFS= read -r line; do
+        case $line in
+            *" bytes from "*"icmp_seq="*)
+                seq=${line#*icmp_seq=}; seq=${seq%% *}
+                ms=${line#*time=}; ms=${ms%% *}
+                from=${line#* bytes from }; from=${from%%:*}; from=${from%% *}
+                echo "RESULT kind=reply seq=$seq ms=$ms from=$from" ;;
+            "no answer yet for icmp_seq="*)
+                seq=${line#no answer yet for icmp_seq=}
+                case " $p_lost " in *" $seq "*) ;; *) p_lost="$p_lost $seq"; echo "RESULT kind=lost seq=$seq" ;; esac ;;
+            *"Destination Host Unreachable"*|*"Destination Net Unreachable"*)
+                # reported once per packet (ping may also have said "no answer yet")
+                seq=${line#*icmp_seq=}; seq=${seq%% *}
+                case " $p_lost " in *" $seq "*) ;; *) p_lost="$p_lost $seq"; echo "RESULT kind=lost seq=$seq reason=unreachable" ;; esac ;;
+            *" packets transmitted, "*)
+                p_sent=${line%% packets transmitted*}
+                p_recv=${line#*transmitted, }; p_recv=${p_recv%% received*} ;;
+            "rtt "*|"round-trip "*)
+                p_avg=$(printf '%s' "$line" | awk -F'= ' '{ split($2, v, "/"); print v[2] }') ;;
+            *"Name or service not known"*|*"Temporary failure in name resolution"*|*"unknown host"*)
+                p_reason=unknown-host ;;
+            *"Network is unreachable"*) p_reason=unreachable ;;
+            *"Cannot assign requested address"*|*"unknown iface"*|*"SO_BINDTODEVICE"*) p_reason=bad-interface ;;
+        esac
+    done
+}
+
+cmd_ping() {
+    valid_host "$opt_target" || fail 1 ping bad-arguments "--target= is an address or a host name"
+    count=${opt_count:-10}
+    case $count in ''|*[!0-9]*) fail 1 ping bad-arguments "--count= is 1 to 100" ;; esac
+    if [ "$count" -lt 1 ] || [ "$count" -gt 100 ]; then fail 1 ping bad-arguments "--count= is 1 to 100"; fi
+    set -- ping -n -O -c "$count" -W 2
+    [ -n "$iface" ] && set -- "$@" -I "$iface"
+    stream ping_parse "$@" "$opt_target"
+    loss=''
+    [ "$p_sent" -gt 0 ] 2>/dev/null && loss=$(( (p_sent - p_recv) * 100 / p_sent ))
+    if [ -n "$p_reason" ] && [ "${p_recv:-0}" = 0 ]; then
+        echo "RESULT kind=ping target=$opt_target sent=$p_sent received=0 avg= loss=100 reason=$p_reason"
+        exit 2
+    fi
+    echo "RESULT kind=ping target=$opt_target sent=$p_sent received=$p_recv avg=$p_avg loss=$loss"
+    [ "${p_recv:-0}" -gt 0 ] 2>/dev/null && exit 0
+    exit 2
+}
+
+# One DNS question (A record of the check name) to one server, bound to the
+# port when root may bind: python3, standard library only
+DNS_QUERY='import random, socket, struct, sys, time
+name, server, iface = sys.argv[1], sys.argv[2], sys.argv[3]
+q = struct.pack("!HHHHHH", random.getrandbits(16), 0x0100, 1, 0, 0, 0)
+q += b"".join(bytes([len(p)]) + p.encode() for p in name.split(".")) + b"\0" + struct.pack("!HH", 1, 1)
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+bound = 0
+if iface:
+    try:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, iface.encode() + b"\0"); bound = 1
+    except OSError:
+        pass
+s.settimeout(3)
+t = time.monotonic()
+try:
+    s.sendto(q, (server, 53)); r = s.recv(1500)
+except socket.timeout:
+    print("no-answer", bound); sys.exit(0)
+except OSError as e:
+    print("unreachable", bound); sys.exit(0)
+ms = round((time.monotonic() - t) * 1000, 1)
+rcode = r[3] & 15
+if rcode == 3: print("nxdomain", bound, ms); sys.exit(0)
+if rcode != 0: print("servfail", bound, ms); sys.exit(0)
+an = struct.unpack("!H", r[6:8])[0]
+i = 12
+while r[i] != 0: i += r[i] + 1
+i += 5
+for _ in range(an):
+    if r[i] & 0xC0 == 0xC0: i += 2
+    else:
+        while r[i] != 0: i += r[i] + 1
+        i += 1
+    typ, cls, ttl, ln = struct.unpack("!HHIH", r[i:i + 10]); i += 10
+    if typ == 1 and ln == 4:
+        print("ok", bound, ms, socket.inet_ntoa(r[i:i + 4])); sys.exit(0)
+    i += ln
+print("no-address", bound, ms)'
+
+# internet-check [--iface=IF]: the port's gateway answers -> its DNS server
+# resolves CHECK_NAME -> CHECK_URL answers over HTTPS. Each step is bound to
+# the port (as root; the app runs it through sudo -n), so a port's answer is
+# that port's, not the default route's. Without --iface: the default route's.
+cmd_internet_check() {
+    need_nm
+    dev=${iface:-$(default_route_dev)}
+    [ -n "$dev" ] || { echo "RESULT kind=check step=gateway ok=0 reason=no-route"
+                       echo "RESULT kind=check step=dns ok=0 reason=skipped"
+                       echo "RESULT kind=check step=https ok=0 reason=skipped"
+                       echo "RESULT kind=internet iface= ok=0"; exit 2; }
+    root=0; [ "${NET_CTL_UID:-$(id -u)}" = 0 ] && root=1
+    all=1
+
+    gw=$(ip -4 route show default dev "$dev" 2>/dev/null | awk '{ print $3; exit }')
+    if [ -z "$gw" ]; then
+        echo "RESULT kind=check step=gateway ok=0 reason=no-gateway"; all=0
+    else
+        out=$(ping -n -c 1 -W 2 -I "$dev" "$gw" 2>&1)
+        ms=$(printf '%s\n' "$out" | sed -n 's/.*time=\([0-9.]*\).*/\1/p' | head -n 1)
+        if [ -n "$ms" ]; then echo "RESULT kind=check step=gateway ok=1 ms=$ms target=$gw"
+        else echo "RESULT kind=check step=gateway ok=0 target=$gw reason=no-reply"; all=0; fi
+    fi
+
+    dns=$(nmcli -t -f IP4.DNS device show "$dev" 2>/dev/null | sed -n 's/^IP4\.DNS\[1\]://p')
+    # the port's own DNS server; the system's only for the default-route check
+    if [ -z "$dns" ] && [ -z "$iface" ]; then
+        dns=$(awk '$1 == "nameserver" && $2 ~ /^[0-9.]+$/ { print $2; exit }' /etc/resolv.conf 2>/dev/null)
+    fi
+    addr=''
+    if [ -z "$dns" ]; then
+        echo "RESULT kind=check step=dns ok=0 reason=no-dns-server"; all=0
+    else
+        bind=''; [ "$root" = 1 ] && bind=$dev
+        # shellcheck disable=SC2046
+        set -- $("$PYTHON" -c "$DNS_QUERY" "$CHECK_NAME" "$dns" "$bind" 2>/dev/null)
+        if [ "${1:-}" = ok ]; then
+            addr=$4
+            echo "RESULT kind=check step=dns ok=1 ms=$3 server=$dns name=$CHECK_NAME addr=$addr bound=$2"
+        else
+            echo "RESULT kind=check step=dns ok=0 server=$dns name=$CHECK_NAME bound=${2:-0} reason=${1:-failed}"; all=0
+        fi
+    fi
+
+    # HTTPS through the port; to the address the port's DNS gave, if it gave one
+    host=${CHECK_URL#https://}; host=${host%%/*}
+    set -- curl -sS -o /dev/null --max-time 8 -w '%{http_code} %{time_total}'
+    if [ "$root" = 1 ]; then set -- "$@" --interface "if!$dev"; else set -- "$@" --interface "$dev"; fi
+    [ -n "$addr" ] && set -- "$@" --resolve "$host:443:$addr"
+    out=$("$@" "$CHECK_URL" 2>&1)
+    code=$(printf '%s\n' "$out" | tail -n 1 | awk '{ print $1 }')
+    secs=$(printf '%s\n' "$out" | tail -n 1 | awk '{ print $2 }')
+    case $code in
+        "$CHECK_CODE") echo "RESULT kind=check step=https ok=1 ms=$(awk -v s="$secs" 'BEGIN { printf "%d", s * 1000 }') code=$code url=$CHECK_URL bound=$root" ;;
+        *)
+            case $out in
+                *"timed out"*|*"Timeout"*) why=timeout ;;
+                *"SSL"*|*"certificate"*) why=tls ;;
+                *"Could not resolve"*) why=no-name ;;
+                *"Failed to connect"*|*"Couldn't connect"*|*"No route"*) why=unreachable ;;
+                *) case $code in 000|'') why=failed ;; *) why=http-$code ;; esac ;;
+            esac
+            echo "RESULT kind=check step=https ok=0 url=$CHECK_URL bound=$root reason=$why"; all=0 ;;
+    esac
+    echo "RESULT kind=internet iface=$dev ok=$all"
+    [ "$all" = 1 ] && exit 0
+    exit 2
+}
+
+# iperf3 3.12 (the image's): no --json-stream; the interval and summary lines
+# are parsed as printed, with --forceflush so they come as they happen
+iperf_line() { # one iperf3 output line -> RESULT lines
+    case $1 in
+        *"Accepted connection from "*)
+            from=${1#*Accepted connection from }; from=${from%%,*}
+            echo "RESULT kind=iperf-peer from=$from" ;;
+        *"unable to start listener"*|*"Address already in use"*) i_reason=port-busy ;;
+        *"Connection refused"*) i_reason=refused ;;
+        *"No route to host"*|*"Network is unreachable"*|*"timed out"*) i_reason=unreachable ;;
+        *"server is busy"*) i_reason="server-busy" ;;
+        *"Name or service not known"*|*"unknown host"*|*"Temporary failure in name"*) i_reason=unknown-host ;;
+        "["*"]"*"sec"*"/sec"*)
+            printf '%s\n' "$1" | awk '
+                function mbit(v, u) { if (u ~ /^G/) return v * 1000; if (u ~ /^M/) return v; if (u ~ /^K/) return v / 1000; return v / 1000000 }
+                { sub(/^\[ *[0-9A-Z]+\] */, "")
+                  iv = $1; rate = ""; unit = ""
+                  for (i = 1; i <= NF; i++) if ($i ~ /bits\/sec$/) { rate = $(i - 1); unit = $i; idx = i }
+                  if (rate == "") next
+                  m = sprintf("%.1f", mbit(rate + 0, unit))
+                  role = ($NF == "sender" || $NF == "receiver") ? $NF : ""
+                  if (role == "") { print "RESULT kind=iperf interval=" iv " mbit=" m; next }
+                  extra = ""
+                  if ($(idx + 1) ~ /^[0-9]+$/ && $(idx + 2) == role) extra = " retr=" $(idx + 1)
+                  if ($(idx + 2) == "ms") { split($(idx + 3), lp, "/"); extra = " jitter=" $(idx + 1) " lost=" lp[1] " packets=" lp[2] }
+                  print "RESULT kind=iperf-sum role=" role " interval=" iv " mbit=" m extra }' ;;
+    esac
+}
+iperf_parse() { i_reason=''; while IFS= read -r line; do iperf_line "$line"; done; }
+
+IPERF_PIDFILE=${TMPDIR:-/tmp}/net-ctl-iperf-server-$(id -u).pid
+
+cmd_iperf_server() {
+    command -v iperf3 >/dev/null 2>&1 || fail 1 iperf-server unsupported "iperf3 is not installed"
+    if [ "$opt_stop" = 1 ]; then
+        # only our own server: a stale file's pid may belong to anyone by now
+        pid=$(cat "$IPERF_PIDFILE" 2>/dev/null)
+        case $pid in ''|*[!0-9]*) pid='' ;; esac
+        if [ -n "$pid" ] && tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'net-ctl[^ ]* iperf-server'; then
+            kill "$pid" 2>/dev/null
+        fi
+        rm -f "$IPERF_PIDFILE"
+        echo "RESULT kind=iperf-server running=0"
+        exit 0
+    fi
+    # 5201 taken: the panel menu's own iperf3 server, most likely
+    if ss -ltnH "sport = :$IPERF_PORT" 2>/dev/null | grep -q .; then
+        echo "RESULT kind=iperf-server running=0 port=$IPERF_PORT reason=port-busy"
+        exit 2
+    fi
+    addrs=$(ip -4 -o addr show 2>/dev/null | awk '$2 != "lo" { split($4, a, "/"); printf "%s%s", (n++ ? "," : ""), a[1] }')
+    echo "RESULT kind=iperf-server running=1 port=$IPERF_PORT addrs=$addrs"
+    echo $$ > "$IPERF_PIDFILE"
+    stream_files=$IPERF_PIDFILE
+    stream iperf_parse iperf3 -s -p "$IPERF_PORT" -i 1 --forceflush
+    rm -f "$IPERF_PIDFILE"
+    if [ -n "$i_reason" ]; then echo "RESULT kind=iperf-server running=0 reason=$i_reason"; exit 2; fi
+    echo "RESULT kind=iperf-server running=0"
+}
+
+cmd_iperf_client() {
+    command -v iperf3 >/dev/null 2>&1 || fail 1 iperf-done unsupported "iperf3 is not installed"
+    valid_host "$opt_host" || fail 1 iperf-done bad-arguments "--host= is an address or a host name"
+    secs=${opt_secs:-10}
+    case $secs in 5|10|30) ;; *) fail 1 iperf-done bad-arguments "--secs= is 5, 10 or 30" ;; esac
+    set -- iperf3 -c "$opt_host" -p "$IPERF_PORT" -t "$secs" -i 1 --forceflush --connect-timeout 3000
+    [ "$opt_udp" = 1 ] && set -- "$@" -u -b 100M
+    [ "$opt_reverse" = 1 ] && set -- "$@" -R
+    echo "RESULT kind=iperf-client host=$opt_host secs=$secs udp=$opt_udp reverse=$opt_reverse"
+    stream iperf_parse "$@"
+    if [ -n "$i_reason" ]; then echo "RESULT kind=iperf-done ok=0 host=$opt_host reason=$i_reason"; exit 2; fi
+    if [ "$stream_rc" != 0 ]; then echo "RESULT kind=iperf-done ok=0 host=$opt_host reason=failed"; exit 2; fi
+    echo "RESULT kind=iperf-done ok=1 host=$opt_host"
+}
+
 # ---- a change outlives its caller ------------------------------------------------
 
 # Rule 6a: as a transient unit. Only for changes, only as root, only once,
@@ -1062,6 +1356,7 @@ cmd=${1:-}
 [ $# -gt 0 ] && shift
 iface='' ssid_enc='' opt_hidden=0 opt_security='' opt_rescan=0 opt_onoff='' dry_run=0
 opt_mode='' opt_ip='' opt_prefix='' opt_gateway='' opt_dns=''
+opt_target='' opt_count='' opt_host='' opt_secs='' opt_udp=0 opt_reverse=0 opt_stop=0
 for arg in "$@"; do
     case $arg in
         --iface=*) iface=${arg#--iface=} ;;
@@ -1070,6 +1365,14 @@ for arg in "$@"; do
         --prefix=*) opt_prefix=${arg#--prefix=} ;;
         --gateway=*) opt_gateway=${arg#--gateway=} ;;
         --dns=*) opt_dns=${arg#--dns=} ;;
+        --target=*) opt_target=${arg#--target=} ;;
+        --count=*) opt_count=${arg#--count=} ;;
+        --host=*) opt_host=${arg#--host=} ;;
+        --secs=*) opt_secs=${arg#--secs=} ;;
+        --udp) opt_udp=1 ;;
+        --reverse) opt_reverse=1 ;;
+        --start) opt_stop=0 ;;
+        --stop) opt_stop=1 ;;
         --ssid=*) ssid_enc=${arg#--ssid=} ;;
         --hidden) opt_hidden=1 ;;
         --security=*) opt_security=${arg#--security=} ;;
@@ -1104,7 +1407,11 @@ case $cmd in
     wifi-radio) cmd_wifi_radio ;;
     wired-set) cmd_wired_set ;;
     dhcp-probe) cmd_dhcp_probe ;;
+    ping) cmd_ping ;;
+    internet-check) cmd_internet_check ;;
+    iperf-server) cmd_iperf_server ;;
+    iperf-client) cmd_iperf_client ;;
     *)
-        echo "usage: net-ctl.sh available|status|monitor|leases|wifi-scan|wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set|dhcp-probe [options]" >&2
+        echo "usage: net-ctl.sh available|status|monitor|leases|wifi-scan|wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set|dhcp-probe|ping|internet-check|iperf-server|iperf-client [options]" >&2
         exit 1 ;;
 esac

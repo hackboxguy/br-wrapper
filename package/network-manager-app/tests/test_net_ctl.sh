@@ -5,9 +5,11 @@
 # failed join or a failed wired-set, the exit codes, that a WiFi password
 # reaches nmcli only on stdin - never in an argument list -, the wired modes,
 # the MAC binding of USB adapters, the DHCP-server preconditions, the probe's
-# parsing, the per-port internet check and the systemd-run detach. No root,
+# parsing, the per-port internet check, the systemd-run detach and the Tools
+# (ping, internet-check, iperf3 against output captured on the rig). No root,
 # no network, no NetworkManager: nmcli, ip, ping, systemctl, pgrep,
-# systemd-run, iw, rfkill and the probe are stand-ins.
+# systemd-run, iw, rfkill, curl, iperf3, ss, the DNS question and the probe
+# are stand-ins.
 #   tests/test_net_ctl.sh            (also run by ctest with -DBUILD_TESTS=ON)
 here=$(cd "$(dirname "$0")" && pwd)
 script=$here/../src/net-ctl.sh
@@ -47,12 +49,18 @@ exit 0
 FAKE
 cat > "$work/bin/ping" <<'FAKE'
 #!/bin/sh
-# answers on the ports listed in $FAKE_NM/inet
+# answers on the ports listed in $FAKE_NM/inet; the ping tool's tests give
+# the whole output in $FAKE_NM/ping-out (exit $FAKE_NM/ping-rc), or hang
 d=${FAKE_NM:?}
+echo "ping $*" >> "$d/calls"
+[ -f "$d/ping-hang" ] && exec sleep 37
+[ -f "$d/ping-slow" ] && { sleep 2; exit 1; }
+if [ -f "$d/ping-out" ]; then cat "$d/ping-out"; exit "$(cat "$d/ping-rc" 2>/dev/null || echo 0)"; fi
 dev=''
 while [ $# -gt 0 ]; do [ "$1" = -I ] && dev=$2; shift; done
 echo "ping $dev" >> "$d/pings"
-grep -qx "$dev" "$d/inet" 2>/dev/null
+grep -qx "$dev" "$d/inet" 2>/dev/null || exit 1
+echo "64 bytes from x: icmp_seq=1 ttl=64 time=0.31 ms"
 FAKE
 cat > "$work/bin/systemctl" <<'FAKE'
 #!/bin/sh
@@ -90,6 +98,35 @@ done
 # shellcheck disable=SC2086
 exec env -i PATH="$PATH" FAKE_NM="$d" $envs "$@"
 FAKE
+cat > "$work/bin/curl" <<'FAKE'
+#!/bin/sh
+# prints $FAKE_NM/curl (as curl -w '%{http_code} %{time_total}' does), exits $FAKE_NM/curl-rc
+d=${FAKE_NM:?}
+echo "curl $*" >> "$d/calls"
+cat "$d/curl" 2>/dev/null || printf '000 8.0'
+exit "$(cat "$d/curl-rc" 2>/dev/null || echo 0)"
+FAKE
+cat > "$work/bin/fake-python3" <<'FAKE'
+#!/bin/sh
+# the internet check's DNS question: records name, server and bound port,
+# answers with $FAKE_NM/dns ("ok <bound> <ms> <addr>", "servfail <bound> <ms>", ...)
+d=${FAKE_NM:?}
+echo "python3 $3 $4 $5" >> "$d/calls"
+cat "$d/dns" 2>/dev/null || echo "no-answer 0"
+FAKE
+cat > "$work/bin/iperf3" <<'FAKE'
+#!/bin/sh
+d=${FAKE_NM:?}
+echo "iperf3 $*" >> "$d/calls"
+[ -f "$d/iperf-hang" ] && exec sleep 38
+cat "$d/iperf-out" 2>/dev/null
+exit "$(cat "$d/iperf-rc" 2>/dev/null || echo 0)"
+FAKE
+cat > "$work/bin/ss" <<'FAKE'
+#!/bin/sh
+[ -f "${FAKE_NM:?}/ss-busy" ] && echo "LISTEN 0      5            *:5201            *:*"
+exit 0
+FAKE
 cat > "$work/bin/probe" <<'FAKE'
 #!/bin/sh
 # net-dhcp-probe.py's stand-in: $FAKE_NM/offers, as the probe prints them
@@ -108,7 +145,7 @@ mkdir -p "$work/sys/devices/virtual/net/vethnm"
 ln -s devices/virtual/net/vethnm "$work/sys/vethnm"
 printf 'overlayroot / overlay rw 0 0\n' > "$work/mounts"
 
-export PATH="$work/bin:$PATH" FAKE_NM="$work/nm" NET_CTL_PROBE="$work/bin/probe"
+export PATH="$work/bin:$PATH" FAKE_NM="$work/nm" NET_CTL_PROBE="$work/bin/probe" NET_CTL_PYTHON="$work/bin/fake-python3"
 export NET_CTL_SYSFS="$work/sys" NET_CTL_LEASE_DIR="$work/leases" NET_CTL_LOCK="$work/lock"
 export NET_CTL_LEGACY_CONF="$work/legacy.conf" NET_CTL_MOUNTS="$work/mounts" NET_CTL_MODPROBE_DIR="$work/modprobe"
 
@@ -187,8 +224,8 @@ printf '1791262000 b8:27:eb:01:02:03 192.168.50.23 pi-bench-2 01:b8:27:eb:01:02:
     > "$work/leases/dnsmasq-eth1.leases"
 run leases --iface=eth1
 check "leases: two lines and a count" out_has "RESULT kind=leases iface=eth1 count=2"
-check "lease with host name" out_has "RESULT kind=lease ip=192.168.50.23 mac=b8:27:eb:01:02:03 host=pi-bench-2 expires=1791262000"
-check "lease without (*)" out_has "RESULT kind=lease ip=192.168.50.61 mac=3c:22:fb:aa:bb:cc host= expires=1791262500"
+check "lease with host name" out_has "RESULT kind=lease ip=192.168.50.23 mac=B8:27:EB:01:02:03 host=pi-bench-2 expires=1791262000"
+check "lease without (*)" out_has "RESULT kind=lease ip=192.168.50.61 mac=3C:22:FB:AA:BB:CC host= expires=1791262500"
 
 echo "== wifi-scan"
 reset ok "u-saved Workshop yes yes"
@@ -500,6 +537,191 @@ run wifi-scan
 check "OWE (enhanced open) is 'other'" out_has "ssid=Enhanced%20Open signal=44 security=other"
 run_nopw wifi-connect --ssid=Enhanced%20Open
 check "  and refused" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'reason=unsupported'" _ "$out"
+
+echo "== ping (output as ping -O printed it on the rig)"
+reset ok
+cat > "$FAKE_NM/ping-out" <<'EOF'
+PING 10.99.0.2 (10.99.0.2) 56(84) bytes of data.
+no answer yet for icmp_seq=1
+64 bytes from 10.99.0.2: icmp_seq=2 ttl=64 time=0.092 ms
+no answer yet for icmp_seq=3
+no answer yet for icmp_seq=4
+
+--- 10.99.0.2 ping statistics ---
+5 packets transmitted, 1 received, 80% packet loss, time 4090ms
+rtt min/avg/max/mdev = 0.092/0.092/0.092/0.000 ms
+EOF
+run ping --target=10.99.0.2 --iface=eth1 --count=5
+check "exit 0 when something answered" [ "$rc" = 0 ]
+check "ping -n -O, count, timeout, port" called "ping -n -O -c 5 -W 2 -I eth1 10.99.0.2"
+check "a loss as it happens" out_has "RESULT kind=lost seq=1"
+check "a reply with its time" out_has "RESULT kind=reply seq=2 ms=0.092 from=10.99.0.2"
+check "the summary" out_has "RESULT kind=ping target=10.99.0.2 sent=5 received=1 avg=0.092 loss=80"
+printf 'PING 10.99.0.77 (10.99.0.77) 56(84) bytes of data.\nno answer yet for icmp_seq=1\n\n--- 10.99.0.77 ping statistics ---\n2 packets transmitted, 0 received, 100%% packet loss, time 1004ms\n' > "$FAKE_NM/ping-out"
+echo 1 > "$FAKE_NM/ping-rc"
+run ping --target=10.99.0.77 --count=2
+check "nothing answered: exit 2" [ "$rc" = 2 ]
+check "  all lost" out_has "RESULT kind=ping target=10.99.0.77 sent=2 received=0 avg= loss=100"
+echo "ping: no.such.host: Name or service not known" > "$FAKE_NM/ping-out"
+echo 2 > "$FAKE_NM/ping-rc"
+run ping --target=no.such.host
+check "unknown host named" sh -c "[ $rc = 2 ] && printf '%s' \"\$1\" | grep -q 'reason=unknown-host'" _ "$out"
+run ping --target=-f
+check "an option as target: refused" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'reason=bad-arguments'" _ "$out"
+run ping --target='a;reboot'
+check "shell characters: refused" [ "$rc" = 1 ]
+run ping --target=1.2.3.4 --count=101
+check "count over 100: refused" [ "$rc" = 1 ]
+check "  and no ping ran" not_called "ping -n -O -c 101"
+
+echo "== a tool stops with its caller (also after SIGKILL)"
+reset ok
+: > "$FAKE_NM/ping-hang"
+sh -c '"$1" ping --target=10.99.0.2 --count=50 > /dev/null 2>&1' _ "$script" &
+caller=$!
+n=0
+# shellcheck disable=SC2009 # pgrep is a stand-in here
+while ! ps -eo args | grep -q '^sleep 37$' && [ $n -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+check "the ping runs" sh -c "ps -eo args | grep -q '^sleep 37$'"
+kill -KILL "$caller"
+n=0
+# shellcheck disable=SC2009
+while ps -eo args | grep -q '^sleep 37$' && [ $n -lt 40 ]; do sleep 0.1; n=$((n + 1)); done
+check "  and is gone within seconds of its caller" sh -c "! ps -eo args | grep -q '^sleep 37$'"
+check "  its FIFO too" sh -c "! ls \"\$TMPDIR\"/net-ctl-tool.* >/dev/null 2>&1"
+
+echo "== internet-check"
+reset ok
+echo eth0 > "$FAKE_NM/inet"
+echo "ok 1 11.5 142.251.151.119" > "$FAKE_NM/dns"
+printf '204 0.141' > "$FAKE_NM/curl"
+NET_CTL_UID=0 run internet-check --iface=eth0
+check "exit 0" [ "$rc" = 0 ]
+check "the gateway answers" out_has "RESULT kind=check step=gateway ok=1 ms=0.31 target=192.168.1.1"
+check "the port's DNS server, bound to the port" sh -c "printf '%s' \"\$1\" | grep -q 'step=dns ok=1 ms=11.5 server=192.168.1.1 name=www.google.com addr=142.251.151.119 bound=1' && grep -qx 'python3 www.google.com 192.168.1.1 eth0' \"\$FAKE_NM/calls\"" _ "$out"
+check "HTTPS 204, out of the port, to the address the port's DNS gave" sh -c "printf '%s' \"\$1\" | grep -q 'step=https ok=1 ms=141 code=204' && grep -q 'curl .*--interface if!eth0 --resolve www.google.com:443:142.251.151.119 https://www.google.com/generate_204' \"\$FAKE_NM/calls\"" _ "$out"
+check "the verdict" out_has "RESULT kind=internet iface=eth0 ok=1"
+run internet-check --iface=eth0
+check "not root: curl by interface name, DNS not bound" sh -c "grep -q 'curl .*--interface eth0 ' \"\$FAKE_NM/calls\" && grep -qx 'python3 www.google.com 192.168.1.1 ' \"\$FAKE_NM/calls\""
+echo "servfail 1 3.2" > "$FAKE_NM/dns"
+printf 'curl: (28) Operation timed out after 8001 milliseconds\n000 8.001' > "$FAKE_NM/curl"
+NET_CTL_UID=0 run internet-check --iface=eth0
+check "DNS refuses: named, exit 2" sh -c "[ $rc = 2 ] && printf '%s' \"\$1\" | grep -q 'step=dns ok=0 server=192.168.1.1 name=www.google.com bound=1 reason=servfail'" _ "$out"
+check "  HTTPS still tried, without an address: timeout" out_has "step=https ok=0 url=https://www.google.com/generate_204 bound=1 reason=timeout"
+check "  verdict" out_has "RESULT kind=internet iface=eth0 ok=0"
+echo "ok 1 9.0 142.251.151.119" > "$FAKE_NM/dns"
+printf '302 0.120' > "$FAKE_NM/curl"
+NET_CTL_UID=0 run internet-check --iface=eth0
+check "a captive portal's redirect is not internet" out_has "step=https ok=0 url=https://www.google.com/generate_204 bound=1 reason=http-302"
+: > "$FAKE_NM/inet"
+NET_CTL_UID=0 run internet-check --iface=eth0
+check "a gateway that does not answer" out_has "step=gateway ok=0 target=192.168.1.1 reason=no-reply"
+: > "$FAKE_NM/routes"
+run internet-check
+check "no default route: says so, exit 2" sh -c "[ $rc = 2 ] && printf '%s' \"\$1\" | grep -q 'step=gateway ok=0 reason=no-route'" _ "$out"
+
+echo "== iperf3 (output as iperf3 3.12 printed it on the rig)"
+reset ok
+cat > "$FAKE_NM/iperf-out" <<'EOF'
+Connecting to host 10.99.0.2, port 5201
+[  5] local 10.99.0.1 port 44332 connected to 10.99.0.2 port 5201
+[ ID] Interval           Transfer     Bitrate         Retr  Cwnd
+[  5]   0.00-1.00   sec  1.33 GBytes  11.4 Gbits/sec    0    781 KBytes
+[  5]   1.00-2.00   sec   112 MBytes   940 Mbits/sec    3    781 KBytes
+- - - - - - - - - - - - - - - - - - - - - - - - -
+[ ID] Interval           Transfer     Bitrate         Retr
+[  5]   0.00-2.00   sec  3.43 GBytes  14.7 Gbits/sec    3             sender
+[  5]   0.00-2.00   sec  3.43 GBytes  14.7 Gbits/sec                  receiver
+
+iperf Done.
+EOF
+run iperf-client --host=10.99.0.2 --secs=5
+check "exit 0" [ "$rc" = 0 ]
+check "iperf3 -c, port, time, flushed lines" called "iperf3 -c 10.99.0.2 -p 5201 -t 5 -i 1 --forceflush --connect-timeout 3000"
+check "one line a second, in Mbit/s" sh -c "printf '%s' \"\$1\" | grep -q 'RESULT kind=iperf interval=0.00-1.00 mbit=11400.0' && printf '%s' \"\$1\" | grep -q 'RESULT kind=iperf interval=1.00-2.00 mbit=940.0'" _ "$out"
+check "sender, with retransmissions" out_has "RESULT kind=iperf-sum role=sender interval=0.00-2.00 mbit=14700.0 retr=3"
+check "receiver" out_has "RESULT kind=iperf-sum role=receiver interval=0.00-2.00 mbit=14700.0"
+check "done" out_has "RESULT kind=iperf-done ok=1 host=10.99.0.2"
+cat > "$FAKE_NM/iperf-out" <<'EOF'
+Connecting to host 10.99.0.2, port 5201
+Reverse mode, remote host 10.99.0.2 is sending
+[  5] local 10.99.0.1 port 60797 connected to 10.99.0.2 port 5201
+[ ID] Interval           Transfer     Bitrate         Jitter    Lost/Total Datagrams
+[  5]   0.00-1.00   sec  11.9 MBytes  99.9 Mbits/sec  0.002 ms  0/8626 (0%)
+- - - - - - - - - - - - - - - - - - - - - - - - -
+[ ID] Interval           Transfer     Bitrate         Jitter    Lost/Total Datagrams
+[  5]   0.00-2.00   sec  23.8 MBytes   100 Mbits/sec  0.000 ms  0/17261 (0%)  sender
+[  5]   0.00-2.00   sec  23.8 MBytes  98.2 Mbits/sec  0.031 ms  12/17258 (0.07%)  receiver
+
+iperf Done.
+EOF
+run iperf-client --host=10.99.0.2 --secs=10 --udp --reverse
+check "UDP at 100 Mbit/s, reverse" called "iperf3 -c 10.99.0.2 -p 5201 -t 10 -i 1 --forceflush --connect-timeout 3000 -u -b 100M -R"
+check "UDP: jitter and losses" out_has "RESULT kind=iperf-sum role=receiver interval=0.00-2.00 mbit=98.2 jitter=0.031 lost=12 packets=17258"
+echo "iperf3: error - unable to connect to server: Connection refused" > "$FAKE_NM/iperf-out"
+echo 1 > "$FAKE_NM/iperf-rc"
+run iperf-client --host=192.168.1.1 --secs=5
+check "no server: refused, exit 2" sh -c "[ $rc = 2 ] && printf '%s' \"\$1\" | grep -q 'RESULT kind=iperf-done ok=0 host=192.168.1.1 reason=refused'" _ "$out"
+run iperf-client --host=10.99.0.2 --secs=7
+check "seconds other than 5, 10, 30: refused" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'kind=iperf-done ok=0'" _ "$out"
+reset ok
+: > "$FAKE_NM/ss-busy"
+run iperf-server --start
+check "port 5201 taken: port-busy, exit 2" sh -c "[ $rc = 2 ] && printf '%s' \"\$1\" | grep -q 'RESULT kind=iperf-server running=0 port=5201 reason=port-busy'" _ "$out"
+check "  and no second server" not_called "iperf3 -s"
+rm "$FAKE_NM/ss-busy"
+cat > "$FAKE_NM/iperf-out" <<'EOF'
+-----------------------------------------------------------
+Server listening on 5201 (test #1)
+-----------------------------------------------------------
+Accepted connection from 10.99.0.2, port 43934
+[  5] local 10.99.0.1 port 5201 connected to 10.99.0.2 port 43938
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-1.00   sec  1.02 GBytes  8.75 Gbits/sec
+- - - - - - - - - - - - - - - - - - - - - - - - -
+[ ID] Interval           Transfer     Bitrate
+[  5]   0.00-2.00   sec  2.44 GBytes  10.5 Gbits/sec                  receiver
+EOF
+run iperf-server --start
+check "server: its addresses" out_has "RESULT kind=iperf-server running=1 port=5201 addrs=192.168.1.170,192.168.20.164"
+check "  iperf3 -s on 5201" called "iperf3 -s -p 5201 -i 1 --forceflush"
+check "  the client, its seconds and its result" sh -c "printf '%s' \"\$1\" | grep -q 'RESULT kind=iperf-peer from=10.99.0.2' && printf '%s' \"\$1\" | grep -q 'RESULT kind=iperf interval=0.00-1.00 mbit=8750.0' && printf '%s' \"\$1\" | grep -q 'RESULT kind=iperf-sum role=receiver interval=0.00-2.00 mbit=10500.0'" _ "$out"
+check "  ends with running=0" sh -c "printf '%s\n' \"\$1\" | tail -n 1 | grep -q 'RESULT kind=iperf-server running=0'" _ "$out"
+
+echo "== stopped tools and reads leave nothing behind"
+reset ok
+: > "$FAKE_NM/iperf-hang"
+"$script" iperf-server --start > /dev/null 2>&1 &
+n=0
+while [ ! -s "$TMPDIR/net-ctl-iperf-server-$(id -u).pid" ] && [ $n -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+run iperf-server --stop
+n=0
+# shellcheck disable=SC2009 # pgrep is a stand-in here
+while ps -eo args | grep -q '^sleep 38$' && [ $n -lt 40 ]; do sleep 0.1; n=$((n + 1)); done
+check "iperf-server --stop ends the server and its iperf3" sh -c "! ps -eo args | grep -q '^sleep 38\$'"
+check "  and the pid file is gone" [ ! -e "$TMPDIR/net-ctl-iperf-server-$(id -u).pid" ]
+sleep 60 &
+bystander=$!
+echo "$bystander" > "$TMPDIR/net-ctl-iperf-server-$(id -u).pid"
+run iperf-server --stop
+check "a stale pid file: --stop signals no one else" kill -0 "$bystander"
+kill "$bystander" 2>/dev/null
+# dash (the rig's sh) runs no EXIT trap when a signal ends the shell: the
+# app's TERM to a status used to leave its directory behind (bash, the host's
+# sh, runs it anyway, so on bash this only shows the fix does no harm). A
+# trapped TERM waits for the running pings (here 2 s; real ones give up in 1 s)
+reset ok
+echo eth0 > "$FAKE_NM/inet"
+: > "$FAKE_NM/ping-slow"
+NET_CTL_INET='' "$script" status > /dev/null 2>&1 &
+st=$!
+n=0
+while ! ls "$TMPDIR"/net-ctl-st.* >/dev/null 2>&1 && [ $n -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+kill -TERM "$st"
+n=0
+while ls "$TMPDIR"/net-ctl-st.* >/dev/null 2>&1 && [ $n -lt 100 ]; do sleep 0.1; n=$((n + 1)); done
+check "a status stopped with TERM removes its directory" sh -c "! ls \"\$TMPDIR\"/net-ctl-st.* >/dev/null 2>&1"
+wait "$st" 2>/dev/null
 
 if [ "$failures" -gt 0 ]; then echo "net-ctl: $failures failure(s)"; exit 1; fi
 echo "net-ctl: PASS"
