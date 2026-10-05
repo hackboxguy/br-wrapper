@@ -1,0 +1,119 @@
+#!/bin/sh
+# fake-net-ctl - net-ctl.sh's stand-in for the UI: canned answers from a
+# scenario, no NetworkManager, no root, no network.
+#
+#   FAKE_NET_SCENARIO  online-serving (default) | offline | usb-adapter | no-nm |
+#                      wifi-blocked | wifi-absent | connect-ok | connect-bad-password |
+#                      connect-not-found | connect-no-address | connect-timeout
+#   FAKE_NET_STEP      seconds between PROGRESS lines of a join (default 0.4)
+#
+# Values are percent-encoded as net-ctl.sh encodes them. The app runs this
+# script without sudo in a dry run, and fake-net-ctl ignores --dry-run: the
+# point is to see every outcome on screen.
+scenario=${FAKE_NET_SCENARIO:-online-serving}
+step=${FAKE_NET_STEP:-0.4}
+cmd=${1:-}
+
+if [ "$scenario" = no-nm ]; then
+    case $cmd in
+        available) echo "RESULT kind=available ok=0 reason=nmcli is not installed"; exit 4 ;;
+        *) echo "RESULT kind=error ok=0 detail=nmcli%20is%20not%20installed reason=no-nm"; exit 4 ;;
+    esac
+fi
+
+eth0_up='RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected profile=Wired%20connection%201 mode=client ip=192.168.1.170 prefix=24 gateway=192.168.1.1 dns=192.168.1.1 ssid= signal= band= default=1 driver=bcmgenet product= ip6=fdac:d87e:4f12::538/128,fe80::76f9:b550:2848:fea0/64 dhcpserver=192.168.1.1 leasetime=86400 leaseexpiry='
+eth0_nocable='RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=0 speed= state=unavailable profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=bcmgenet product= ip6= dhcpserver= leasetime= leaseexpiry='
+eth0_lan='RESULT kind=iface name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected profile=Wired%20connection%201 mode=client ip=192.168.1.170 prefix=24 gateway=192.168.1.1 dns=192.168.1.1 ssid= signal= band= default=0 driver=bcmgenet product= ip6=fe80::76f9:b550:2848:fea0/64 dhcpserver=192.168.1.1 leasetime=86400 leaseexpiry='
+wlan_on='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=1 speed= state=connected profile=Workshop mode=client ip=192.168.20.138 prefix=24 gateway=192.168.20.1 dns=192.168.20.1 ssid=Workshop signal=71 band=5 default=0 driver=brcmfmac product= ip6=fe80::4eef:9377:8662:a1bc/64 dhcpserver=192.168.20.1 leasetime=43200 leaseexpiry='
+wlan_idle='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=0 speed= state=disconnected profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=brcmfmac product= ip6= dhcpserver= leasetime= leaseexpiry='
+wlan_off='RESULT kind=iface name=wlan0 type=wifi usb=0 mac=2C:CF:67:4F:66:CB carrier=0 speed= state=unavailable profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=brcmfmac product= ip6= dhcpserver= leasetime= leaseexpiry='
+eth1_serving='RESULT kind=iface name=eth1 type=ethernet usb=1 mac=00:0E:C6:A1:B2:C3 carrier=1 speed=100 state=connected profile=eth1 mode=server ip=192.168.50.1 prefix=24 gateway= dns= ssid= signal= band= default=0 driver=asix product=AX88772B ip6= dhcpserver= leasetime= leaseexpiry='
+eth1_uplink='RESULT kind=iface name=eth1 type=ethernet usb=1 mac=00:E0:4C:68:00:12 carrier=1 speed=1000 state=connected profile=Wired%20connection%202 mode=client ip=10.0.0.57 prefix=24 gateway=10.0.0.1 dns=10.0.0.1 ssid= signal= band= default=1 driver=r8152 product=USB%2010/100/1000%20LAN ip6= dhcpserver=10.0.0.1 leasetime=3600 leaseexpiry='
+eth2_nocable='RESULT kind=iface name=eth2 type=ethernet usb=1 mac=00:0E:C6:11:22:33 carrier=0 speed= state=unavailable profile= mode=off ip= prefix= gateway= dns= ssid= signal= band= default=0 driver=ax88179_178a product=AX88179 ip6= dhcpserver= leasetime= leaseexpiry='
+
+status() {
+    case $scenario in
+        offline)
+            echo "$eth0_nocable"; echo "$wlan_idle"
+            echo "RESULT kind=summary internet=no via= connectivity=none wifi=on country=DE volatile=1 wifiboot=off" ;;
+        usb-adapter)
+            echo "$eth0_lan"; echo "$wlan_idle"; echo "$eth1_uplink"; echo "$eth2_nocable"
+            echo "RESULT kind=summary internet=yes via=eth1 connectivity=full wifi=on country=DE volatile=1 wifiboot=off" ;;
+        wifi-blocked)
+            echo "$eth0_up"; echo "$wlan_off"
+            echo "RESULT kind=summary internet=yes via=eth0 connectivity=full wifi=off country=00 volatile=1 wifiboot=off" ;;
+        wifi-absent)
+            echo "$eth0_up"
+            echo "RESULT kind=summary internet=yes via=eth0 connectivity=full wifi=absent country= volatile=1 wifiboot=off" ;;
+        *)
+            echo "$eth0_up"; echo "$wlan_on"
+            case $scenario in online-serving) echo "$eth1_serving" ;; esac
+            echo "RESULT kind=summary internet=yes via=eth0 connectivity=full wifi=on country=DE volatile=1 wifiboot=off" ;;
+    esac
+}
+
+scan() {
+    active_workshop=1
+    case $scenario in offline|usb-adapter) active_workshop=0 ;; esac
+    echo "RESULT kind=ap ssid=Workshop signal=71 security=wpa2 band=5 saved=1 active=$active_workshop"
+    echo "RESULT kind=ap ssid=FRITZ%21Box%207590%20HR signal=64 security=wpa2 band=2.4 saved=0 active=0"
+    echo "RESULT kind=ap ssid=Lab-Bench signal=58 security=wpa3 band=5 saved=1 active=0"
+    echo "RESULT kind=ap ssid=Caf%C3%A9%20%22Am%20Markt%22 signal=52 security=open band=2.4 saved=0 active=0"
+    echo "RESULT kind=ap ssid=softliQ:MC_ab0f32 signal=47 security=wpa2 band=2.4 saved=0 active=0"
+    echo "RESULT kind=ap ssid=Corp%20Wireless signal=41 security=enterprise band=5 saved=0 active=0"
+    echo "RESULT kind=ap ssid=Guest%20%3D%20100%25 signal=33 security=wpa2 band=2.4 saved=0 active=0"
+    echo "RESULT kind=ap ssid=WLAN1-L428T0 signal=21 security=wpa2 band=2.4 saved=0 active=0"
+    echo "RESULT kind=saved ssid=Workshop uuid=11111111-2222-3333-4444-555555555555 autoconnect=1 active=$active_workshop hidden=0 inrange=1"
+    echo "RESULT kind=saved ssid=Lab-Bench uuid=22222222-2222-3333-4444-555555555555 autoconnect=0 active=0 hidden=0 inrange=1"
+    echo "RESULT kind=saved ssid=Home%20Office uuid=33333333-2222-3333-4444-555555555555 autoconnect=1 active=0 hidden=0 inrange=0"
+}
+
+ssid=
+for a in "$@"; do case $a in --ssid=*) ssid=${a#--ssid=} ;; esac; done
+
+case $cmd in
+    available) echo "RESULT kind=available ok=1" ;;
+    status) status ;;
+    monitor)
+        echo "NOTICE changed"
+        while :; do sleep 3600; done ;;
+    leases)
+        echo "RESULT kind=lease ip=192.168.50.23 mac=B8:27:EB:01:02:03 host=pi-bench-2 expires=1791262000"
+        echo "RESULT kind=lease ip=192.168.50.61 mac=3C:22:FB:AA:BB:CC host=laptop expires=1791262500"
+        echo "RESULT kind=leases iface=eth1 count=2" ;;
+    wifi-scan)
+        case $scenario in wifi-blocked|wifi-absent) exit 2 ;; esac
+        scan ;;
+    wifi-connect)
+        # the password, if any, is the first line of stdin (never printed)
+        IFS= read -r _pw || true
+        reason=
+        case $scenario in
+            connect-bad-password) reason=bad-password ;;
+            connect-not-found) reason=not-found ;;
+            connect-no-address) reason=no-address ;;
+            connect-timeout) reason=timeout ;;
+        esac
+        if [ "$reason" = not-found ]; then
+            echo "RESULT kind=connect ok=0 detail=no%20network%20named%20it%20is%20in%20range reason=not-found"; exit 2
+        fi
+        sleep "$step"; echo "PROGRESS phase=associating"
+        sleep "$step"; echo "PROGRESS phase=authenticating"
+        if [ "$reason" = bad-password ]; then
+            sleep "$step"
+            echo "RESULT kind=connect ssid=$ssid ok=0 restored=Workshop detail= reason=bad-password"; exit 3
+        fi
+        sleep "$step"; echo "PROGRESS phase=address"
+        if [ -n "$reason" ]; then
+            sleep "$step"
+            echo "RESULT kind=connect ssid=$ssid ok=0 restored=Workshop detail= reason=$reason"; exit 3
+        fi
+        sleep "$step"
+        echo "RESULT kind=connect ssid=$ssid ok=1 ip=192.168.20.141" ;;
+    wifi-disconnect) echo "RESULT kind=disconnect ok=1" ;;
+    wifi-forget) echo "RESULT kind=forget ssid=$ssid ok=1" ;;
+    wifi-autoconnect) echo "RESULT kind=autoconnect ssid=$ssid ok=1" ;;
+    wifi-radio) sleep "$step"; echo "RESULT kind=radio ok=1" ;;
+    *) echo "fake-net-ctl: unknown command $cmd" >&2; exit 1 ;;
+esac
+exit 0

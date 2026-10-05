@@ -1,0 +1,13 @@
+config BR2_PACKAGE_NETWORK_MANAGER_APP
+	bool "network-manager-app"
+	depends on BR2_PACKAGE_QT5
+	select BR2_PACKAGE_QT5BASE_GUI
+	select BR2_PACKAGE_QT5DECLARATIVE
+	select BR2_PACKAGE_QT5DECLARATIVE_QUICK
+	help
+	  Network for the display rig: what every network interface is
+	  doing, WiFi (scan, join, saved networks), and later the wired
+	  ports' modes and bench diagnostics. Everything goes through
+	  net-ctl.sh, which drives NetworkManager (nmcli); without
+	  NetworkManager the app says so. Started from qt-demo-launcher's
+	  "Network" button.

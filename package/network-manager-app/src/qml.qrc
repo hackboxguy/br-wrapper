@@ -1,0 +1,16 @@
+<RCC>
+    <qresource prefix="/">
+        <file>main.qml</file>
+        <file>Keyboard.qml</file>
+        <file>icons/wifi.svg</file>
+        <file>icons/ethernet.svg</file>
+        <file>icons/lock.svg</file>
+        <file>icons/backspace.svg</file>
+        <file>icons/shift.svg</file>
+        <file>icons/capslock.svg</file>
+        <file>icons/check.svg</file>
+        <file>icons/bad.svg</file>
+        <file>icons/warn.svg</file>
+        <file>icons/info.svg</file>
+    </qresource>
+</RCC>
