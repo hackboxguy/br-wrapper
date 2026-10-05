@@ -18,6 +18,7 @@ The package READMEs are the reference for each app; this document is the part th
 | `disp-settings` | brightness, temperatures + VBATT, panel features (FPGA), firmware versions, touch info | QML + Quick Controls 2 + C++ controllers (I²C) | the card layout that adapts to 1920×720 / 1920×1080 |
 | `disp-tester` | pattern generator (incl. `edge-ruler`), calibration flows | QML | test patterns |
 | `touch-gallery` | photo / report viewer: one-finger pan, double-tap zoom, momentum | QML | touch handling |
+| `network-manager-app` | the Network tile: interfaces, WiFi, wired port modes (client / fixed / DHCP server), ping, internet check, iperf3 | QML (Qt 5.15 inline components, no Quick Controls) + one C++ controller per section; `net-ctl.sh` (POSIX sh) the only thing that talks to NetworkManager | the on-screen keyboard and numeric pad; a change that must outlive the app (`systemd-run`); per-port internet checks |
 
 Scripts the apps drive live in **space6-architecture** `code/disptool/tools/` (`update-iocs.sh`, `update-fpga.sh`,
 installed beside `disptool` in `/home/pi/micropanel/bin` by that repo's CMake). Firmware and FPGA images and the
@@ -261,6 +262,20 @@ flash.
 - Inline QML components can use the root's `t`, `s`, `withAlpha`; properties of a *parent item* are not in scope
   unqualified — qualify them (`sectionSwitch.selX`).
 - `state` is an existing `Item` property: don't name your own property `state`.
+- `nmcli -t` escapes `:` in list output (`connection show`, `device wifi list`) but **not** in `device show` or
+  `connection show <id>` values: a MAC address read from `device show` was split at its colons. Split such lines on
+  the first `:` only.
+- `IFS` with TAB (or any whitespace) folds runs of separators: empty tab-separated fields vanish and the next field
+  shifts left. `net-ctl.sh` separates with `\037` (unit separator), which `IFS` does not fold.
+- A running system `dnsmasq.service` holds port 53 and NetworkManager's shared mode then fails to start its own
+  dnsmasq. Stop and mask it before serving (the micropanel image masks it at build time).
+- A second DHCP server on the same wire moves addresses: the rig's own lease or a bench PC's can come from the
+  wrong server. Probe (one DISCOVER, listen ~4.5 s — a dnsmasq took 3.1 s with its ping check) before serving.
+- NetworkManager lists a veth as `ethernet`; tell virtual devices apart by `/sys/class/net/<dev>` pointing into
+  `devices/virtual`.
+- The launcher's `stop-app` and a launcher restart kill the app's whole cgroup with SIGKILL: anything the app must
+  finish (a network change) has to run outside it (`systemd-run --pipe --wait`), and helper processes must notice
+  their caller is gone by themselves (poll `kill -0 $PPID`), since no signal reaches them.
 
 ## 7. Open threads (as of this handover)
 

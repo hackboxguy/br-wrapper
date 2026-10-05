@@ -2,6 +2,7 @@
 #include "NetTool.h"
 
 #include <QDir>
+#include <algorithm>
 #include <QFile>
 
 static qint64 readCounter(const QString &path)
@@ -144,6 +145,20 @@ void StatusController::onStatusFinished(int exitCode)
 
     if (command == "status") {
         if (exitCode == 0) {
+            // A stable order (review v2, 3.1): the built-in port, WiFi, then
+            // USB adapters and other ports by name - not NetworkManager's
+            // order, which follows connection state
+            auto rank = [](const QVariantMap &m) {
+                const QString name = m.value("name").toString();
+                if (m.value("type") == "wifi") return 1;
+                if (name.startsWith("veth")) return 3;
+                return m.value("usb") == "1" ? 2 : 0;
+            };
+            std::stable_sort(m_collecting.begin(), m_collecting.end(), [&](const QVariant &a, const QVariant &b) {
+                const QVariantMap x = a.toMap(), y = b.toMap();
+                if (rank(x) != rank(y)) return rank(x) < rank(y);
+                return x.value("name").toString() < y.value("name").toString();
+            });
             // Unchanged content is not re-announced: the cards would be rebuilt
             if (m_collecting != m_interfaces || m_collectingSummary != m_summary || !m_loaded) {
                 m_interfaces = m_collecting;

@@ -53,6 +53,8 @@ public:
 
     bool busy() const;
     QString command() const { return m_command; }
+    // the running change said "NOTICE detached": it runs as its own unit
+    bool detached() const { return m_detached; }
 
     // elevated: run through sudo -n (never in a dry run). stdinData is written
     // and the channel closed; without it stdin is closed at once.

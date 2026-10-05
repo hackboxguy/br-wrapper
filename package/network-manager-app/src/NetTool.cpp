@@ -95,6 +95,13 @@ static bool quietCommand(const QString &command)
     return command == "status" || command == "wifi-scan" || command == "leases" || command == "available";
 }
 
+// The tools stream a line per reply or per second: the log keeps the command,
+// the summaries and the exit, not every sample
+static bool toolCommand(const QString &command)
+{
+    return command == "ping" || command == "internet-check" || command == "iperf-server" || command == "iperf-client";
+}
+
 NetTool::NetTool(const QString &tool, bool dryRun, QObject *parent)
     : QObject(parent), m_tool(tool), m_dryRun(dryRun)
 {
@@ -111,7 +118,7 @@ NetTool::~NetTool()
             log(m_command + " runs on as its own unit");
             m_process->kill();
             m_process->waitForFinished(1000);
-        } else if (quietCommand(m_command) || m_command == "monitor") {
+        } else if (quietCommand(m_command) || m_command == "monitor" || toolCommand(m_command)) {
             m_process->terminate();
             if (!m_process->waitForFinished(1000)) m_process->kill();
             m_process->waitForFinished(1000);
@@ -205,9 +212,15 @@ void NetTool::handle(const QString &raw)
         return;
     }
     switch (line.kind) {
-    case Line::Result:
-        log(raw.trimmed());
+    case Line::Result: {
+        const QString kind = line.fields.value("kind").toString();
+        if (!(toolCommand(m_command) && (kind == "reply" || kind == "lost" || kind == "iperf"))) log(raw.trimmed());
         emit result(line.fields);
+        break;
+    }
+    case Line::Other:
+        if (toolCommand(m_command)) break;   // the tool's own output, already parsed
+        if (!line.text.isEmpty()) log("  " + line.text);
         break;
     case Line::Progress:
         log(raw.trimmed());
@@ -217,9 +230,6 @@ void NetTool::handle(const QString &raw)
         if (line.text == "detached") m_detached = true;
         if (line.text != "changed") log(raw.trimmed());
         emit notice(line.text);
-        break;
-    case Line::Other:
-        if (!line.text.isEmpty()) log("  " + line.text);
         break;
     }
 }

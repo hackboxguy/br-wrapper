@@ -20,6 +20,8 @@ add_executable(network-manager-app
     src/WifiController.h
     src/WiredController.cpp
     src/WiredController.h
+    src/ToolsController.cpp
+    src/ToolsController.h
     src/qml.qrc
 )
 
@@ -52,7 +54,7 @@ install(TARGETS network-manager-app
 )
 
 # The app's only link to NetworkManager (reads as the user, changes through sudo -n)
-install(PROGRAMS src/net-ctl.sh src/net-dhcp-probe.py DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS src/net-ctl.sh src/net-dhcp-probe.py src/net-badge.sh DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 message(STATUS "network-manager-app: configured")
-message(STATUS "  Install binary + net-ctl.sh to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")
+message(STATUS "  Install binary + net-ctl.sh, net-dhcp-probe.py, net-badge.sh to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")

@@ -47,6 +47,8 @@ export QT_FORCE_STDERR_LOGGING=1
 
 shot() { # <name> <scenario> <extra app args...>
     local name=$1 scenario=$2; shift 2
+    # ONLY=<regex>: just the matching states (while working on one screen)
+    if [ -n "${ONLY:-}" ] && ! [[ $name =~ $ONLY ]]; then return 0; fi
     FAKE_NET_SCENARIO=$scenario "$app" --dry-run --window-size "$size" --net-tool "$here/fake-net-ctl" \
         --sysfs "$work/sys" --sample-ms 100 --log-file "$work/app.log" \
         --screenshot "$out/$name.png" --screenshot-delay 6500 "$@" 2>&1 \
@@ -65,7 +67,6 @@ shot overview-detail-eth0 online-serving --open-sheet detail:eth0
 shot overview-detail-wlan0 online-serving --open-sheet detail:wlan0
 shot overview-detail-eth1 online-serving --open-sheet detail:eth1
 shot wired-empty online-serving --section wired --screenshot-delay 800
-shot tools-empty online-serving --section tools --screenshot-delay 800
 
 # WiFi (Phase 2)
 shot wifi-connected online-serving --section wifi --screenshot-delay 1500
@@ -114,4 +115,28 @@ shot wired-legacy-takeover legacy-server --section wired --open-sheet wired-clie
 FAKE_NET_STEP=2 shot wired-applying wired-static --section wired --open-sheet apply-client --screenshot-delay 2500
 FAKE_NET_STEP=0.1 shot wired-applied wired-static --section wired --open-sheet apply-client --screenshot-delay 2000
 FAKE_NET_STEP=0.1 shot wired-apply-failed wired-fail --section wired --open-sheet apply-static:eth1 --screenshot-delay 2000
+
+# Tools (Phase 4): each tool's states; FAKE_TOOL picks the outcome
+shot tools-ping-idle online-serving --section tools --screenshot-delay 1000
+FAKE_TOOL_STEP=0.6 shot tools-ping-running online-serving --section tools --open-sheet ping:192.168.1.1:live --screenshot-delay 100
+shot tools-ping-ok online-serving --section tools --open-sheet ping:192.168.1.1 --screenshot-delay 300
+FAKE_TOOL=loss shot tools-ping-loss online-serving --section tools --open-sheet ping:192.168.50.23 --screenshot-delay 300
+FAKE_TOOL=no-reply shot tools-ping-no-reply online-serving --section tools --open-sheet ping:192.168.50.88 --screenshot-delay 300
+FAKE_TOOL=unknown-host shot tools-ping-unknown-host online-serving --section tools --open-sheet ping:bench-pc.lan --screenshot-delay 300
+shot tools-host-numpad online-serving --section tools --open-sheet host --screenshot-delay 600
+shot tools-host-keyboard online-serving --section tools --open-sheet host:abc --screenshot-delay 600
+FAKE_TOOL_STEP=0.8 shot tools-check-running online-serving --section tools --open-sheet check:eth0:live --screenshot-delay 100
+shot tools-check-ok online-serving --section tools --open-sheet check:eth0 --screenshot-delay 300
+FAKE_TOOL=dns-fail shot tools-check-dns-fail online-serving --section tools --open-sheet check:eth1 --screenshot-delay 300
+FAKE_TOOL=gateway-fail shot tools-check-gateway-fail online-serving --section tools --open-sheet check:eth0 --screenshot-delay 300
+FAKE_TOOL=captive shot tools-check-captive online-serving --section tools --open-sheet check:wlan0 --screenshot-delay 300
+FAKE_TOOL=tls shot tools-check-tls online-serving --section tools --open-sheet check --screenshot-delay 300
+shot tools-server-listening online-serving --section tools --open-sheet server:listening --screenshot-delay 300
+FAKE_TOOL=busy FAKE_TOOL_STEP=0.3 shot tools-server-measuring online-serving --section tools --open-sheet server:live --screenshot-delay 350
+FAKE_TOOL=port-busy shot tools-server-port-busy online-serving --section tools --open-sheet server --screenshot-delay 300
+FAKE_TOOL_STEP=0.4 shot tools-client-running online-serving --section tools --open-sheet client:192.168.50.23:live --screenshot-delay 600
+shot tools-client-tcp online-serving --section tools --open-sheet client:192.168.50.23 --screenshot-delay 300
+shot tools-client-udp-reverse online-serving --section tools --open-sheet client:192.168.50.23:udp:reverse --screenshot-delay 300
+FAKE_TOOL=refused shot tools-client-refused online-serving --section tools --open-sheet client:192.168.50.61 --screenshot-delay 300
+FAKE_TOOL=unreachable shot tools-client-unreachable online-serving --section tools --open-sheet client:10.0.0.9 --screenshot-delay 300
 ls -1 "$out"

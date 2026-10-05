@@ -28,6 +28,8 @@ sed -i "s|/usr/bin/disp-tester|$BASE_PATH/bin/disp-tester|g" "$CONFIG_FILE"
 sed -i "s|/usr/bin/disp-settings|$BASE_PATH/bin/disp-settings|g" "$CONFIG_FILE"
 sed -i "s|/usr/bin/system-manager-app|$BASE_PATH/bin/system-manager-app|g" "$CONFIG_FILE"
 sed -i "s|/usr/bin/system-update-check.sh|$BASE_PATH/bin/system-update-check.sh|g" "$CONFIG_FILE"
+sed -i "s|/usr/bin/network-manager-app|$BASE_PATH/bin/network-manager-app|g" "$CONFIG_FILE"
+sed -i "s|/usr/bin/net-badge.sh|$BASE_PATH/bin/net-badge.sh|g" "$CONFIG_FILE"
 
 # Update fingerpaint to system Qt examples location (not part of our build)
 # Detect architecture and use appropriate path

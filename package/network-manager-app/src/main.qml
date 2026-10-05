@@ -48,6 +48,14 @@ Window {
 
     // The shown section has its data (main.cpp grabs a screenshot once
     // shotReady, i.e. this and any --open-sheet overlay)
+    readonly property bool toolShotReady: {
+        var p = initialSheet.split(":"), last = p[p.length - 1]
+        if (["ping", "check", "server", "client"].indexOf(p[0]) < 0) return true
+        if (last === "live") return tools.samples.length >= 4 || tools.replies.length >= 4
+                                    || (tools.checkSteps.length > 0 && tools.checkSteps[0].state === "ok")
+        if (last === "listening") return tools.iperf.listening === true
+        return tools.running === "idle"
+    }
     readonly property bool dataReady: {
         if (!status.checked) return false
         if (nmMissing) return true
@@ -56,17 +64,171 @@ Window {
         return true
     }
     readonly property bool shotReady: dataReady && (initialSheet === "" || sheetOpened)
+                                      && toolShotReady
                                       && (initialSheet !== "probe-warning" || (!!wport && !!wired.probes[wport.name]
                                                                                && wired.probes[wport.name].state === "done"))
 
-    // A WiFi change runs: the app stays until it has finished or restored
-    readonly property bool changing: wifi.busyState === "connecting" || wifi.busyState === "working"
+    // A WiFi change runs in place (no systemd-run): the app stays until it has
+    // finished or restored. A detached change runs as its own unit and
+    // finishes without the app, so Back and Escape stay usable (review v2, 3.5)
+    readonly property bool changing: (wifi.busyState === "connecting" || wifi.busyState === "working")
+                                     && !wifi.changeDetached
     onSectionChanged: sectionHooks()
     Component.onCompleted: sectionHooks()
     function sectionHooks() {
         wifi.setActive(section === "wifi")
         wired.setActive(section === "wired")
         status.setLeasesWanted(section === "overview" || section === "wired")
+        tools.setActive(section === "tools")
+    }
+
+    // ---- Tools: what is chosen
+    property string tool: "ping"          // ping | check | server | client
+    property string pingTarget: ""
+    property string pingIface: ""         // "" = routing decides
+    property string checkPort: ""         // "" = the default route's port
+    property string clientHost: ""
+    property int clientSecs: 10
+    property bool clientUdp: false
+    property bool clientReverse: false
+    function portByName(n) {
+        var list = status.interfaces
+        for (var i = 0; i < list.length; ++i) if (list[i].name === n) return list[i]
+        return null
+    }
+    // Addresses worth a tap: gateways, the clients of serving ports, two
+    // public resolvers (ping only), what was typed, and "Other…"
+    function targetChips(current, publicOnes) {
+        var out = [], seen = {}
+        function add(v, label, note) { if (!v || seen[v]) return; seen[v] = true; out.push({ value: v, label: label, note: note }) }
+        var list = status.interfaces, i
+        for (i = 0; i < list.length; ++i) if (list[i].gateway) add(list[i].gateway, list[i].gateway, "gateway · " + list[i].name)
+        var L = wired.leases
+        for (var port in L) {
+            var rows = L[port] || []
+            for (i = 0; i < rows.length; ++i)
+                add(rows[i].ip, rows[i].host || rows[i].ip, (rows[i].host ? rows[i].ip + " · " : "") + "client on " + port)
+        }
+        if (publicOnes) { add("8.8.8.8", "8.8.8.8", "Google DNS"); add("1.1.1.1", "1.1.1.1", "Cloudflare DNS") }
+        if (current) add(current, current, "typed")
+        out.push({ value: "", label: "Other…", note: "type an address or name" })
+        return out
+    }
+    function portChips(forCheck) {
+        var out = [{ value: "", label: forCheck ? "Default route" : "Any port",
+                     note: forCheck ? (summary.defaultdev ? "now " + summary.defaultdev : "none") : "routing decides" }]
+        var list = status.interfaces
+        for (var i = 0; i < list.length; ++i)
+            if (list[i].ip) out.push({ value: list[i].name, label: list[i].name, note: list[i].ip })
+        return out
+    }
+    function msText(ms) {
+        var v = parseFloat(ms)
+        if (isNaN(v)) return ""
+        return (v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : Math.round(v)) + " ms"
+    }
+    function mbitText(v) {
+        v = parseFloat(v)
+        if (isNaN(v)) return ""
+        if (v >= 1000) return (v / 1000).toFixed(v >= 10000 ? 1 : 2) + " Gbit/s"
+        return (v >= 100 ? Math.round(v) : v.toFixed(1)) + " Mbit/s"
+    }
+    function pingVerdict() {
+        var m = tools.pingSummary, n = tools.replies.length
+        var from = m.iface ? " from " + m.iface : ""
+        if (tools.running === "ping") return { text: "Pinging " + m.target + from + "…  " + n + " of 10", tint: t.info }
+        if (!m.target) return { text: "Choose an address, or type one, and press Start.", tint: t.sub }
+        if (m.stopped) return { text: "Stopped after " + n + " of 10.", tint: t.sub }
+        if (m.reason === "unknown-host") return { text: "No address found for the name " + m.target + ".", tint: t.bad }
+        if (m.reason === "bad-interface") return { text: m.iface + " cannot send: it has no address.", tint: t.bad }
+        if (m.reason === "unreachable") return { text: "No route to " + m.target + from + ".", tint: t.bad }
+        var loss = parseInt(m.loss), recv = parseInt(m.received), sent = parseInt(m.sent)
+        if (isNaN(loss)) return { text: "", tint: t.sub }
+        if (loss === 0) return { text: m.target + " answered all " + sent + " · average " + msText(m.avg), tint: t.ok }
+        if (recv === 0) return { text: "No answer from " + m.target + from + ": " + sent + " sent, all lost.", tint: t.bad }
+        return { text: m.target + " answered " + recv + " of " + sent + " (" + loss + " % lost) · average " + msText(m.avg), tint: t.warn }
+    }
+    function checkHost() { return tools.checkUrl.replace("https://", "").split("/")[0] }
+    function stepTitle(st) {
+        return st.step === "gateway" ? "The gateway answers"
+             : st.step === "dns" ? "DNS finds " + tools.checkName
+             : "HTTPS reaches " + checkHost()
+    }
+    function stepDetail(st) {
+        if (st.state === "" || (st.state === "pending" && tools.running !== "check"))
+            return st.step === "gateway" ? "A ping to the port's gateway"
+                 : st.step === "dns" ? "A question to the port's own DNS server"
+                 : "A request to " + tools.checkUrl + ", sent out of the port"
+        if (st.state === "pending") return "…"
+        if (st.state === "ok") {
+            if (st.step === "gateway") return st.target + " · " + msText(st.ms)
+            if (st.step === "dns") return st.server + " answered " + st.addr + " · " + msText(st.ms)
+            return "HTTP " + st.code + " · " + msText(st.ms)
+        }
+        var r = st.reason || ""
+        if (r === "stopped") return "Stopped"
+        if (r === "skipped") return "Not tried: no port"
+        if (st.step === "gateway")
+            return r === "no-route" ? "This rig has no default route"
+                 : r === "no-gateway" ? "The port has no gateway"
+                 : "No answer from " + st.target + " — some routers never answer a ping"
+        if (st.step === "dns")
+            return r === "no-dns-server" ? "The port has no DNS server"
+                 : r === "no-answer" ? st.server + " does not answer"
+                 : r === "servfail" ? st.server + " answered with an error: it cannot look names up"
+                 : r === "nxdomain" ? st.server + " says the name does not exist"
+                 : r === "unreachable" ? st.server + " cannot be reached"
+                 : st.server + " gave no address"
+        return r === "timeout" ? "No answer within 8 s"
+             : r === "tls" ? "The secure connection failed (is the rig's clock right?)"
+             : r === "no-name" ? "The name was not found"
+             : r === "unreachable" ? "The connection was refused or has no route"
+             : r.indexOf("http-") === 0 ? "Unexpected answer (HTTP " + r.substring(5) + ") — a login page?"
+             : "Failed"
+    }
+    function checkVerdict() {
+        var steps = tools.checkSteps
+        var port = tools.checkIface || "the default route"
+        if (tools.running === "check") return { text: "Checking " + port + "…", tint: t.info }
+        if (steps.length === 0) return { text: "Choose a port and press Check.", tint: t.sub }
+        for (var i = 0; i < steps.length; ++i) {
+            if (steps[i].reason === "stopped") return { text: "Stopped.", tint: t.sub }
+            if (steps[i].state === "failed") {
+                var why = stepDetail(steps[i])
+                if (!/[.?!]$/.test(why)) why += "."
+                if (steps[2] && steps[2].state === "ok")
+                    return { text: "Internet works through " + port + ", though one step failed: " + why, tint: t.warn }
+                return { text: "No internet through " + port + ". " + why, tint: t.bad }
+            }
+        }
+        return { text: "Internet works through " + port + ".", tint: t.ok }
+    }
+    function serverVerdict() {
+        var p = tools.iperf
+        if (p.mode !== "server") return { text: "Press Start, then run one of these commands on the other machine.", tint: t.sub }
+        if (p.reason === "port-busy") return { text: "Port 5201 is in use: another iperf3 server runs on this rig (the panel menu's?). Stop it first.", tint: t.bad }
+        if (p.reason === "unsupported") return { text: "iperf3 is not installed on this rig.", tint: t.bad }
+        if (tools.running === "server") return { text: "Listening on port 5201. Stop it, or leave Tools, to end it.", tint: t.info }
+        return { text: "Stopped.", tint: t.sub }
+    }
+    function clientVerdict() {
+        var p = tools.iperf
+        if (p.mode !== "client") return { text: clientHost ? "Press Start to measure for " + clientSecs + " s." : "Choose the server, or type its address, and press Start.", tint: t.sub }
+        var way = p.reverse ? p.host + " → this rig" : "this rig → " + p.host
+        if (tools.running === "client") return { text: "Measuring " + way + ", " + p.secs + " s, " + (p.udp ? "UDP at 100 Mbit/s…" : "TCP…"), tint: t.info }
+        if (p.ok === false || (p.ok === undefined && p.state === "done")) {
+            var r = p.reason || "failed"
+            return { text: r === "refused" ? "No iperf3 server answers on " + p.host + " (port 5201). Start one there: iperf3 -s"
+                         : r === "unreachable" ? p.host + " cannot be reached."
+                         : r === "server-busy" ? p.host + " is busy with another test. Try again in a moment."
+                         : r === "unknown-host" ? "No address found for the name " + p.host + "."
+                         : r === "unsupported" ? "iperf3 is not installed on this rig."
+                         : "iperf3 stopped with an error (details in the log).", tint: t.bad }
+        }
+        if (p.state === "stopped" || !p.summary) return { text: "Stopped.", tint: t.sub }
+        if (p.udp) return { text: way + ": " + mbitText(p.receiverMbit) + " arrived of 100 Mbit/s sent · " + p.lost + " of " + p.packets
+                                  + " packets lost · jitter " + p.jitter + " ms", tint: parseInt(p.lost) > 0 ? t.warn : t.ok }
+        return { text: way + ": " + mbitText(p.receiverMbit) + (p.retr !== undefined ? " · " + p.retr + " retransmissions" : ""), tint: t.ok }
     }
 
     // ---- Wired: the selected port and the settings being edited ("draft")
@@ -276,6 +438,13 @@ Window {
         // net-ctl.sh's own check per port (inet=yes|no); NetworkManager's word otherwise
         var internet = f.inet === "yes" || (f.inet === "" && summary.internet === "yes" && f["default"] === "1")
         var dead = f.inet === "no"
+        // a Tools internet check of this port, under a minute old, with the
+        // same address and gateway, is the newer word
+        var chk = tools.checkResults[f.name]
+        if (chk && chk.ip === (f.ip || "") && chk.gateway === (f.gateway || "") && Date.now() - chk.at < 60000) {
+            internet = chk.ok
+            dead = !chk.ok
+        }
         if (f.type === "wifi") {
             if (radio !== "on") return { label: "Off", tint: t.dim }
             if (f.state === "connecting") return { label: "Connecting…", tint: t.info }
@@ -551,6 +720,106 @@ Window {
             }
             line(rx, t.info, true)
             line(tx, t.violet, false)
+        }
+    }
+
+    // A choice among a few: one tap selects it
+    component Chip: Rectangle {
+        id: chip
+        property string label
+        property string note
+        property bool selected: false
+        signal tapped()
+        height: 64 * s
+        width: Math.max(chipCol.implicitWidth + 40 * s, 110 * s)
+        radius: 14 * s
+        opacity: enabled ? 1 : 0.5
+        color: chipArea.pressed ? t.cardPressed : selected ? withAlpha(t.accent, 0.2) : t.tile
+        border.color: selected ? t.accent : t.border
+        border.width: selected ? 2 : 1
+        Column {
+            id: chipCol
+            anchors.centerIn: parent
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                text: chip.label
+                color: t.text
+                font.family: t.font; font.pixelSize: 20 * s; font.weight: Font.DemiBold
+            }
+            Text {
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: chip.note !== ""
+                text: chip.note
+                color: t.sub
+                font.family: t.font; font.pixelSize: 14 * s
+            }
+        }
+        MouseArea { id: chipArea; anchors.fill: parent; onClicked: chip.tapped() }
+    }
+    // A row of chips that scrolls sideways when it does not fit
+    component ChipRow: Flickable {
+        id: chipRow
+        property var model: []
+        property string current
+        signal picked(string value)
+        width: parent ? parent.width : 0
+        height: 64 * s
+        contentWidth: chipRowInner.width
+        flickableDirection: Flickable.HorizontalFlick
+        boundsBehavior: Flickable.StopAtBounds
+        clip: true
+        Row {
+            id: chipRowInner
+            spacing: 10 * s
+            Repeater {
+                model: chipRow.model
+                Chip {
+                    label: modelData.label
+                    note: modelData.note || ""
+                    selected: modelData.value !== "" && modelData.value === chipRow.current
+                    onTapped: chipRow.picked(modelData.value)
+                }
+            }
+        }
+    }
+    // Throughput, one point a second, from the left; the scale follows the peak
+    component RateGraph: Canvas {
+        id: rg
+        property var samples: []
+        property int slots: 30
+        onSamplesChanged: requestPaint()
+        onWidthChanged: requestPaint()
+        onHeightChanged: requestPaint()
+        onPaint: {
+            var ctx = getContext("2d")
+            ctx.reset()
+            var data = samples.length > slots ? samples.slice(samples.length - slots) : samples
+            var peak = 0
+            for (var i = 0; i < data.length; ++i) peak = Math.max(peak, data[i])
+            var max = 1
+            while (max < peak) max = max * (String(max)[0] === "2" ? 2.5 : 2)
+            var top = 10 * s, h = height - top - 1
+            ctx.strokeStyle = withAlpha(t.border, 1)
+            ctx.lineWidth = 1
+            ctx.beginPath(); ctx.moveTo(0, height - 1); ctx.lineTo(width, height - 1); ctx.stroke()
+            ctx.setLineDash([4, 6])
+            ctx.beginPath(); ctx.moveTo(0, top); ctx.lineTo(width, top); ctx.stroke()
+            ctx.setLineDash([])
+            ctx.fillStyle = t.sub
+            ctx.font = Math.round(14 * s) + "px sans-serif"
+            ctx.fillText(peak > 0 ? mbitText(max) : "Mbit/s", 6 * s, top + 18 * s)
+            if (data.length < 1) return
+            var step = width / Math.max(1, Math.max(slots, data.length) - 1)
+            function y(v) { return top + h - h * v / max }
+            ctx.beginPath()
+            ctx.moveTo(0, y(data[0]))
+            for (i = 1; i < data.length; ++i) ctx.lineTo(i * step, y(data[i]))
+            ctx.strokeStyle = t.info
+            ctx.lineWidth = Math.max(1.5, 3 * s)
+            ctx.lineJoin = "round"
+            ctx.stroke()
+            ctx.lineTo((data.length - 1) * step, height - 1); ctx.lineTo(0, height - 1); ctx.closePath()
+            ctx.fillStyle = withAlpha(t.info, 0.14); ctx.fill()
         }
     }
 
@@ -1802,7 +2071,7 @@ Window {
                                     id: leaseHead
                                     spacing: 0
                                     Repeater {
-                                        model: [{ t: "ADDRESS", w: 0.25 }, { t: "MAC", w: 0.3 }, { t: "HOST NAME", w: 0.27 }, { t: "LEASE ENDS", w: 0.18 }]
+                                        model: [{ t: "ADDRESS", w: 0.22 }, { t: "MAC", w: 0.27 }, { t: "HOST NAME", w: 0.23 }, { t: "LEASE ENDS", w: 0.14 }]
                                         Text {
                                             width: infoArea.width * modelData.w
                                             text: modelData.t
@@ -1819,17 +2088,33 @@ Window {
                                     boundsBehavior: Flickable.StopAtBounds
                                     model: parent.rows
                                     delegate: Row {
-                                        height: 34 * s
+                                        id: leaseRow
+                                        height: 44 * s
+                                        readonly property string ip: modelData.ip
                                         Repeater {
-                                            model: [{ v: modelData.ip, w: 0.25 }, { v: modelData.mac, w: 0.3 },
-                                                    { v: modelData.host || "—", w: 0.27 },
-                                                    { v: Qt.formatTime(new Date(parseInt(modelData.expires) * 1000), "HH:mm"), w: 0.18 }]
+                                            model: [{ v: modelData.ip, w: 0.22 }, { v: modelData.mac, w: 0.27 },
+                                                    { v: modelData.host || "—", w: 0.23 },
+                                                    { v: Qt.formatTime(new Date(parseInt(modelData.expires) * 1000), "HH:mm"), w: 0.14 }]
                                             Text {
                                                 width: infoArea.width * modelData.w
+                                                height: leaseRow.height
+                                                verticalAlignment: Text.AlignVCenter
                                                 elide: Text.ElideRight
                                                 text: modelData.v
                                                 color: t.text
                                                 font.family: t.font; font.pixelSize: 18 * s
+                                            }
+                                        }
+                                        // Ping this client from its port (Tools)
+                                        ActionButton {
+                                            height: 38 * s; width: infoArea.width * 0.14
+                                            label: "Ping"
+                                            onClicked: {
+                                                win.pingTarget = leaseRow.ip
+                                                win.pingIface = portCard.p.name
+                                                win.tool = "ping"
+                                                win.section = "tools"
+                                                tools.ping(leaseRow.ip, portCard.p.name, 10)
                                             }
                                         }
                                     }
@@ -1855,6 +2140,9 @@ Window {
                                 wrapMode: Text.WordWrap; maximumLineCount: 3; elide: Text.ElideRight
                                 text: wiredSection.applying
                                       ? (wired.phase === "checking" ? "Checking that " + wired.applyingIface + " works…"
+                                         : win.draft.mode === "client"
+                                           ? "Waiting for an address from the network — this can take up to 45 seconds. "
+                                             + "The previous settings come back if none comes."
                                          : "Applying to " + wired.applyingIface + "… The previous settings come back if the new ones do not work.")
                                       : win.draftError !== "" ? win.draftError : win.whatHappens()
                                 color: wiredSection.applying ? t.info : win.draftError !== "" ? t.bad
@@ -1890,13 +2178,408 @@ Window {
                 }
             }
 
-            // ==== Tools (a later phase) ======================================
-            EmptyState {
+            // ==== Tools ======================================================
+            Item {
+                id: toolsSection
                 anchors.fill: parent
                 visible: win.section === "tools" && status.loaded && !win.nmMissing
-                glyph: "info"; tint: t.sub
-                title: "Network tools"
-                detail: "Coming in a later version. Ping, internet check and iperf3 will be here."
+                readonly property string busy: tools.running
+                // the clients of serving ports, as targets (once status has the ports)
+                onVisibleChanged: {
+                    if (!visible) return
+                    wired.refreshLeases()
+                    // the default route's gateway, until something else is chosen
+                    if (win.pingTarget === "") {
+                        var d = win.portByName(summary.defaultdev || "")
+                        if (d && d.gateway) win.pingTarget = d.gateway
+                    }
+                }
+
+                // ---- left: the tools ------------------------------------------
+                Column {
+                    id: toolList
+                    width: parent.width * 0.27
+                    spacing: 12 * s
+                    SectionLabel { text: "TOOLS" }
+                    Repeater {
+                        model: [{ key: "ping", title: "Ping", sub: "Does an address answer?" },
+                                { key: "check", title: "Internet check", sub: "Gateway, DNS and HTTPS, step by step" },
+                                { key: "server", title: "Speed test: server", sub: "Another machine measures to this rig" },
+                                { key: "client", title: "Speed test: client", sub: "This rig measures to an iperf3 server" }]
+                        Rectangle {
+                            id: toolRow
+                            readonly property bool sel: win.tool === modelData.key
+                            readonly property bool active: toolsSection.busy === modelData.key
+                            width: toolList.width; height: 104 * s
+                            radius: 16 * s
+                            color: trArea.pressed ? t.cardPressed : t.card
+                            border.color: sel ? withAlpha(t.accent, 0.8) : t.border
+                            border.width: sel ? 2 : 1
+                            Rectangle { width: 6 * s; height: parent.height; radius: 3 * s; color: toolRow.active ? t.info : withAlpha(t.border, 1) }
+                            Column {
+                                anchors.left: parent.left; anchors.leftMargin: 24 * s
+                                anchors.right: parent.right; anchors.rightMargin: 16 * s
+                                anchors.verticalCenter: parent.verticalCenter
+                                spacing: 4 * s
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: modelData.title
+                                    color: t.text
+                                    font.family: t.font; font.pixelSize: 21 * s; font.weight: Font.DemiBold
+                                }
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: toolRow.active ? "Running…" : modelData.sub
+                                    color: toolRow.active ? t.info : t.sub
+                                    font.family: t.font; font.pixelSize: 17 * s
+                                }
+                            }
+                            MouseArea { id: trArea; anchors.fill: parent; onClicked: win.tool = modelData.key }
+                        }
+                    }
+                }
+
+                // ---- right: the selected tool -----------------------------------
+                Rectangle {
+                    id: toolCard
+                    anchors.left: toolList.right; anchors.leftMargin: 30 * s
+                    anchors.right: parent.right
+                    height: parent.height
+                    radius: 22 * s
+                    color: t.card
+                    border.color: t.border
+
+                    Item {
+                        id: toolBody
+                        anchors.fill: parent
+                        anchors.margins: 26 * s
+
+                        // title, one line on what it does, Start / Stop
+                        Column {
+                            anchors.left: parent.left
+                            anchors.right: runButton.left; anchors.rightMargin: 24 * s
+                            spacing: 4 * s
+                            Text {
+                                text: win.tool === "ping" ? "Ping"
+                                      : win.tool === "check" ? "Internet check"
+                                      : win.tool === "server" ? "Speed test — this rig is the iperf3 server"
+                                      : "Speed test — this rig is the iperf3 client"
+                                color: t.text
+                                font.family: t.font; font.pixelSize: 28 * s; font.weight: Font.DemiBold
+                            }
+                            Text {
+                                width: parent.width; elide: Text.ElideRight
+                                text: win.tool === "ping" ? "Ten packets, one a second; each answer and each loss as it happens."
+                                      : win.tool === "check" ? "Through one port: its gateway, its own DNS server, then HTTPS to " + win.checkHost() + "."
+                                      : win.tool === "server" ? "iperf3 listens on port 5201 until you stop it or leave Tools."
+                                      : "Needs iperf3 -s running on the other machine (port 5201)."
+                                color: t.sub
+                                font.family: t.font; font.pixelSize: 17 * s
+                            }
+                        }
+                        ActionButton {
+                            id: runButton
+                            anchors.right: parent.right
+                            height: 66 * s; width: 220 * s
+                            readonly property bool mine: toolsSection.busy === win.tool
+                            primary: !mine
+                            danger: mine
+                            label: mine ? "Stop" : win.tool === "check" ? "Check" : "Start"
+                            enabled: mine || (win.tool === "ping" ? win.pingTarget !== ""
+                                              : win.tool === "client" ? win.clientHost !== "" : true)
+                            onClicked: {
+                                if (mine) { tools.stop(); return }
+                                if (win.tool === "ping") tools.ping(win.pingTarget, win.pingIface, 10)
+                                else if (win.tool === "check") {
+                                    var p = win.portByName(win.checkPort)
+                                    tools.internetCheck(win.checkPort, p ? p.ip || "" : "", p ? p.gateway || "" : "")
+                                } else if (win.tool === "server") tools.startServer()
+                                else tools.startClient(win.clientHost, win.clientSecs, win.clientUdp, win.clientReverse)
+                            }
+                        }
+
+                        // ---- ping --------------------------------------------------
+                        Column {
+                            visible: win.tool === "ping"
+                            y: 96 * s
+                            width: parent.width
+                            spacing: 10 * s
+                            SectionLabel { text: "ADDRESS" }
+                            ChipRow {
+                                model: win.targetChips(win.pingTarget, true)
+                                current: win.pingTarget
+                                enabled: toolsSection.busy !== "ping"
+                                onPicked: value === "" ? sheet.openHost("ping") : win.pingTarget = value
+                            }
+                            Item { width: 1; height: 4 * s }
+                            SectionLabel { text: "FROM PORT" }
+                            ChipRow {
+                                model: win.portChips(false)
+                                current: win.pingIface
+                                enabled: toolsSection.busy !== "ping"
+                                onPicked: win.pingIface = value
+                            }
+                            Item { width: 1; height: 8 * s }
+                            // one box per packet: its time, or "lost"
+                            Row {
+                                spacing: 10 * s
+                                Repeater {
+                                    model: 10
+                                    Rectangle {
+                                        readonly property var r: index < tools.replies.length ? tools.replies[index] : null
+                                        readonly property bool waiting: !r && toolsSection.busy === "ping" && index === tools.replies.length
+                                        width: (toolBody.width - 90 * s) / 10; height: 62 * s
+                                        radius: 12 * s
+                                        color: !r ? t.tile : r.lost ? withAlpha(t.bad, 0.16) : withAlpha(t.ok, 0.14)
+                                        border.color: !r ? (waiting ? withAlpha(t.info, 0.6) : t.border)
+                                                      : r.lost ? withAlpha(t.bad, 0.6) : withAlpha(t.ok, 0.5)
+                                        Text {
+                                            anchors.centerIn: parent
+                                            text: !parent.r ? (parent.waiting ? "…" : "") : parent.r.lost ? "lost" : win.msText(parent.r.ms)
+                                            color: !parent.r ? t.sub : parent.r.lost ? t.bad : t.ok
+                                            font.family: t.font; font.pixelSize: 19 * s; font.weight: Font.DemiBold
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            visible: win.tool === "ping"
+                            anchors.bottom: parent.bottom
+                            width: parent.width
+                            wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                            readonly property var v: win.pingVerdict()
+                            text: v.text
+                            color: v.tint
+                            font.family: t.font; font.pixelSize: 21 * s; font.weight: Font.Medium
+                        }
+
+                        // ---- internet check ----------------------------------------
+                        Column {
+                            visible: win.tool === "check"
+                            y: 96 * s
+                            width: parent.width
+                            spacing: 10 * s
+                            SectionLabel { text: "THROUGH PORT" }
+                            ChipRow {
+                                model: win.portChips(true)
+                                current: win.checkPort
+                                enabled: toolsSection.busy !== "check"
+                                onPicked: win.checkPort = value
+                            }
+                            Item { width: 1; height: 6 * s }
+                            Repeater {
+                                model: tools.checkSteps.length > 0 ? tools.checkSteps
+                                       : [{ step: "gateway", state: "" }, { step: "dns", state: "" }, { step: "https", state: "" }]
+                                Item {
+                                    width: toolBody.width; height: 62 * s
+                                    readonly property var st: modelData
+                                    readonly property bool spinning: st.state === "pending" && toolsSection.busy === "check"
+                                    Rectangle {
+                                        id: stepDot
+                                        width: 46 * s; height: width; radius: width / 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        visible: !parent.spinning
+                                        color: parent.st.state === "ok" ? withAlpha(t.ok, 0.18) : parent.st.state === "failed" ? withAlpha(t.bad, 0.18) : t.tile
+                                        border.color: parent.st.state === "ok" ? withAlpha(t.ok, 0.6) : parent.st.state === "failed" ? withAlpha(t.bad, 0.6) : t.border
+                                        Image {
+                                            anchors.centerIn: parent
+                                            visible: parent.parent.st.state === "ok" || parent.parent.st.state === "failed"
+                                            width: parent.width * 0.55; height: width
+                                            sourceSize: Qt.size(width, height)
+                                            source: "qrc:/icons/" + (parent.parent.st.state === "ok" ? "check" : "bad") + ".svg"
+                                        }
+                                        Text {
+                                            anchors.centerIn: parent
+                                            visible: parent.parent.st.state === "" || parent.parent.st.state === "pending"
+                                            text: index + 1
+                                            color: t.sub
+                                            font.family: t.font; font.pixelSize: 19 * s; font.weight: Font.DemiBold
+                                        }
+                                    }
+                                    Spinner { width: 46 * s; anchors.verticalCenter: parent.verticalCenter; visible: parent.spinning }
+                                    Column {
+                                        anchors.left: stepDot.right; anchors.leftMargin: 20 * s
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: 2 * s
+                                        Text {
+                                            text: win.stepTitle(parent.parent.st)
+                                            color: t.text
+                                            font.family: t.font; font.pixelSize: 21 * s; font.weight: Font.DemiBold
+                                        }
+                                        Text {
+                                            width: parent.width; elide: Text.ElideRight
+                                            text: win.stepDetail(parent.parent.st)
+                                            color: parent.parent.st.state === "failed" ? t.bad : t.sub
+                                            font.family: t.font; font.pixelSize: 17 * s
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            visible: win.tool === "check"
+                            anchors.bottom: parent.bottom
+                            width: parent.width
+                            wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                            readonly property var v: win.checkVerdict()
+                            text: v.text
+                            color: v.tint
+                            font.family: t.font; font.pixelSize: 21 * s; font.weight: Font.Medium
+                        }
+
+                        // ---- iperf3 server -----------------------------------------
+                        Item {
+                            visible: win.tool === "server"
+                            y: 96 * s
+                            width: parent.width
+                            height: parent.height - y
+                            readonly property var ip: toolsSection.busy === "server" || tools.iperf.mode === "server" ? tools.iperf : ({})
+                            Column {
+                                id: srvCmds
+                                width: parent.width * 0.5
+                                spacing: 8 * s
+                                SectionLabel { text: parent.parent.ip.listening ? "ON THE OTHER MACHINE, RUN" : "THIS RIG'S ADDRESSES" }
+                                Repeater {
+                                    model: {
+                                        var a = parent.parent.ip.addrs
+                                        if (!a) { a = []; var l = status.interfaces
+                                                  for (var i = 0; i < l.length; ++i) if (l[i].ip) a.push(l[i].ip) }
+                                        return a.slice(0, 4)
+                                    }
+                                    Text {
+                                        text: "iperf3 -c " + modelData
+                                        color: srvCmds.parent.ip.listening ? t.text : t.dim
+                                        font.family: "monospace"; font.pixelSize: 22 * s
+                                    }
+                                }
+                                Text {
+                                    text: "Add -R to measure the other way, -u for UDP."
+                                    color: t.sub
+                                    font.family: t.font; font.pixelSize: 16 * s
+                                }
+                            }
+                            Column {
+                                anchors.right: parent.right
+                                width: parent.width * 0.46
+                                spacing: 2 * s
+                                SectionLabel { text: "NOW" }
+                                Text {
+                                    text: parent.parent.ip.last !== undefined && toolsSection.busy === "server" && parent.parent.ip.state === "running"
+                                          ? win.mbitText(parent.parent.ip.last) : "—"
+                                    color: t.info
+                                    font.family: t.font; font.pixelSize: 44 * s; font.weight: Font.Bold
+                                }
+                                Text {
+                                    width: parent.width; elide: Text.ElideRight
+                                    text: parent.parent.ip.peer ? "From " + parent.parent.ip.peer
+                                                                  + (parent.parent.ip.receiverMbit !== undefined ? " · last test " + win.mbitText(parent.parent.ip.receiverMbit) : "")
+                                          : parent.parent.ip.listening ? "Waiting for a test…" : ""
+                                    color: t.sub
+                                    font.family: t.font; font.pixelSize: 18 * s
+                                }
+                            }
+                            RateGraph {
+                                anchors.top: srvCmds.bottom; anchors.topMargin: 18 * s
+                                anchors.bottom: srvNote.top; anchors.bottomMargin: 10 * s
+                                width: parent.width
+                                samples: tools.iperf.mode === "server" ? tools.samples : []
+                            }
+                            Text {
+                                id: srvNote
+                                anchors.bottom: parent.bottom
+                                width: parent.width
+                                wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                                readonly property var v: win.serverVerdict()
+                                text: v.text
+                                color: v.tint
+                                font.family: t.font; font.pixelSize: 21 * s; font.weight: Font.Medium
+                            }
+                        }
+
+                        // ---- iperf3 client -----------------------------------------
+                        Item {
+                            visible: win.tool === "client"
+                            y: 96 * s
+                            width: parent.width
+                            height: parent.height - y
+                            readonly property bool locked: toolsSection.busy === "client"
+                            Column {
+                                id: cliTop
+                                width: parent.width
+                                spacing: 10 * s
+                                SectionLabel { text: "SERVER" }
+                                ChipRow {
+                                    model: win.targetChips(win.clientHost, false)
+                                    current: win.clientHost
+                                    enabled: !cliTop.parent.locked
+                                    onPicked: value === "" ? sheet.openHost("client") : win.clientHost = value
+                                }
+                                Row {
+                                    spacing: 30 * s
+                                    enabled: !cliTop.parent.locked
+                                    opacity: enabled ? 1 : 0.5
+                                    Repeater {
+                                        model: [{ label: "SECONDS", key: "secs", items: [["5", 5], ["10", 10], ["30", 30]] },
+                                                { label: "PROTOCOL", key: "udp", items: [["TCP", false], ["UDP", true]] },
+                                                { label: "DIRECTION", key: "reverse", items: [["Rig sends", false], ["Rig receives", true]] }]
+                                        Column {
+                                            readonly property var grp: modelData
+                                            spacing: 6 * s
+                                            SectionLabel { text: parent.grp.label }
+                                            Row {
+                                                spacing: 8 * s
+                                                Repeater {
+                                                    model: parent.parent.grp.items
+                                                    Chip {
+                                                        height: 52 * s
+                                                        label: modelData[0]
+                                                        readonly property string key: parent.parent.grp.key
+                                                        selected: (key === "secs" ? win.clientSecs : key === "udp" ? win.clientUdp : win.clientReverse) === modelData[1]
+                                                        onTapped: {
+                                                            if (key === "secs") win.clientSecs = modelData[1]
+                                                            else if (key === "udp") win.clientUdp = modelData[1]
+                                                            else win.clientReverse = modelData[1]
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Text {
+                                id: cliNow
+                                anchors.top: cliTop.bottom; anchors.topMargin: 12 * s
+                                anchors.right: parent.right
+                                text: tools.iperf.mode === "client" && tools.iperf.last !== undefined
+                                      ? win.mbitText(locked ? tools.iperf.last : (tools.iperf.receiverMbit || tools.iperf.last)) : ""
+                                readonly property bool locked: cliTop.parent.locked
+                                color: t.info
+                                font.family: t.font; font.pixelSize: 34 * s; font.weight: Font.Bold
+                            }
+                            RateGraph {
+                                anchors.top: cliTop.bottom; anchors.topMargin: 14 * s
+                                anchors.bottom: cliNote.top; anchors.bottomMargin: 10 * s
+                                anchors.left: parent.left
+                                anchors.right: cliNow.left; anchors.rightMargin: 24 * s
+                                slots: tools.iperf.mode === "client" ? (tools.iperf.secs || 10) : 10
+                                samples: tools.iperf.mode === "client" ? tools.samples : []
+                            }
+                            Text {
+                                id: cliNote
+                                anchors.bottom: parent.bottom
+                                width: parent.width
+                                wrapMode: Text.WordWrap; maximumLineCount: 2; elide: Text.ElideRight
+                                readonly property var v: win.clientVerdict()
+                                text: v.text
+                                color: v.tint
+                                font.family: t.font; font.pixelSize: 21 * s; font.weight: Font.Medium
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1975,8 +2658,33 @@ Window {
         }
         function numDone() { if (numValid) { numSave(); close() } }
 
+        // ---- an address (numeric pad) or a host name (keyboard) for a tool
+        property string hostFor: "ping"        // ping | client
+        property string hostKeys: "num"        // num | abc
+        readonly property bool hostValid: {
+            var v = hostInput.text
+            if (!/^[A-Za-z0-9][A-Za-z0-9.:_-]*$/.test(v)) return false
+            return /^[0-9.]+$/.test(v) ? win.ipOk(v) : true
+        }
+        function openHost(forWhat) {
+            hostFor = forWhat
+            hostInput.text = ""
+            hostKeys = "num"
+            keyboard.keyLayer = "abc"
+            keyboard.revealed = false
+            mode = "host"
+            hostInput.forceActiveFocus()
+        }
+        function hostDone() {
+            if (!hostValid) return
+            if (hostFor === "ping") win.pingTarget = hostInput.text
+            else win.clientHost = hostInput.text
+            close()
+        }
+
         readonly property Item editing: mode === "password" ? passwordInput
                                       : mode === "hidden" ? (hiddenPassword.activeFocus ? hiddenPassword : hiddenName)
+                                      : mode === "host" && hostKeys === "abc" ? hostInput
                                       : null
         readonly property bool canJoin: mode === "password" ? passwordInput.text.length >= 8 && passwordInput.text.length <= 63
                                       : mode === "hidden" ? hiddenName.text.length > 0
@@ -2024,6 +2732,7 @@ Window {
             width: parent.width
             readonly property real wanted: sheet.mode === "detail" ? detailBody.height
                                           : sheet.mode === "numpad" ? numBar.height + numPad.height
+                                          : sheet.mode === "host" ? hostBar.height + (sheet.hostKeys === "num" ? hostPad.height : keyboard.height)
                                           : fieldBar.height + keyboard.height
             height: wanted
             y: sheet.mode !== "" ? parent.height - height : parent.height
@@ -2377,18 +3086,117 @@ Window {
                 onDone: sheet.numDone()
             }
 
+            // ---- an address or a name for a tool, above the pad or the keyboard
+            Item {
+                id: hostBar
+                visible: sheet.mode === "host"
+                width: parent.width
+                height: 118 * s
+                Item {
+                    anchors.fill: parent
+                    anchors.leftMargin: 40 * s; anchors.rightMargin: 40 * s
+                    Column {
+                        anchors.left: parent.left
+                        anchors.right: hostFieldBox.left; anchors.rightMargin: 24 * s
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 4 * s
+                        Text {
+                            text: sheet.hostFor === "ping" ? "Ping" : "Speed test server"
+                            color: t.sub
+                            font.family: t.font; font.pixelSize: 17 * s
+                        }
+                        Text {
+                            width: parent.width; elide: Text.ElideRight
+                            text: "Address or host name"
+                            color: t.text
+                            font.family: t.font; font.pixelSize: 24 * s; font.weight: Font.DemiBold
+                        }
+                    }
+                    Rectangle {
+                        id: hostFieldBox
+                        anchors.right: hostButtons.left; anchors.rightMargin: 24 * s
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 560 * s; height: 66 * s
+                        radius: 14 * s
+                        color: "#101828"
+                        border.color: sheet.hostValid ? t.accent : withAlpha(t.bad, 0.8)
+                        border.width: 2
+                        TextInput {
+                            id: hostInput
+                            anchors.fill: parent
+                            anchors.leftMargin: 20 * s; anchors.rightMargin: 130 * s
+                            verticalAlignment: TextInput.AlignVCenter
+                            color: t.text
+                            selectionColor: withAlpha(t.accent, 0.5)
+                            font.family: t.font; font.pixelSize: 28 * s
+                            clip: true
+                            maximumLength: 253
+                            // what net-ctl.sh takes as a target: no spaces, no option
+                            validator: RegExpValidator { regExp: /[A-Za-z0-9.:_-]*/ }
+                            inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
+                            Keys.onEscapePressed: sheet.close()
+                            Keys.onReturnPressed: sheet.hostDone()
+                            Keys.onEnterPressed: sheet.hostDone()
+                        }
+                        Text {
+                            anchors.right: parent.right; anchors.rightMargin: 20 * s
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: sheet.hostValid ? "" : (hostInput.text === "" ? "needed" : "not valid")
+                            color: t.bad
+                            font.family: t.font; font.pixelSize: 18 * s
+                        }
+                        MouseArea { anchors.fill: parent; onPressed: { hostInput.forceActiveFocus(); mouse.accepted = false } }
+                    }
+                    Row {
+                        id: hostButtons
+                        anchors.right: parent.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 16 * s
+                        // back from the keyboard (a name) to the pad (an address)
+                        ActionButton {
+                            visible: sheet.hostKeys === "abc"
+                            height: 66 * s; width: 190 * s
+                            label: "Number pad"
+                            onClicked: { sheet.hostKeys = "num"; hostInput.forceActiveFocus() }
+                        }
+                        ActionButton { height: 66 * s; width: 150 * s; label: "Cancel"; onClicked: sheet.close() }
+                        ActionButton {
+                            height: 66 * s; width: 150 * s
+                            primary: true
+                            enabled: sheet.hostValid
+                            label: "Done"
+                            onClicked: sheet.hostDone()
+                        }
+                    }
+                }
+            }
+            NumPad {
+                id: hostPad
+                visible: sheet.mode === "host" && sheet.hostKeys === "num"
+                anchors.top: hostBar.bottom
+                width: parent.width
+                s: win.s
+                theme: t
+                target: visible ? hostInput : null
+                // a host name: the keyboard
+                nextLabel: "ABC"
+                onNext: { sheet.hostKeys = "abc"; hostInput.forceActiveFocus() }
+                doneEnabled: sheet.hostValid
+                onDone: sheet.hostDone()
+            }
+
             Keyboard {
                 id: keyboard
-                visible: fieldBar.visible
-                anchors.top: fieldBar.bottom
+                visible: fieldBar.visible || (sheet.mode === "host" && sheet.hostKeys === "abc")
+                anchors.top: sheet.mode === "host" ? hostBar.bottom : fieldBar.bottom
                 width: parent.width
                 s: win.s
                 theme: t
                 target: sheet.editing
                 passwordMode: sheet.mode === "password" || (sheet.mode === "hidden" && sheet.editing === hiddenPassword)
-                doneLabel: "Connect"
-                doneEnabled: sheet.canJoin
-                onDone: sheet.join()
+                doneLabel: sheet.mode === "host" ? "Done" : "Connect"
+                doneEnabled: sheet.mode === "host" ? sheet.hostValid : sheet.canJoin
+                onDone: sheet.mode === "host" ? sheet.hostDone() : sheet.join()
             }
         }
     }
@@ -2421,6 +3229,25 @@ Window {
             passwordInput.text = "not-a-real-pw"
             if (parts[1]) keyboard.keyLayer = parts[1]
             if (parts[2] === "shown") keyboard.revealed = true
+        } else if (["ping", "check", "server", "client", "host"].indexOf(parts[0]) >= 0) {
+            win.tool = parts[0] === "host" ? "ping" : parts[0]
+            var arg = parts[1] && ["live", "listening", "abc"].indexOf(parts[1]) < 0 ? parts[1] : ""
+            if (parts[0] === "ping") { if (arg) pingTarget = arg; tools.ping(pingTarget || "192.168.1.1", pingIface, 10) }
+            else if (parts[0] === "check") {
+                checkPort = arg
+                var cp = portByName(arg)
+                tools.internetCheck(arg, cp ? cp.ip || "" : "", cp ? cp.gateway || "" : "")
+            } else if (parts[0] === "server") tools.startServer()
+            else if (parts[0] === "client") {
+                clientHost = arg || "192.168.1.1"
+                clientUdp = parts.indexOf("udp") > 0
+                clientReverse = parts.indexOf("reverse") > 0
+                tools.startClient(clientHost, clientSecs, clientUdp, clientReverse)
+            }
+            else {
+                sheet.openHost("ping")
+                if (parts[1] === "abc") { sheet.hostKeys = "abc"; hostInput.text = "bench-pc.lan" } else hostInput.text = "192.168.50."
+            }
         } else if (parts[0] === "scroll-end") {
             scrollEnd.start()
         } else if (parts[0] === "hidden") {

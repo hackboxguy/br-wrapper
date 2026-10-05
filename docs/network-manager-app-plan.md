@@ -523,3 +523,28 @@ Each needs the owner's go-ahead; none belongs in a br-wrapper commit.
 - **Later features:** access-point mode ("join the rig from a phone"), an "internet sharing"
   switch on a serving port, a QR code on the Overview with the rig's SSH/API address, the
   launcher header's IP chip showing which interface it is.
+
+## 12. As built (2026-10-05)
+
+Where the implementation differs from this plan, one line each; the package README describes what was built.
+
+- **Internet word:** NetworkManager's connectivity state cannot be used (the image configures no check, so any
+  default route reads `full`); `status` pings `1.1.1.1`/`8.8.8.8` per port with a gateway, cached 20 s.
+- **Changes detach:** as root with `systemd-run`, every change re-runs itself as a transient unit, so a launcher
+  restart cannot interrupt it; its lines also go to the journal (`-t net-ctl.sh`). Not in the plan's section 3.
+- **Wrong WiFi password:** detected as a second `need authentication` in `nmcli device monitor` (NetworkManager
+  gives no reason code); a weak link can look the same.
+- **OWE** ("enhanced open") is listed as `other` and not joined; the plan treated it as open.
+- **Port order:** built-in port, WiFi, USB adapters by name, veth last — not NetworkManager's order.
+- **Probe window** 4.5 s, not 3 s (a dnsmasq's ping check delayed an offer to 3.1 s).
+- **Server leases** of the OLED menu's server are read from `/var/lib/misc/dnsmasq.leases`; its own range
+  (`.100–.200`, 12 h) is not shown on the card.
+- **Internet check:** the DNS step asks the port's own DNS server with a small `python3` query (no `dig`/`nslookup`
+  on the image); success is HTTP 204 from `generate_204` exactly, so a captive portal fails the check.
+- **Tools targets** include `1.1.1.1` beside `8.8.8.8`, and ping can be sent from one chosen port.
+- **iperf3 client UDP** runs at 100 Mbit/s (iperf3's default 1 Mbit/s measures nothing); the plan named no rate.
+- **iperf3 3.12** has no `--json-stream`: its text lines are parsed (`--forceflush`); output was captured on the
+  rig for the tests.
+- **Buildroot:** no tile in `qt-demo-launcher.json` (no NetworkManager there).
+- **Image:** besides section 5.4, misc-tools declares `curl`, `ca-certificates` and `iproute2` for the Tools.
+- **Icon** stroke 2.6 as the neighbouring launcher icons, not 3.

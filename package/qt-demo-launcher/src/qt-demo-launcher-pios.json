@@ -185,6 +185,36 @@
         "border_radius": 20
       },
       {
+        "id": "network",
+        "enabled": true,
+        "text": "Network",
+        "subtitle": "WiFi, Ethernet & diagnostics",
+        "icon": "/usr/share/qt-apps/icons/network.svg",
+        "program": "/usr/bin/network-manager-app",
+        "available_command": "/usr/bin/net-badge.sh --available",
+        "badge_command": "/usr/bin/net-badge.sh",
+        "arguments": [],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 4,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "accent_color": "#38BDF8",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F",
+        "border_radius": 20
+      },
+      {
         "id": "slideshow",
         "enabled": false,
         "text": "Slideshow",

@@ -9,6 +9,11 @@
 #                      wired-static | probe-found | probe-none | probe-no-cable |
 #                      legacy-server | wired-fail
 #   FAKE_NET_STEP      seconds between PROGRESS lines of a change (default 0.4)
+#   FAKE_TOOL          the Tools' outcome: ok (default) | loss | no-reply | unknown-host
+#                      (ping) · dns-fail | gateway-fail | captive | tls (internet-check)
+#                      · refused | unreachable | port-busy (iperf) · busy (iperf server
+#                      with a client, then waits)
+#   FAKE_TOOL_STEP     seconds between a tool's lines (default 0.15)
 #
 # Values are percent-encoded as net-ctl.sh encodes them. The app runs this
 # script without sudo in a dry run, and fake-net-ctl ignores --dry-run: the
@@ -100,8 +105,26 @@ for a in "$@"; do
         --ssid=*) ssid=${a#--ssid=} ;;
         --iface=*) iface=${a#--iface=} ;;
         --mode=*) mode=${a#--mode=} ;;
+        --target=*) target=${a#--target=} ;;
+        --host=*) host=${a#--host=} ;;
+        --secs=*) secs=${a#--secs=} ;;
+        --udp) udp=1 ;;
+        --reverse) reverse=1 ;;
+        --stop) stop=1 ;;
     esac
 done
+tool=${FAKE_TOOL:-ok}
+tstep=${FAKE_TOOL_STEP:-0.15}
+
+# one interval line a step, a curve that settles
+iperf_run() { # <seconds> <base Mbit/s>
+    n=1
+    while [ "$n" -le "$1" ]; do
+        sleep "$tstep"
+        echo "RESULT kind=iperf interval=$((n - 1)).00-$n.00 mbit=$(awk -v b="$2" -v n="$n" 'BEGIN { printf "%.1f", b * (1 - 0.35 / n) + (n % 3) * b * 0.02 }')"
+        n=$((n + 1))
+    done
+}
 
 case $cmd in
     available) echo "RESULT kind=available ok=1" ;;
@@ -149,6 +172,8 @@ case $cmd in
         if [ "$reason" = not-found ]; then
             echo "RESULT kind=connect ok=0 detail=no%20network%20named%20it%20is%20in%20range reason=not-found"; exit 2
         fi
+        # as net-ctl.sh run as root with systemd-run does (Pi OS)
+        echo "NOTICE detached"
         sleep "$step"; echo "PROGRESS phase=associating"
         sleep "$step"; echo "PROGRESS phase=authenticating"
         if [ "$reason" = bad-password ]; then
@@ -166,6 +191,72 @@ case $cmd in
     wifi-forget) echo "RESULT kind=forget ssid=$ssid ok=1" ;;
     wifi-autoconnect) echo "RESULT kind=autoconnect ssid=$ssid ok=1" ;;
     wifi-radio) sleep "$step"; echo "RESULT kind=radio ok=1" ;;
+    ping)
+        case $tool in
+            unknown-host) echo "RESULT kind=ping target=$target sent=0 received=0 avg= loss=100 reason=unknown-host"; exit 2 ;;
+        esac
+        n=1 got=0
+        while [ $n -le 10 ]; do
+            sleep "$tstep"
+            if [ "$tool" = no-reply ] || { [ "$tool" = loss ] && { [ $n = 3 ] || [ $n = 7 ] || [ $n = 8 ]; }; }; then
+                echo "RESULT kind=lost seq=$n"
+            else
+                echo "RESULT kind=reply seq=$n ms=0.$((300 + n * 37 % 200)) from=$target"; got=$((got + 1))
+            fi
+            n=$((n + 1))
+        done
+        echo "RESULT kind=ping target=$target sent=10 received=$got avg=$( [ $got -gt 0 ] && echo 0.412) loss=$(( (10 - got) * 10 ))"
+        [ $got -gt 0 ] || exit 2 ;;
+    internet-check)
+        dev=${iface:-eth0}
+        sleep "$tstep"; sleep "$tstep"
+        if [ "$tool" = gateway-fail ]; then
+            echo "RESULT kind=check step=gateway ok=0 target=192.168.1.1 reason=no-reply"
+        else
+            echo "RESULT kind=check step=gateway ok=1 ms=0.31 target=192.168.1.1"
+        fi
+        sleep "$tstep"; sleep "$tstep"
+        if [ "$tool" = dns-fail ]; then
+            echo "RESULT kind=check step=dns ok=0 server=192.168.1.1 name=www.google.com bound=1 reason=servfail"
+        else
+            echo "RESULT kind=check step=dns ok=1 ms=11.4 server=192.168.1.1 name=www.google.com addr=142.251.151.119 bound=1"
+        fi
+        sleep "$tstep"; sleep "$tstep"; sleep "$tstep"
+        case $tool in
+            dns-fail) echo "RESULT kind=check step=https ok=0 url=https://www.google.com/generate_204 bound=1 reason=timeout" ;;
+            captive) echo "RESULT kind=check step=https ok=0 url=https://www.google.com/generate_204 bound=1 reason=http-302" ;;
+            tls) echo "RESULT kind=check step=https ok=0 url=https://www.google.com/generate_204 bound=1 reason=tls" ;;
+            *) echo "RESULT kind=check step=https ok=1 ms=141 code=204 url=https://www.google.com/generate_204 bound=1" ;;
+        esac
+        case $tool in dns-fail|captive|tls) echo "RESULT kind=internet iface=$dev ok=0"; exit 2 ;; esac
+        echo "RESULT kind=internet iface=$dev ok=1" ;;
+    iperf-server)
+        [ "${stop:-0}" = 1 ] && { echo "RESULT kind=iperf-server running=0"; exit 0; }
+        if [ "$tool" = port-busy ]; then echo "RESULT kind=iperf-server running=0 port=5201 reason=port-busy"; exit 2; fi
+        echo "RESULT kind=iperf-server running=1 port=5201 addrs=192.168.1.170,192.168.50.1"
+        if [ "$tool" = busy ]; then
+            sleep "$tstep"; echo "RESULT kind=iperf-peer from=192.168.50.23"
+            iperf_run 6 912
+            echo "RESULT kind=iperf-sum role=receiver interval=0.00-10.00 mbit=905.0"
+            sleep "$tstep"; echo "RESULT kind=iperf-peer from=192.168.50.61"
+            iperf_run 5 431
+        fi
+        while :; do sleep 3600; done ;;
+    iperf-client)
+        echo "RESULT kind=iperf-client host=$host secs=${secs:-10} udp=${udp:-0} reverse=${reverse:-0}"
+        case $tool in
+            refused|unreachable) sleep "$tstep"; echo "RESULT kind=iperf-done ok=0 host=$host reason=$tool"; exit 2 ;;
+        esac
+        if [ "${udp:-0}" = 1 ]; then
+            iperf_run "${secs:-10}" 100
+            echo "RESULT kind=iperf-sum role=sender interval=0.00-${secs:-10}.00 mbit=100.0 jitter=0.000 lost=0 packets=8634"
+            echo "RESULT kind=iperf-sum role=receiver interval=0.00-${secs:-10}.00 mbit=98.7 jitter=0.042 lost=112 packets=8634"
+        else
+            iperf_run "${secs:-10}" 941
+            echo "RESULT kind=iperf-sum role=sender interval=0.00-${secs:-10}.00 mbit=936.0 retr=12"
+            echo "RESULT kind=iperf-sum role=receiver interval=0.00-${secs:-10}.00 mbit=933.0"
+        fi
+        echo "RESULT kind=iperf-done ok=1 host=$host" ;;
     *) echo "fake-net-ctl: unknown command $cmd" >&2; exit 1 ;;
 esac
 exit 0

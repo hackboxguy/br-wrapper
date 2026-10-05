@@ -8,13 +8,15 @@ SOURCES += \
     NetTool.cpp \
     StatusController.cpp \
     WifiController.cpp \
-    WiredController.cpp
+    WiredController.cpp \
+    ToolsController.cpp
 
 HEADERS += \
     NetTool.h \
     StatusController.h \
     WifiController.h \
-    WiredController.h
+    WiredController.h \
+    ToolsController.h
 
 RESOURCES += qml.qrc
 

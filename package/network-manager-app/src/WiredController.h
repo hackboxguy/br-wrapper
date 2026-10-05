@@ -67,6 +67,8 @@ public:
     Q_INVOKABLE void apply(const QString &iface, const QString &mode, const QString &ip, const QString &prefix,
                            const QString &gateway, const QString &dns);
     Q_INVOKABLE void clearOutcome();
+    // the lease tables of the serving ports, once (Tools: ping a client)
+    Q_INVOKABLE void refreshLeases();
 
     static QVariantMap failureOutcome(const QString &reason, const QString &iface, const QString &mode,
                                       const QString &detail, int exitCode);
@@ -84,7 +86,6 @@ private:
     void onProgress(const QVariantMap &fields);
     void onFinished(int exitCode);
     void onStatus();
-    void refreshLeases();
     void setOutcome(const QString &kind, const QString &title, const QString &detail, const QString &iface);
     void next();
 

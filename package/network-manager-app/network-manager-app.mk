@@ -18,6 +18,7 @@ define NETWORK_MANAGER_APP_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/network-manager-app $(TARGET_DIR)/usr/bin/network-manager-app
 	$(INSTALL) -D -m 0755 $(@D)/net-ctl.sh $(TARGET_DIR)/usr/bin/net-ctl.sh
 	$(INSTALL) -D -m 0755 $(@D)/net-dhcp-probe.py $(TARGET_DIR)/usr/bin/net-dhcp-probe.py
+	$(INSTALL) -D -m 0755 $(@D)/net-badge.sh $(TARGET_DIR)/usr/bin/net-badge.sh
 endef
 
 $(eval $(generic-package))

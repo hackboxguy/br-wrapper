@@ -37,6 +37,8 @@ class WifiController : public QObject
     // the last change's outcome: kind ok|error|info, title, detail, reason, ssid
     Q_PROPERTY(QVariantMap outcome READ outcome NOTIFY outcomeChanged)
     Q_PROPERTY(bool dryRun READ dryRun CONSTANT)
+    // the running change runs as its own systemd unit: leaving the app is safe
+    Q_PROPERTY(bool changeDetached READ changeDetached NOTIFY busyChanged)
 
 public:
     struct Options {
@@ -55,6 +57,7 @@ public:
     QString pendingSsid() const { return m_pendingSsid; }
     QVariantMap outcome() const { return m_outcome; }
     bool dryRun() const { return m_options.dryRun; }
+    bool changeDetached() const;
 
     // The section is on screen: scan now, read the list again every 15 s
     Q_INVOKABLE void setActive(bool active);

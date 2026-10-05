@@ -15,6 +15,13 @@ WiredController::WiredController(const Options &options, StatusController *statu
     connect(&m_leaseTimer, &QTimer::timeout, this, &WiredController::refreshLeases);
 }
 
+// NetworkManager's server mode, or the panel menu's (its leases are the
+// system dnsmasq's: net-ctl.sh reads them from there)
+static bool serving(const QVariantMap &m)
+{
+    return m.value("mode") == "server" || m.value("mode") == "legacy-server";
+}
+
 void WiredController::setActive(bool active)
 {
     if (m_active == active) return;
@@ -118,7 +125,7 @@ void WiredController::refreshLeases()
     if (!m_status) return;
     for (const QVariant &v : m_status->interfaces()) {
         const QVariantMap m = v.toMap();
-        if (m.value("type") == "ethernet" && m.value("mode") == "server")
+        if (m.value("type") == "ethernet" && serving(m))
             run(Op::Leases, m.value("name").toString(), {"leases", "--iface=" + m.value("name").toString()});
     }
 }
@@ -130,7 +137,7 @@ void WiredController::onStatus()
     for (const QVariant &v : m_status->interfaces()) {
         const QVariantMap m = v.toMap();
         const QString name = m.value("name").toString();
-        if (m.value("type") != "ethernet" || m.value("mode") != "server") {
+        if (m.value("type") != "ethernet" || !serving(m)) {
             m_carrier.remove(name);
             continue;
         }

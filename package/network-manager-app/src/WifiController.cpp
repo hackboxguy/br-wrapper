@@ -14,11 +14,17 @@ WifiController::WifiController(const Options &options, StatusController *status,
     connect(m_tool, &NetTool::result, this, &WifiController::onResult);
     connect(m_tool, &NetTool::progress, this, &WifiController::onProgress);
     connect(m_tool, &NetTool::finished, this, &WifiController::onFinished);
+    connect(m_tool, &NetTool::notice, this, [this](const QString &text) { if (text == "detached") emit busyChanged(); });
 
     // While the section is shown: NetworkManager scans on its own; read its
     // list again now and then (no rescan: that is the "Scan again" button)
     m_rescanTimer.setInterval(15000);
     connect(&m_rescanTimer, &QTimer::timeout, this, [this]() { scan(false); });
+}
+
+bool WifiController::changeDetached() const
+{
+    return m_op != Op::None && m_op != Op::Scan && m_tool->detached();
 }
 
 void WifiController::setActive(bool active)
