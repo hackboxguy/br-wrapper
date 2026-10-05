@@ -30,12 +30,31 @@
 #   wifi-forget --ssid=S            deletes the saved profile(s) for S
 #   wifi-autoconnect --ssid=S --on|--off
 #   wifi-radio --on|--off           --on also unblocks rfkill and sets the country if unset
+#   wired-set --iface=IF --mode=client
+#   wired-set --iface=IF --mode=static --ip=A --prefix=N [--gateway=G] [--dns=D[,D]]
+#   wired-set --iface=IF --mode=server --ip=A [--prefix=24]
+#                                   the port's profile (bound to the MAC for a USB
+#                                   adapter); restores the previous settings if the
+#                                   new ones do not come up (exit 3)
+#   dhcp-probe --iface=IF           RESULT kind=offer ... per answering DHCP server,
+#                                   then kind=probe servers=N carrier=0|1 (root)
 # Changes take --dry-run: say what would run, change nothing.
+#
+# A change outlives its caller (plan rule 6a): run as root with systemd-run
+# available, a change re-executes itself as a transient unit
+# (systemd-run --pipe --wait) - stdin, output and exit code pass through, and
+# a SIGKILL of the app, of sudo or of systemd-run (a launcher restart kills
+# the app's whole cgroup) leaves the change and its restore running to the
+# end. NET_CTL_* variables are carried into the unit. Reads never detach.
 #
 # Test seams (never set on a rig): NET_CTL_SYSFS (/sys/class/net),
 # NET_CTL_LEASE_DIR, NET_CTL_LEGACY_CONF, NET_CTL_LOCK, NET_CTL_MOUNTS,
 # NET_CTL_MODPROBE_DIR, NET_CTL_INCLUDE_VETH=1 (treat veth devices as wired
-# ports), NET_CTL_COUNTRY (country set by wifi-radio --on, default DE).
+# ports), NET_CTL_COUNTRY (country set by wifi-radio --on, default DE),
+# NET_CTL_SHARED_DIR (NetworkManager's dnsmasq-shared.d), NET_CTL_PROBE (the
+# probe program), NET_CTL_INET=yes|no|skip (the internet check's answer, or
+# none), NET_CTL_INET_TARGETS, NET_CTL_UID (the uid the detach rule sees),
+# NET_CTL_DETACHED=1 (set inside the transient unit).
 
 # nft, iw and rfkill live in /usr/sbin, which is not in pi's non-login PATH.
 # Appended, not prepended: on merged-/usr hosts /usr/sbin also holds nmcli, and
@@ -51,7 +70,12 @@ LOCK=${NET_CTL_LOCK:-/tmp/system-update.lock}
 MOUNTS=${NET_CTL_MOUNTS:-/proc/mounts}
 MODPROBE_DIR=${NET_CTL_MODPROBE_DIR:-/etc/modprobe.d}
 COUNTRY=${NET_CTL_COUNTRY:-DE}
+SHARED_DIR=${NET_CTL_SHARED_DIR:-/etc/NetworkManager/dnsmasq-shared.d}
+DROPIN=$SHARED_DIR/90-micropanel-no-gateway.conf
+PROBE=${NET_CTL_PROBE:-$(dirname "$(readlink -f "$0")")/net-dhcp-probe.py}
+INET_TARGETS=${NET_CTL_INET_TARGETS:-1.1.1.1 8.8.8.8}
 CONNECT_WAIT=60
+WIRED_WAIT=60
 
 tab=$(printf '\t')
 us=$(printf '\037')
@@ -70,12 +94,20 @@ function enc(s,    out, i, c) {
     return out
 }'
 
+# A change running as its own unit may have nobody reading its output any
+# more: its NOTICE and RESULT lines also go to the journal (never a secret:
+# passwords are only ever on stdin)
+journal() { [ -n "${NET_CTL_DETACHED:-}" ] && logger -t net-ctl.sh -- "$*" 2>/dev/null; return 0; }
+notice() { echo "NOTICE $*"; journal "NOTICE $*"; }
+
 # emit <kind>: reads "key<TAB>value" lines, prints one RESULT line
 emit() {
-    awk -v kind="$1" "$AWK_ORD"'
+    line=$(awk -v kind="$1" "$AWK_ORD"'
         { p = index($0, "\t"); if (p == 0) next
           line = line " " substr($0, 1, p - 1) "=" enc(substr($0, p + 1)) }
-        END { print "RESULT kind=" kind line }'
+        END { print "RESULT kind=" kind line }')
+    printf '%s\n' "$line"
+    journal "$line"
 }
 
 # kv <key> <value>: one input line for emit
@@ -95,10 +127,12 @@ pct_decode() {
 # A failure as the last line: RESULT kind=<kind> ok=0 ... reason=<code>
 fail() { # <exit> <kind> <reason> [detail]
     if [ -n "${4:-}" ]; then
-        printf 'RESULT kind=%s ok=0 detail=%s reason=%s\n' "$2" "$(printf '%s' "$4" | tr '\n' ' ' | pct_stdin)" "$3"
+        line=$(printf 'RESULT kind=%s ok=0 detail=%s reason=%s' "$2" "$(printf '%s' "$4" | tr '\n' ' ' | pct_stdin)" "$3")
     else
-        printf 'RESULT kind=%s ok=0 reason=%s\n' "$2" "$3"
+        line=$(printf 'RESULT kind=%s ok=0 reason=%s' "$2" "$3")
     fi
+    printf '%s\n' "$line"
+    journal "$line (exit $1)"
     exit "$1"
 }
 pct_stdin() { awk "$AWK_ORD"'{ if (NR > 1) printf "%%0A"; printf "%s", enc($0) }'; }
@@ -190,18 +224,46 @@ security_of() { # nmcli SECURITY column -> open | wpa2 | wpa3 | enterprise | oth
         *802.1X*) echo enterprise ;;
         *WPA1*|*WPA2*) echo wpa2 ;;
         *WPA3*) echo wpa3 ;;
-        *OWE*) echo open ;;
+        *OWE*) echo other ;;   # enhanced open: not a plain open profile
         *) echo other ;;
     esac
 }
 
-# The profile's IPv4 method as the app's mode word
-mode_of() { # <uuid>
-    m=$(nmcli -t -f ipv4.method connection show uuid "$1" 2>/dev/null | sed 's/^ipv4\.method://')
-    case $m in
+# A profile's IPv4 method as the app's mode word
+mode_word() { # <ipv4.method>
+    case $1 in
         auto) echo client ;; manual) echo static ;; shared) echo server ;;
-        disabled) echo off ;; '') echo off ;; *) echo "$m" ;;
+        disabled|'') echo off ;; *) echo "$1" ;;
     esac
+}
+
+# Every wired (802-3-ethernet) profile, one line each:
+# uuid US name US method US addresses US gateway US dns US ifname US mac US
+# autoconnect US priority US timestamp US file
+eth_profiles() {
+    nmcli -t -e yes -f UUID,TYPE,FILENAME connection show 2>/dev/null | untab | while IFS="$us" read -r u t file; do
+        [ "$t" = 802-3-ethernet ] || continue
+        # "connection show <id>" prints "name:value" without escaping the value
+        nmcli -t -f connection.id,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns,connection.interface-name,802-3-ethernet.mac-address,connection.autoconnect,connection.autoconnect-priority,connection.timestamp \
+            connection show uuid "$u" 2>/dev/null | awk -v u="$u" -v file="$file" '
+            { p = index($0, ":"); v[substr($0, 1, p - 1)] = substr($0, p + 1) }
+            END { printf "%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n", u,
+                  v["connection.id"], v["ipv4.method"], v["ipv4.addresses"], v["ipv4.gateway"], v["ipv4.dns"],
+                  v["connection.interface-name"], toupper(v["802-3-ethernet.mac-address"]), v["connection.autoconnect"],
+                  v["connection.autoconnect-priority"], v["connection.timestamp"], file }'
+    done
+}
+
+# The profile that is, or would be, active on a wired port: the active one;
+# else the autoconnect profile that matches the port (interface name and MAC,
+# where set) with the highest priority, then the most recently used
+port_profile() { # <profiles> <dev> <MAC> <active uuid>
+    printf '%s\n' "$1" | awk -F "$us" -v d="$2" -v m="$(printf '%s' "$3" | tr 'a-f' 'A-F')" -v a="$4" '
+        $1 == "" { next }
+        a != "" { if ($1 == a) { print; found = 1; exit } next }
+        ($7 == "" || $7 == d) && ($8 == "" || $8 == m) && $9 == "yes" {
+            if (best == "" || $10 + 0 > bp || ($10 + 0 == bp && $11 + 0 > bt)) { best = $0; bp = $10 + 0; bt = $11 + 0 } }
+        END { if (!found && best != "") print best }'
 }
 
 # Interface named in the OLED menu's own DHCP-server config (system dnsmasq)
@@ -222,7 +284,7 @@ read_sys() { cat "$SYSFS/$1/$2" 2>/dev/null; }
 # The friendly part of a wired port's name: driver and USB product
 usb_of() { case $(readlink -f "$SYSFS/$1/device" 2>/dev/null) in */usb*) echo 1 ;; *) echo 0 ;; esac; }
 
-iface_result() { # <dev> <type> <active uuid or ""> <default dev> <legacy iface>
+iface_result() { # <dev> <type> <active uuid or ""> <default dev> <legacy iface> <profiles> <inet dir>
     dev=$1 type=$2 uuid=$3
     # "device show" prints "NAME:value" without escaping the value
     show=$(nmcli -t -f GENERAL,IP4,DHCP4,IP6 device show "$dev" 2>/dev/null | sed "s/:/$tab/")
@@ -244,9 +306,29 @@ iface_result() { # <dev> <type> <active uuid or ""> <default dev> <legacy iface>
         product=$(cat "$SYSFS/$dev/device/../product" 2>/dev/null)
     fi
 
-    mode=off
-    [ -n "$uuid" ] && mode=$(mode_of "$uuid")
+    mac=$(field GENERAL.HWADDR)
+    mode=off cfg='' cfgaddr='' cfggw='' cfgdns='' binding='' saved='' profuuid='' profname=''
+    if [ "$type" = ethernet ]; then
+        # Wired ports: the mode of the profile that is or would be active,
+        # so a port without a cable still shows (and edits) its settings
+        cfg=$(port_profile "$6" "$dev" "$mac" "$uuid")
+        if [ -n "$cfg" ]; then
+            profuuid=$(printf '%s' "$cfg" | cut -d "$us" -f1)
+            profname=$(printf '%s' "$cfg" | cut -d "$us" -f2)
+            mode=$(mode_word "$(printf '%s' "$cfg" | cut -d "$us" -f3)")
+            cfgaddr=$(printf '%s' "$cfg" | cut -d "$us" -f4 | cut -d, -f1 | tr -d ' ')
+            cfggw=$(printf '%s' "$cfg" | cut -d "$us" -f5)
+            cfgdns=$(printf '%s' "$cfg" | cut -d "$us" -f6 | tr -d ' ')
+            if [ -n "$(printf '%s' "$cfg" | cut -d "$us" -f8)" ]; then binding=mac
+            elif [ -n "$(printf '%s' "$cfg" | cut -d "$us" -f7)" ]; then binding=name
+            else binding=any; fi
+            case $(printf '%s' "$cfg" | cut -d "$us" -f12) in /run/*|'') saved=0 ;; *) saved=1 ;; esac
+        fi
+    elif [ -n "$uuid" ]; then
+        mode=$(mode_word "$(nmcli -t -f ipv4.method connection show uuid "$uuid" 2>/dev/null | sed 's/^ipv4\.method://')")
+    fi
     if [ -n "$5" ] && [ "$5" = "$dev" ]; then mode="legacy-server"; fi
+    inet=$(cat "$7/$dev" 2>/dev/null)
 
     ssid='' signal='' band=''
     if [ "$type" = wifi ]; then
@@ -263,7 +345,7 @@ iface_result() { # <dev> <type> <active uuid or ""> <default dev> <legacy iface>
 
     {
         kv name "$dev"; kv type "$type"; kv usb "$usb"
-        kv mac "$(field GENERAL.HWADDR)"; kv carrier "$carrier"; kv speed "$speed"
+        kv mac "$mac"; kv carrier "$carrier"; kv speed "$speed"
         kv state "$state"; kv profile "$(field GENERAL.CONNECTION)"; kv mode "$mode"
         kv ip "${addr%/*}"; kv prefix "$(case $addr in */*) echo "${addr#*/}" ;; esac)"
         kv gateway "$(field IP4.GATEWAY)"; kv dns "$(fields IP4.DNS | paste -s -d, -)"
@@ -273,7 +355,46 @@ iface_result() { # <dev> <type> <active uuid or ""> <default dev> <legacy iface>
         kv ip6 "$(fields IP6.ADDRESS | paste -s -d, -)"
         kv dhcpserver "$(dhcp dhcp_server_identifier)"; kv leasetime "$(dhcp dhcp_lease_time)"
         kv leaseexpiry "$(dhcp expiry)"
+        kv inet "$inet"
+        kv profileuuid "$profuuid"; kv cfgprofile "$profname"; kv saved "$saved"; kv binding "$binding"
+        kv cfgip "${cfgaddr%/*}"; kv cfgprefix "$(case $cfgaddr in */*) echo "${cfgaddr#*/}" ;; esac)"
+        kv cfggateway "$cfggw"; kv cfgdns "$cfgdns"
     } | emit iface
+}
+
+# Does a port reach the internet? NetworkManager's connectivity word cannot
+# say: on this image connectivity checking is not configured, and then it
+# reports "full" for any device with a default route (measured: "full" for a
+# port whose gateway had no way out). So: one ICMP echo to each of
+# INET_TARGETS, bound to the port (ping -I), in parallel for all ports with a
+# gateway, at most ~1 s; the answer is kept 20 s per port, address and
+# gateway, so the 5 s status refresh does not ping every time.
+inet_checks() { # <out dir> ; reads "dev US gateway US ip" lines
+    out=$1
+    cache=${TMPDIR:-/tmp}/net-ctl-inet-$(id -u)
+    mkdir -p "$cache" 2>/dev/null
+    now=$(date +%s)
+    while IFS="$us" read -r dev gw ip; do
+        [ -n "$dev" ] || continue
+        if [ -z "$gw" ] || [ -z "$ip" ]; then continue; fi
+        case ${NET_CTL_INET:-} in skip) continue ;; yes|no) echo "$NET_CTL_INET" > "$out/$dev"; continue ;; esac
+        key="$ip $gw"
+        if [ -f "$cache/$dev" ]; then
+            read -r t k1 k2 v < "$cache/$dev" 2>/dev/null
+            if [ "$k1 $k2" = "$key" ] && [ $((now - ${t:-0})) -lt 20 ]; then echo "$v" > "$out/$dev"; continue; fi
+        fi
+        (
+            ok=no
+            for target in $INET_TARGETS; do
+                (ping -n -q -c 1 -W 1 -I "$dev" "$target" >/dev/null 2>&1 && : > "$out/.$dev.ok") &
+            done
+            wait
+            [ -f "$out/.$dev.ok" ] && ok=yes
+            echo "$ok" > "$out/$dev"
+            echo "$now $key $ok" > "$cache/$dev" 2>/dev/null
+        ) &
+    done
+    wait
 }
 
 cmd_status() {
@@ -281,16 +402,36 @@ cmd_status() {
     defdev=$(default_route_dev)
     legacy=$(legacy_server_iface)
     active=$(nmcli -t -e yes -f DEVICE,UUID connection show --active 2>/dev/null | untab)
-    list_devices | while IFS="$us" read -r dev type; do
+    profiles=$(eth_profiles)
+    devices=$(list_devices)
+    inetdir=$(mktemp -d "${TMPDIR:-/tmp}/net-ctl-st.XXXXXX") || exit 2
+    trap 'rm -rf "$inetdir"' EXIT
+    # gateway and address per port, from the kernel (cheap), for the check
+    printf '%s\n' "$devices" | while IFS="$us" read -r dev type; do
+        [ -n "$dev" ] || continue
+        gw=$(ip -4 route show default dev "$dev" 2>/dev/null | awk '{ print $3; exit }')
+        ip4=$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{ print $4; exit }')
+        printf '%s\037%s\037%s\n' "$dev" "$gw" "$ip4"
+    done | inet_checks "$inetdir"
+    printf '%s\n' "$devices" | while IFS="$us" read -r dev type; do
+        [ -n "$dev" ] || continue
         uuid=$(printf '%s\n' "$active" | awk -F "$us" -v d="$dev" '$1 == d { print $2; exit }')
-        iface_result "$dev" "$type" "$uuid" "$defdev" "$legacy"
+        iface_result "$dev" "$type" "$uuid" "$defdev" "$legacy" "$profiles" "$inetdir"
     done
 
     conn=$(nmcli -t -f CONNECTIVITY general 2>/dev/null)
-    case $conn in
-        full) internet=yes ;; none|limited|portal) internet=no ;; *) internet=unknown ;;
-    esac
-    [ -z "$defdev" ] && internet=no
+    # "via": the default route's port when it reaches the internet, else the
+    # first port (by route metric) that does
+    via=''
+    for dev in $defdev $(ip -4 route show default 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") print $(i + 1) }'); do
+        if [ "$(cat "$inetdir/$dev" 2>/dev/null)" = yes ]; then via=$dev; break; fi
+    done
+    if [ -n "$via" ]; then internet=yes
+    elif [ -n "$(find "$inetdir" -maxdepth 1 -type f ! -name '.*' 2>/dev/null | head -n 1)" ]; then internet=no
+    elif [ -z "$defdev" ]; then internet=no
+    else
+        case $conn in none|limited|portal) internet=no ;; *) internet=unknown ;; esac
+    fi
 
     wdev=$(wifi_device)
     radio=absent
@@ -306,7 +447,7 @@ cmd_status() {
     wifiboot=off
     grep -qs 'ieee80211_regdom=' "$MODPROBE_DIR"/*.conf && wifiboot=on
     {
-        kv internet "$internet"; kv via "$defdev"; kv connectivity "$conn"
+        kv internet "$internet"; kv via "$via"; kv defaultdev "$defdev"; kv connectivity "$conn"
         kv wifi "$radio"; kv country "$country"; kv volatile "$volatile"; kv wifiboot "$wifiboot"
     } | emit summary
 }
@@ -538,9 +679,9 @@ cmd_wifi_connect() {
         exit 0
     fi
 
-    # From here on the change runs to its end: a launcher restart kills the
-    # app, not the attempt or the restore
-    trap '' HUP TERM INT
+    # From here on the change runs to its end: deaf to the signals of a caller
+    # that goes away; with rule 6a it is detached from that caller anyway
+    trap '' HUP TERM INT PIPE
 
     created=
     target=$saved
@@ -582,6 +723,7 @@ cmd_wifi_connect() {
         kv ssid "$ssid"; kv ok 0; kv restored "$restored"
         kv detail "$(printf '%s' "$act_detail" | tr '\n' ' ')"
     } | emit connect | sed "s/\$/ reason=$act_reason/"
+    journal "reason=$act_reason"
     [ -n "$restored" ] && exit 3
     exit 2
 }
@@ -650,14 +792,284 @@ cmd_wifi_radio() {
     echo "RESULT kind=radio ok=1 wifi=on country=$country"
 }
 
+# ---- wired ports --------------------------------------------------------------
+
+valid_ip() { # a.b.c.d with every octet 0-255
+    printf '%s' "$1" | awk -F . 'NF != 4 { exit 1 }
+        { for (i = 1; i <= 4; i++) if ($i !~ /^[0-9]+$/ || $i + 0 > 255 || length($i) > 3) exit 1 }'
+}
+
+# Another port's IPv4 network that overlaps <ip>/<prefix>: prints "dev a.b.c.d/n"
+overlap() { # <dev> <ip> <prefix>
+    ip -4 -o addr show 2>/dev/null | awk -v self="$1" -v ip="$2" -v pfx="$3" '
+        function num(a,    p) { split(a, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }
+        function net(n, b) { return int(n / 2 ^ (32 - b)) }
+        $2 == self || $2 == "lo" { next }
+        { split($4, a, "/"); b = (a[2] + 0 < pfx + 0) ? a[2] + 0 : pfx + 0
+          if (net(num(a[1]), b) == net(num(ip), b)) { print $2 " " $4; exit } }'
+}
+
+has_addr() { # <dev> <ip>
+    ip -4 -o addr show dev "$1" 2>/dev/null | awk -v ip="$2" '{ split($4, a, "/"); if (a[1] == ip) f = 1 } END { exit !f }'
+}
+
+# NetworkManager's dnsmasq for a serving port: running, with this address,
+# reading the drop-in directory
+server_running() { # <ip>
+    pgrep -a -x dnsmasq 2>/dev/null | grep -F -- "--listen-address=$1" | grep -qF -- "--conf-dir=$SHARED_DIR"
+}
+
+# Shared mode needs the system dnsmasq gone (port 53 clash, plan 2.1) and the
+# no-gateway drop-in in place (plan 5.1). The image provides both (plan 5.4);
+# on an image without them this makes them true for the running system.
+server_preconditions() {
+    if systemctl cat dnsmasq.service >/dev/null 2>&1; then
+        if systemctl is-active --quiet dnsmasq.service; then
+            notice "stopping the system dnsmasq"
+            systemctl stop dnsmasq.service || return 1
+        fi
+        if [ "$(systemctl is-enabled dnsmasq.service 2>/dev/null)" != masked ]; then
+            notice "masking the system dnsmasq"
+            systemctl mask dnsmasq.service >/dev/null 2>&1 || return 1
+        fi
+    fi
+    want='# network-manager-app: serve addresses only - no router, no DNS server announced
+dhcp-option=3
+dhcp-option=6'
+    if [ "$(cat "$DROPIN" 2>/dev/null)" != "$want" ]; then
+        notice "writing $DROPIN"
+        mkdir -p "$SHARED_DIR" && printf '%s\n' "$want" > "$DROPIN" || return 1
+    fi
+    return 0
+}
+
+# What the OLED menu's own stop does (dhcp-net-settings-pios.sh): a port it
+# put in its DHCP-server mode is taken over by any wired-set
+legacy_takeover() { # <dev>
+    [ "$(legacy_server_iface)" = "$1" ] || return 0
+    notice "taking over from the panel menu's DHCP server"
+    systemctl stop dnsmasq.service 2>/dev/null
+    systemctl mask dnsmasq.service >/dev/null 2>&1
+    rm -f "$LEGACY_CONF"
+}
+
+nm_get() { # <uuid> <setting> - one value of a profile
+    nmcli -t -f "$2" connection show uuid "$1" 2>/dev/null | sed -n "s/^$2://p"
+}
+
+wired_up() { # <uuid> <dev> ; sets up_out
+    up_out=$(nmcli --wait "$WIRED_WAIT" connection up uuid "$1" ifname "$2" 2>&1)
+}
+
+cmd_wired_set() {
+    need_nm
+    [ -n "$iface" ] || fail 1 wired bad-arguments "--iface= is required"
+    case $opt_mode in client|static|server) ;; *) fail 1 wired bad-arguments "--mode= is client, static or server" ;; esac
+    list_devices | awk -F "$us" -v d="$iface" '$1 == d && $2 == "ethernet" { f = 1 } END { exit !f }' \
+        || fail 1 wired bad-arguments "$iface is not a wired port"
+    prefix=$opt_prefix
+    if [ "$opt_mode" != client ]; then
+        valid_ip "$opt_ip" || fail 1 wired bad-arguments "--ip= must be an address like 192.168.50.1"
+        [ "$opt_mode" = server ] && prefix=${prefix:-24}
+        case $prefix in ''|*[!0-9]*) fail 1 wired bad-arguments "--prefix= is 1 to 30" ;; esac
+        if [ "$prefix" -lt 1 ] || [ "$prefix" -gt 30 ]; then fail 1 wired bad-arguments "--prefix= is 1 to 30"; fi
+        last=${opt_ip##*.}
+        [ "$last" != 0 ] && [ "$last" != 255 ] || fail 1 wired bad-arguments "$opt_ip is not a host address"
+    fi
+    if [ "$opt_mode" = static ]; then
+        [ -z "$opt_gateway" ] || valid_ip "$opt_gateway" || fail 1 wired bad-arguments "--gateway= must be an address"
+        for d in $(printf '%s' "$opt_dns" | tr ',' ' '); do
+            valid_ip "$d" || fail 1 wired bad-arguments "--dns= must be addresses, separated by commas"
+        done
+    fi
+    if [ "$opt_mode" = server ]; then
+        clash=$(overlap "$iface" "$opt_ip" "$prefix")
+        [ -z "$clash" ] || fail 1 wired overlap "$opt_ip/$prefix overlaps ${clash#* } on ${clash%% *}"
+    fi
+    need_unlocked wired
+
+    mac=$(read_sys "$iface" address | tr 'a-f' 'A-F')
+    usb=$(usb_of "$iface")
+    active=$(nmcli -t -e yes -f DEVICE,UUID connection show --active 2>/dev/null | untab \
+             | awk -F "$us" -v d="$iface" '$1 == d { print $2; exit }')
+    cfg=$(port_profile "$(eth_profiles)" "$iface" "$mac" "$active")
+    uuid=$(printf '%s' "$cfg" | cut -d "$us" -f1)
+    carrier=$(read_sys "$iface" carrier); [ "$carrier" = 1 ] || carrier=0
+
+    case $opt_mode in
+        client) set -- ipv4.method auto ipv4.addresses "" ipv4.gateway "" ipv4.dns "" ipv4.never-default no ipv6.method auto ;;
+        static) set -- ipv4.method manual ipv4.addresses "$opt_ip/$prefix" ipv4.gateway "$opt_gateway" \
+                       ipv4.dns "$opt_dns" ipv4.never-default no ipv6.method auto ;;
+        server) set -- ipv4.method shared ipv4.addresses "$opt_ip/$prefix" ipv4.gateway "" ipv4.dns "" \
+                       ipv4.never-default yes ipv6.method disabled ;;
+    esac
+    # A USB adapter keeps its settings in any port, and another adapter does
+    # not inherit them: bind to the MAC. The built-in port keeps its name.
+    if [ "$usb" = 1 ] && [ -n "$mac" ]; then
+        set -- "$@" 802-3-ethernet.mac-address "$mac" connection.interface-name ""
+    fi
+
+    if [ "$dry_run" = 1 ]; then
+        [ -n "$(legacy_server_iface)" ] && [ "$(legacy_server_iface)" = "$iface" ] && dry_note "take over the panel menu's DHCP server on $iface"
+        [ "$opt_mode" = server ] && dry_note "stop and mask dnsmasq.service if needed; write $DROPIN if missing"
+        if [ -n "$uuid" ]; then dry_note "nmcli connection modify uuid $uuid $*"
+        else dry_note "nmcli connection add type ethernet con-name $iface ifname $iface $*"; fi
+        [ "$carrier" = 1 ] && dry_note "nmcli connection up uuid ${uuid:-<new>} ifname $iface"
+        { kv iface "$iface"; kv mode "$opt_mode"; kv ok 1; kv dryrun 1; } | emit wired
+        exit 0
+    fi
+
+    # From here on the change runs to its end (rule 6a: detached, and deaf
+    # to the signals of a caller that goes away)
+    trap '' HUP TERM INT PIPE
+
+    legacy_takeover "$iface"
+    if [ "$opt_mode" = server ]; then
+        server_preconditions || fail 2 wired failed "could not stop the system dnsmasq or write $DROPIN"
+    fi
+
+    created=''
+    if [ -n "$uuid" ]; then
+        # What to put back if the new settings do not come up
+        prev_method=$(nm_get "$uuid" ipv4.method); prev_addr=$(nm_get "$uuid" ipv4.addresses)
+        prev_gw=$(nm_get "$uuid" ipv4.gateway); prev_dns=$(nm_get "$uuid" ipv4.dns)
+        prev_nd=$(nm_get "$uuid" ipv4.never-default); prev_v6=$(nm_get "$uuid" ipv6.method)
+        prev_mac=$(nm_get "$uuid" 802-3-ethernet.mac-address); prev_if=$(nm_get "$uuid" connection.interface-name)
+        notice "previous: $prev_method $prev_addr"
+        out=$(nmcli connection modify uuid "$uuid" "$@" 2>&1) || fail 2 wired failed "$out"
+    else
+        name=$iface; [ "$usb" = 1 ] && name="USB adapter $mac"
+        out=$(nmcli connection add type ethernet con-name "$name" ifname "$iface" connection.autoconnect yes "$@" 2>&1) \
+            || fail 2 wired failed "$out"
+        created=$(printf '%s\n' "$out" | sed -n 's/.*(\([0-9a-fA-F-]\{36\}\)) successfully added.*/\1/p' | tail -n 1)
+        [ -n "$created" ] || fail 2 wired failed "$out"
+        uuid=$created
+    fi
+
+    # No cable: saved, used when one is plugged in (nothing to check yet)
+    if [ "$carrier" = 0 ]; then
+        { kv iface "$iface"; kv mode "$opt_mode"; kv ok 1; kv pending 1; kv profileuuid "$uuid"; } | emit wired
+        exit 0
+    fi
+
+    echo "PROGRESS phase=activating"
+    reason=''
+    if wired_up "$uuid" "$iface"; then
+        echo "PROGRESS phase=checking"
+        i=0
+        while :; do
+            case $opt_mode in
+                client) ip4=$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }')
+                        [ -n "$ip4" ] && break ;;
+                static) has_addr "$iface" "$opt_ip" && break ;;
+                server) has_addr "$iface" "$opt_ip" && server_running "$opt_ip" && [ -f "$DROPIN" ] && break ;;
+            esac
+            i=$((i + 1))
+            if [ $i -ge 20 ]; then
+                reason=check-failed
+                [ "$opt_mode" = server ] && up_out="the address, NetworkManager's dnsmasq or $DROPIN is missing"
+                [ "$opt_mode" != server ] && up_out="$iface has no address"
+                break
+            fi
+            sleep 0.5
+        done
+    else
+        reason=activation-failed
+    fi
+
+    if [ -z "$reason" ]; then
+        ip4=$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }')
+        { kv iface "$iface"; kv mode "$opt_mode"; kv ok 1; kv ip "$ip4"; kv profileuuid "$uuid"
+          kv binding "$([ "$usb" = 1 ] && echo mac || echo name)"; } | emit wired
+        exit 0
+    fi
+
+    # Failed: the previous settings back, and up again (the failure's own
+    # message is kept; the restore's activation would overwrite up_out)
+    why=$up_out
+    notice "restoring the previous settings"
+    restored=0
+    if [ -n "$created" ]; then
+        nmcli connection delete uuid "$created" >/dev/null 2>&1
+    else
+        if nmcli connection modify uuid "$uuid" ipv4.method "$prev_method" ipv4.addresses "$prev_addr" \
+               ipv4.gateway "$prev_gw" ipv4.dns "$prev_dns" ipv4.never-default "$prev_nd" ipv6.method "$prev_v6" \
+               802-3-ethernet.mac-address "$prev_mac" connection.interface-name "$prev_if" >/dev/null 2>&1; then
+            wired_up "$uuid" "$iface" && restored=1
+        fi
+    fi
+    { kv iface "$iface"; kv mode "$opt_mode"; kv ok 0; kv restored "$restored"
+      kv detail "$(printf '%s' "$why" | tr '\n' ' ')"; } | emit wired | sed "s/\$/ reason=$reason/"
+    journal "reason=$reason restored=$restored"
+    [ "$restored" = 1 ] && exit 3
+    exit 2
+}
+
+# One DHCPDISCOVER on the port (net-dhcp-probe.py): who answers. Never a
+# REQUEST, so no address is taken. The rig's own server on this port (a port
+# in server mode answers itself) is left out.
+cmd_dhcp_probe() {
+    need_nm
+    [ -n "$iface" ] || fail 1 probe bad-arguments "--iface= is required"
+    carrier=$(read_sys "$iface" carrier); [ "$carrier" = 1 ] || carrier=0
+    if [ "$carrier" = 0 ]; then
+        echo "RESULT kind=probe iface=$iface servers=0 carrier=0"
+        exit 0
+    fi
+    own=$(ip -4 -o addr show 2>/dev/null | awk '{ split($4, a, "/"); printf "%s ", a[1] }')
+    out=$("$PROBE" --iface "$iface" --timeout 4.5 2>&1) || fail 2 probe failed "$out"
+    # "OFFER server=a.b.c.d offered=a.b.c.d [router=a.b.c.d]" per server
+    offers=$(printf '%s\n' "$out" | awk -v own=" $own " '
+        $1 == "OFFER" { s = o = r = ""
+            for (i = 2; i <= NF; i++) { p = index($i, "="); k = substr($i, 1, p - 1); v = substr($i, p + 1)
+                if (k == "server") s = v; else if (k == "offered") o = v; else if (k == "router") r = v }
+            if (s == "" || index(own, " " s " ") || seen[s]++) next
+            print s "\037" o "\037" r }')
+    n=0
+    while IFS="$us" read -r server offered router; do
+        [ -n "$server" ] || continue
+        { kv iface "$iface"; kv server "$server"; kv offered "$offered"; kv router "$router"; } | emit offer
+        n=$((n + 1))
+    done <<EOF_OFFERS
+$offers
+EOF_OFFERS
+    echo "RESULT kind=probe iface=$iface servers=$n carrier=1"
+}
+
+# ---- a change outlives its caller ------------------------------------------------
+
+# Rule 6a: as a transient unit. Only for changes, only as root, only once,
+# never in a dry run; without systemd-run (Buildroot) the change runs here.
+detach() { # <command> <args...>
+    case $1 in wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set) ;; *) return 0 ;; esac
+    [ "$dry_run" = 1 ] && return 0
+    [ -z "${NET_CTL_DETACHED:-}" ] || return 0
+    [ "${NET_CTL_UID:-$(id -u)}" = 0 ] || return 0
+    command -v systemd-run >/dev/null 2>&1 || return 0
+    self=$(readlink -f "$0")
+    # NET_CTL_* (test seams such as NET_CTL_INCLUDE_VETH) go along; names
+    # only ("--setenv=NAME" copies the value), and names have no spaces
+    envs=''
+    for v in $(env | sed -n 's/^\(NET_CTL_[A-Z0-9_]*\)=.*/\1/p'); do envs="$envs --setenv=$v"; done
+    # shellcheck disable=SC2086
+    exec systemd-run --quiet --collect --pipe --wait --description="net-ctl.sh $1" \
+        --setenv=NET_CTL_DETACHED=1 $envs "$self" "$@"
+}
+
 # ---- arguments --------------------------------------------------------------
 
 cmd=${1:-}
 [ $# -gt 0 ] && shift
 iface='' ssid_enc='' opt_hidden=0 opt_security='' opt_rescan=0 opt_onoff='' dry_run=0
+opt_mode='' opt_ip='' opt_prefix='' opt_gateway='' opt_dns=''
 for arg in "$@"; do
     case $arg in
         --iface=*) iface=${arg#--iface=} ;;
+        --mode=*) opt_mode=${arg#--mode=} ;;
+        --ip=*) opt_ip=${arg#--ip=} ;;
+        --prefix=*) opt_prefix=${arg#--prefix=} ;;
+        --gateway=*) opt_gateway=${arg#--gateway=} ;;
+        --dns=*) opt_dns=${arg#--dns=} ;;
         --ssid=*) ssid_enc=${arg#--ssid=} ;;
         --hidden) opt_hidden=1 ;;
         --security=*) opt_security=${arg#--security=} ;;
@@ -670,6 +1082,15 @@ for arg in "$@"; do
 done
 case $opt_security in ''|open|wpa2|wpa3) ;; *) fail 1 connect bad-arguments "--security= is open, wpa2 or wpa3" ;; esac
 
+detach "$cmd" "$@"
+if [ -n "${NET_CTL_DETACHED:-}" ]; then
+    # Inside the transient unit: nobody may be reading any more, and that
+    # must not end the change (a write to a closed pipe then just fails)
+    trap '' PIPE HUP TERM INT
+    echo "NOTICE detached"
+    journal "start: $cmd $*"
+fi
+
 case $cmd in
     available) cmd_available ;;
     status) cmd_status ;;
@@ -681,7 +1102,9 @@ case $cmd in
     wifi-forget) cmd_wifi_forget ;;
     wifi-autoconnect) cmd_wifi_autoconnect ;;
     wifi-radio) cmd_wifi_radio ;;
+    wired-set) cmd_wired_set ;;
+    dhcp-probe) cmd_dhcp_probe ;;
     *)
-        echo "usage: net-ctl.sh available|status|monitor|leases|wifi-scan|wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio [options]" >&2
+        echo "usage: net-ctl.sh available|status|monitor|leases|wifi-scan|wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set|dhcp-probe [options]" >&2
         exit 1 ;;
 esac

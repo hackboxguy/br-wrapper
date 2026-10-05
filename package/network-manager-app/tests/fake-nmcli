@@ -8,7 +8,12 @@
 #
 # State lives in $FAKE_NM:
 #   profiles   uuid<TAB>ssid<TAB>autoconnect(yes|no)<TAB>active(yes|no)  WiFi profiles
-#   mode       how an activation goes: ok | bad-password | no-address | timeout
+#   eth        wired profiles, "|"-separated: uuid|name|method|addresses|gateway|dns|
+#              ifname|mac|autoconnect|priority|timestamp|file|active-device|never-default|ipv6
+#   addrs      "dev a.b.c.d/n" per address (read by the fake ip)
+#   mode       how a WiFi activation goes: ok | bad-password | no-address | timeout
+#   wiredmode  how a wired activation goes: ok | fail (the first one fails, the
+#              restore succeeds) | nodnsmasq (up, but no dnsmasq appears)
 #   radio      enabled | disabled
 #   running    running | (anything else: NetworkManager down)
 #   down       created by "connection down": ends a looping activation
@@ -17,9 +22,35 @@ joined=$(for a in "$@"; do printf '%s|' "$a"; done)
 # one write per call: the monitor and the activation run at the same time
 printf '%s\n' "$joined" >> "$d/calls"
 mode=$(cat "$d/mode" 2>/dev/null || echo ok)
+wmode=$(cat "$d/wiredmode" 2>/dev/null || echo ok)
 tab=$(printf '\t')
+touch "$d/eth" "$d/profiles" "$d/addrs"
 
 has() { case "|$joined" in *"|$1|"*) return 0 ;; esac; return 1; }
+
+eth_field() { # <uuid> <column 1-15>
+    awk -F '|' -v u="$1" -v c="$2" '$1 == u { print $c; exit }' "$d/eth"
+}
+eth_set() { # <uuid> <column> <value>
+    awk -F '|' -v OFS='|' -v u="$1" -v c="$2" -v v="$3" '$1 == u { $c = v } 1' "$d/eth" > "$d/.e" && mv "$d/.e" "$d/eth"
+}
+col_of() { # nmcli setting -> eth column
+    case $1 in
+        connection.id) echo 2 ;; ipv4.method) echo 3 ;; ipv4.addresses) echo 4 ;; ipv4.gateway) echo 5 ;;
+        ipv4.dns) echo 6 ;; connection.interface-name) echo 7 ;; 802-3-ethernet.mac-address) echo 8 ;;
+        connection.autoconnect) echo 9 ;; connection.autoconnect-priority) echo 10 ;;
+        connection.timestamp) echo 11 ;; ipv4.never-default) echo 14 ;; ipv6.method) echo 15 ;;
+        *) echo 0 ;;
+    esac
+}
+apply_settings() { # <uuid> <key> <value> ...
+    u=$1; shift
+    while [ $# -ge 2 ]; do
+        c=$(col_of "$1")
+        [ "$c" != 0 ] && eth_set "$u" "$c" "$2"
+        shift 2
+    done
+}
 
 case $joined in
     "-t|-f|RUNNING|general|") cat "$d/running" 2>/dev/null || echo running ;;
@@ -27,12 +58,21 @@ case $joined in
     "-t|-f|WIFI|radio|") cat "$d/radio" 2>/dev/null || echo enabled ;;
     "-t|-e|yes|-f|DEVICE,TYPE|device|")
         # NetworkManager 1.42 lists a veth as "ethernet" (seen on the rig)
-        printf 'eth0:ethernet\nwlan0:wifi\np2p-dev-wlan0:wifi-p2p\nlo:loopback\nvethnm:ethernet\ndocker0:bridge\n' ;;
+        printf 'eth0:ethernet\neth1:ethernet\nwlan0:wifi\np2p-dev-wlan0:wifi-p2p\nlo:loopback\nvethnm:ethernet\ndocker0:bridge\n' ;;
     "-t|-e|yes|-f|DEVICE,UUID|connection|show|--active|")
-        echo "eth0:aaaaaaaa-0000-0000-0000-000000000001"
-        awk -F "$tab" '$4 == "yes" { print "wlan0:" $1 }' "$d/profiles" 2>/dev/null ;;
-    "-t|-f|ipv4.method|connection|show|uuid|aaaaaaaa-0000-0000-0000-000000000001|") echo "ipv4.method:auto" ;;
-    "-t|-f|ipv4.method|connection|show|uuid|"*) echo "ipv4.method:auto" ;;
+        awk -F '|' '$13 != "" { print $13 ":" $1 }' "$d/eth"
+        awk -F "$tab" '$4 == "yes" { print "wlan0:" $1 }' "$d/profiles" ;;
+    "-t|-e|yes|-f|UUID,TYPE,FILENAME|connection|show|")
+        awk -F '|' '{ f = $12; gsub(/:/, "\\:", f); print $1 ":802-3-ethernet:" f }' "$d/eth"
+        awk -F "$tab" '{ print $1 ":802-11-wireless:/etc/NetworkManager/system-connections/" $2 ".nmconnection" }' "$d/profiles"
+        echo "lo-uuid:loopback:/run/NetworkManager/system-connections/lo.nmconnection" ;;
+    "-t|-f|connection.id,ipv4.method,ipv4.addresses,ipv4.gateway,ipv4.dns,connection.interface-name,802-3-ethernet.mac-address,connection.autoconnect,connection.autoconnect-priority,connection.timestamp|connection|show|uuid|"*)
+        awk -F '|' -v u="$7" '$1 == u {
+            print "connection.id:" $2; print "ipv4.method:" $3; print "ipv4.addresses:" $4; print "ipv4.gateway:" $5
+            print "ipv4.dns:" $6; print "connection.interface-name:" $7; print "802-3-ethernet.mac-address:" $8
+            print "connection.autoconnect:" $9; print "connection.autoconnect-priority:" $10; print "connection.timestamp:" $11 }' "$d/eth" ;;
+    "-t|-f|ipv4.method|connection|show|uuid|"*|"-t|-f|ipv4.addresses|connection|show|uuid|"*|"-t|-f|ipv4.gateway|connection|show|uuid|"*|"-t|-f|ipv4.dns|connection|show|uuid|"*|"-t|-f|ipv4.never-default|connection|show|uuid|"*|"-t|-f|ipv6.method|connection|show|uuid|"*|"-t|-f|802-3-ethernet.mac-address|connection|show|uuid|"*|"-t|-f|connection.interface-name|connection|show|uuid|"*)
+        echo "$3:$(eth_field "$7" "$(col_of "$3")")" ;;
     "-t|-f|GENERAL,IP4,DHCP4,IP6|device|show|eth0|")
         cat <<'EOF'
 GENERAL.DEVICE:eth0
@@ -50,40 +90,59 @@ IP6.ADDRESS[1]:fe80::76f9:b550:2848:fea0/64
 EOF
         ;;
     "-t|-f|GENERAL,IP4,DHCP4,IP6|device|show|"*)
-        printf 'GENERAL.DEVICE:%s\nGENERAL.HWADDR:2C:CF:67:4F:66:CB\nGENERAL.STATE:30 (disconnected)\nGENERAL.CONNECTION:\n' "$6" ;;
+        printf 'GENERAL.DEVICE:%s\nGENERAL.HWADDR:%s\nGENERAL.STATE:30 (disconnected)\nGENERAL.CONNECTION:\n' \
+            "$6" "$(tr 'a-f' 'A-F' < "${NET_CTL_SYSFS:-/nonexistent}/$6/address" 2>/dev/null)" ;;
     "-t|-f|IP4.ADDRESS|device|show|wlan0|") echo "IP4.ADDRESS[1]:192.168.20.138/24" ;;
     "-t|-e|yes|-f|ACTIVE,SSID,SIGNAL,FREQ|device|wifi|list|ifname|wlan0|--rescan|no|") echo "no:Workshop:71:5180 MHz" ;;
     "-t|-e|yes|-f|IN-USE,SSID,SIGNAL,SECURITY,FREQ|device|wifi|list|--rescan|"*)
         # two BSSIDs of one network (the stronger wins), an escaped colon,
-        # an enterprise network, a hidden one (empty SSID)
+        # an enterprise network, OWE, a hidden one (empty SSID)
         printf ' :Workshop:40:WPA2:2412 MHz\n'
         printf ' :Workshop:71:WPA2:5180 MHz\n'
         printf ' :Caf\303\251 Am Markt:52::2437 MHz\n'
         printf ' :softliQ\\:MC_ab0f32:47:WPA1 WPA2:2412 MHz\n'
         printf ' :Lab-Bench:58:WPA3:5500 MHz\n'
         printf ' :Corp:41:WPA2 802.1X:5200 MHz\n'
+        printf ' :Enhanced Open:44:OWE:5240 MHz\n'
         printf ' ::30:WPA2:2462 MHz\n' ;;
     "-t|-e|yes|-f|UUID,TYPE,AUTOCONNECT,ACTIVE|connection|show|")
-        echo "aaaaaaaa-0000-0000-0000-000000000001:802-3-ethernet:yes:yes"
-        awk -F "$tab" '{ print $1 ":802-11-wireless:" $3 ":" $4 }' "$d/profiles" 2>/dev/null ;;
+        awk -F '|' '{ print $1 ":802-3-ethernet:" $9 ":" ($13 != "" ? "yes" : "no") }' "$d/eth"
+        awk -F "$tab" '{ print $1 ":802-11-wireless:" $3 ":" $4 }' "$d/profiles" ;;
     "-t|-f|802-11-wireless.ssid,802-11-wireless.hidden|connection|show|uuid|"*|"-t|-f|802-11-wireless.ssid|connection|show|uuid|"*)
         u=$7
         awk -F "$tab" -v u="$u" '$1 == u { print "802-11-wireless.ssid:" $2; print "802-11-wireless.hidden:no" }' "$d/profiles" ;;
-    "connection|add|"*)
-        # "con-name" is the 4th argument pair; the new profile is inactive until up
+    "connection|add|type|ethernet|"*)
+        # connection add type ethernet con-name N ifname IF connection.autoconnect yes <settings...>
         name=$6
-        touch "$d/profiles"
+        n=$(( $(wc -l < "$d/eth") + 1 ))
+        u="cccccccc-0000-0000-0000-00000000000$n"
+        printf '%s|%s||||||||0|0|/etc/NetworkManager/system-connections/%s.nmconnection|||\n' "$u" "$name" "$name" >> "$d/eth"
+        eth_set "$u" 7 "$8"
+        shift 8
+        apply_settings "$u" "$@"
+        echo "Connection '$name' ($u) successfully added." ;;
+    "connection|add|"*)
+        name=$6
         n=$(( $(wc -l < "$d/profiles") + 1 ))
         u="bbbbbbbb-0000-0000-0000-00000000000$n"
         printf '%s\t%s\tyes\tno\n' "$u" "$name" >> "$d/profiles"
         echo "Connection '$name' ($u) successfully added." ;;
+    "connection|modify|uuid|"*)
+        u=$4
+        if grep -q "^$u|" "$d/eth"; then
+            shift 4
+            apply_settings "$u" "$@"
+            # a modified in-memory profile is written to disk (as on the rig)
+            eth_set "$u" 12 "/etc/NetworkManager/system-connections/$(eth_field "$u" 2).nmconnection"
+        fi
+        echo "modified" ;;
     "connection|delete|uuid|"*)
         awk -F "$tab" -v u="$4" '$1 != u' "$d/profiles" > "$d/.p" && mv "$d/.p" "$d/profiles"
+        awk -F '|' -v u="$4" '$1 != u' "$d/eth" > "$d/.e" && mv "$d/.e" "$d/eth"
         echo "Connection deleted." ;;
     "connection|down|uuid|"*)
         : > "$d/down"
         awk -F "$tab" -v OFS="$tab" -v u="$4" '$1 == u { $4 = "no" } 1' "$d/profiles" > "$d/.p" && mv "$d/.p" "$d/profiles" ;;
-    "connection|modify|uuid|"*) echo "modified" ;;
     "device|disconnect|"*) echo "Device '$3' successfully disconnected." ;;
     "radio|wifi|on|") echo enabled > "$d/radio" ;;
     "radio|wifi|off|") echo disabled > "$d/radio" ;;
@@ -101,6 +160,29 @@ EOF
         esac
         [ "$mode" = ok ] && echo "$3: connected"
         exec sleep 30 ;;
+    "--wait|"*"|connection|up|uuid|"*"|ifname|"*)
+        # a wired activation: --wait N connection up uuid U ifname IF
+        u=$6 dev=$8
+        if [ "$wmode" = fail ] && [ ! -f "$d/wired-upped" ]; then
+            : > "$d/wired-upped"
+            echo "Error: Connection activation failed: IP configuration could not be reserved"
+            exit 4
+        fi
+        : > "$d/wired-upped"
+        awk -v dv="$dev" '$1 != dv' "$d/addrs" > "$d/.a" && mv "$d/.a" "$d/addrs"
+        rm -f "$d/dnsmasq"
+        m=$(eth_field "$u" 3); a=$(eth_field "$u" 4)
+        case $m in
+            auto) echo "$dev 192.168.1.77/24" >> "$d/addrs" ;;
+            manual) echo "$dev $a" >> "$d/addrs" ;;
+            shared)
+                echo "$dev $a" >> "$d/addrs"
+                [ "$wmode" = nodnsmasq ] || echo "4242 /usr/sbin/dnsmasq --conf-file=/dev/null --no-hosts --bind-interfaces --listen-address=${a%/*} --dhcp-range=${a%.*}.10,${a%.*}.254,60m --conf-dir=${NET_CTL_SHARED_DIR}" > "$d/dnsmasq" ;;
+        esac
+        awk -F '|' -v OFS='|' -v u="$u" -v dv="$dev" '$13 == dv { $13 = "" } $1 == u { $13 = dv } 1' "$d/eth" > "$d/.e" \
+            && mv "$d/.e" "$d/eth"
+        echo "Connection successfully activated"
+        exit 0 ;;
     "--wait|"*"|connection|up|uuid|"*)
         u=$6
         if has "passwd-file"; then cat > "$d/stdin"; fi

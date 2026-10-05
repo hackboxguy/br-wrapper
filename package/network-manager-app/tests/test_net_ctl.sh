@@ -2,8 +2,12 @@
 # test_net_ctl.sh - the real net-ctl.sh against tests/fake-nmcli.
 #
 # Checks the exact nmcli commands net-ctl.sh composes, the restore after a
-# failed join, the exit codes, and that a WiFi password reaches nmcli only on
-# stdin - never in an argument list. No root, no network, no NetworkManager.
+# failed join or a failed wired-set, the exit codes, that a WiFi password
+# reaches nmcli only on stdin - never in an argument list -, the wired modes,
+# the MAC binding of USB adapters, the DHCP-server preconditions, the probe's
+# parsing, the per-port internet check and the systemd-run detach. No root,
+# no network, no NetworkManager: nmcli, ip, ping, systemctl, pgrep,
+# systemd-run, iw, rfkill and the probe are stand-ins.
 #   tests/test_net_ctl.sh            (also run by ctest with -DBUILD_TESTS=ON)
 here=$(cd "$(dirname "$0")" && pwd)
 script=$here/../src/net-ctl.sh
@@ -24,14 +28,87 @@ cat > "$work/bin/rfkill" <<'EOF'
 #!/bin/sh
 echo "rfkill $*" >> "${FAKE_NM:?}/calls"
 EOF
+cat > "$work/bin/ip" <<'FAKE'
+#!/bin/sh
+# addresses from $FAKE_NM/addrs ("dev a.b.c.d/n"), routes from $FAKE_NM/routes ("dev gateway metric")
+d=${FAKE_NM:?}
+touch "$d/addrs" "$d/routes"
+case "$*" in
+    "-4 route show default")
+        sort -k3n "$d/routes" | awk '{ print "default via " $2 " dev " $1 " proto dhcp metric " $3 }' ;;
+    "-4 route show default dev "*)
+        awk -v dv="$6" '$1 == dv { print "default via " $2 " dev " $1 " proto dhcp metric " $3 }' "$d/routes" ;;
+    "-4 -o addr show dev "*)
+        awk -v dv="$6" '$1 == dv { print "2: " $1 "    inet " $2 " brd 0.0.0.0 scope global " $1 }' "$d/addrs" ;;
+    "-4 -o addr show")
+        awk '{ print "2: " $1 "    inet " $2 " brd 0.0.0.0 scope global " $1 }' "$d/addrs" ;;
+esac
+exit 0
+FAKE
+cat > "$work/bin/ping" <<'FAKE'
+#!/bin/sh
+# answers on the ports listed in $FAKE_NM/inet
+d=${FAKE_NM:?}
+dev=''
+while [ $# -gt 0 ]; do [ "$1" = -I ] && dev=$2; shift; done
+echo "ping $dev" >> "$d/pings"
+grep -qx "$dev" "$d/inet" 2>/dev/null
+FAKE
+cat > "$work/bin/systemctl" <<'FAKE'
+#!/bin/sh
+# the system dnsmasq: $FAKE_NM/dnsmasq-active (yes|no), dnsmasq-enabled (enabled|masked)
+d=${FAKE_NM:?}
+echo "systemctl $*" >> "$d/calls"
+case "$*" in
+    "cat dnsmasq.service") exit 0 ;;
+    "is-active --quiet dnsmasq.service") [ "$(cat "$d/dnsmasq-active" 2>/dev/null)" = yes ] ;;
+    "is-enabled dnsmasq.service") cat "$d/dnsmasq-enabled" 2>/dev/null || echo enabled ;;
+    "stop dnsmasq.service") echo no > "$d/dnsmasq-active" ;;
+    "mask dnsmasq.service") echo masked > "$d/dnsmasq-enabled" ;;
+esac
+FAKE
+cat > "$work/bin/pgrep" <<'FAKE'
+#!/bin/sh
+cat "${FAKE_NM:?}/dnsmasq" 2>/dev/null
+FAKE
+cat > "$work/bin/systemd-run" <<'FAKE'
+#!/bin/sh
+# records the call, then runs the command the way the unit would: only the
+# variables named with --setenv reach it
+d=${FAKE_NM:?}
+echo "systemd-run $*" >> "$d/calls"
+envs=''
+while [ $# -gt 0 ]; do
+    case $1 in
+        --setenv=*=*) envs="$envs ${1#--setenv=}" ;;
+        --setenv=*) v=${1#--setenv=}; eval "envs=\"\$envs $v=\$$v\"" ;;
+        --*) ;;
+        *) break ;;
+    esac
+    shift
+done
+# shellcheck disable=SC2086
+exec env -i PATH="$PATH" FAKE_NM="$d" $envs "$@"
+FAKE
+cat > "$work/bin/probe" <<'FAKE'
+#!/bin/sh
+# net-dhcp-probe.py's stand-in: $FAKE_NM/offers, as the probe prints them
+cat "${FAKE_NM:?}/offers" 2>/dev/null
+echo "DONE servers=x"
+FAKE
 chmod +x "$work/bin/"*
 echo 1 > "$work/sys/eth0/carrier"; echo 1000 > "$work/sys/eth0/speed"
+echo 2c:cf:67:4f:66:ca > "$work/sys/eth0/address"
+# eth1: a USB adapter (its device link goes through a USB path)
+mkdir -p "$work/sys/devices/usb1/1-1.4/1-1.4:1.0" "$work/sys/eth1"
+ln -s ../devices/usb1/1-1.4/1-1.4:1.0 "$work/sys/eth1/device"
+echo 1 > "$work/sys/eth1/carrier"; echo 00:e0:4c:69:b1:0e > "$work/sys/eth1/address"
 # a veth is virtual in sysfs, whatever type NetworkManager gives it
 mkdir -p "$work/sys/devices/virtual/net/vethnm"
 ln -s devices/virtual/net/vethnm "$work/sys/vethnm"
 printf 'overlayroot / overlay rw 0 0\n' > "$work/mounts"
 
-export PATH="$work/bin:$PATH" FAKE_NM="$work/nm"
+export PATH="$work/bin:$PATH" FAKE_NM="$work/nm" NET_CTL_PROBE="$work/bin/probe"
 export NET_CTL_SYSFS="$work/sys" NET_CTL_LEASE_DIR="$work/leases" NET_CTL_LOCK="$work/lock"
 export NET_CTL_LEGACY_CONF="$work/legacy.conf" NET_CTL_MOUNTS="$work/mounts" NET_CTL_MODPROBE_DIR="$work/modprobe"
 
@@ -49,12 +126,26 @@ out_has() { printf '%s\n' "$out" | grep -qF -- "$1"; }
 no_password_in_argv() { ! grep -qF "s3cret" "$FAKE_NM/calls"; }
 
 # A fresh fake NetworkManager: <mode> [profiles...] ("uuid ssid autoconnect active")
+# eth0 is up on NetworkManager's automatic profile; eth1 (USB) on its own.
+# Every reset starts in fresh directories (nothing is removed until the end).
+# The per-port internet check is off unless a test asks for it.
+W1='aaaaaaaa-0000-0000-0000-000000000001|Wired connection 1|auto||||eth0||yes|-999|100|/run/NetworkManager/system-connections/Wired connection 1.nmconnection|eth0|no|auto'
+W2='aaaaaaaa-0000-0000-0000-000000000002|Wired connection 2|auto||||eth1||yes|-999|90|/run/NetworkManager/system-connections/Wired connection 2.nmconnection|eth1|no|auto'
+round=0
 reset() {
-    rm -rf "$FAKE_NM"; mkdir -p "$FAKE_NM"
+    round=$((round + 1))
+    FAKE_NM="$work/nm.$round"; export FAKE_NM
+    NET_CTL_SHARED_DIR="$FAKE_NM/shared.d"; TMPDIR="$FAKE_NM/tmp"; export NET_CTL_SHARED_DIR TMPDIR
+    mkdir -p "$FAKE_NM" "$TMPDIR"
     echo "$1" > "$FAKE_NM/mode"; shift
     : > "$FAKE_NM/profiles"
     for p in "$@"; do printf '%s\n' "$p" | tr ' ' '\t' >> "$FAKE_NM/profiles"; done
+    printf '%s\n%s\n' "$W1" "$W2" > "$FAKE_NM/eth"
+    printf 'eth0 192.168.1.170/24\neth1 192.168.20.164/24\n' > "$FAKE_NM/addrs"
+    printf 'eth0 192.168.1.1 100\n' > "$FAKE_NM/routes"
+    echo 1 > "$work/sys/eth1/carrier"
     : > "$FAKE_NM/calls"
+    NET_CTL_INET=skip; export NET_CTL_INET
 }
 run() { out=$("$script" "$@" 2>&1); rc=$?; }
 run_pw() { out=$(printf '%s\n' "$PASSWORD" | "$script" "$@" 2>&1); rc=$?; }
@@ -230,6 +321,185 @@ run bogus
 check "unknown command: exit 1" [ "$rc" = 1 ]
 run status --frobnicate
 check "unknown option: exit 1" [ "$rc" = 1 ]
+
+echo "== status: the profile of a port, its configured mode"
+reset ok
+run status
+check "eth0: the active profile, bound by name, not saved" out_has "profileuuid=aaaaaaaa-0000-0000-0000-000000000001 cfgprofile=Wired%20connection%201 saved=0 binding=name"
+check "eth1 is a USB port" out_has "name=eth1 type=ethernet usb=1 mac=00:E0:4C:69:B1:0E"
+# eth1 unplugged, its saved static profile bound to the MAC: the mode it would have
+reset ok
+echo 0 > "$work/sys/eth1/carrier"
+printf '%s\n' 'aaaaaaaa-0000-0000-0000-000000000001|Wired connection 1|auto||||eth0||yes|-999|100|/run/NetworkManager/system-connections/Wired connection 1.nmconnection|eth0|no|auto' \
+    'dddddddd-0000-0000-0000-000000000001|USB adapter|manual|10.9.8.7/24|10.9.8.1|10.9.8.1||00:E0:4C:69:B1:0E|yes|0|50|/etc/NetworkManager/system-connections/USB adapter.nmconnection||no|auto' \
+    'dddddddd-0000-0000-0000-000000000002|Other adapter|manual|10.1.1.1/24|||||00:11:22:33:44:55|yes|0|60|/etc/NetworkManager/system-connections/Other.nmconnection||no|auto' > "$FAKE_NM/eth"
+run status
+check "unplugged port: the mode of the profile that would activate" out_has "name=eth1 type=ethernet usb=1 mac=00:E0:4C:69:B1:0E carrier=0"
+check "  static" sh -c "printf '%s\n' \"\$1\" | grep 'name=eth1 ' | grep -q ' mode=static '" _ "$out"
+check "  the configured values" out_has "profileuuid=dddddddd-0000-0000-0000-000000000001 cfgprofile=USB%20adapter saved=1 binding=mac cfgip=10.9.8.7 cfgprefix=24 cfggateway=10.9.8.1 cfgdns=10.9.8.1"
+check "  another adapter's profile is not taken" sh -c "! printf '%s' \"\$1\" | grep -q 'cfgprofile=Other'" _ "$out"
+
+echo "== status: which port reaches the internet"
+reset ok
+unset NET_CTL_INET
+printf 'eth1 192.168.20.1 100\neth0 192.168.1.1 101\n' > "$FAKE_NM/routes"
+echo eth0 > "$FAKE_NM/inet"
+run status
+check "eth0 reaches it" out_has "name=eth0 type=ethernet usb=0 mac=2C:CF:67:4F:66:CA carrier=1 speed=1000 state=connected"
+check "  inet=yes on eth0" sh -c "printf '%s\n' \"\$1\" | grep 'name=eth0 ' | grep -q ' inet=yes '" _ "$out"
+check "  inet=no on eth1" sh -c "printf '%s\n' \"\$1\" | grep 'name=eth1 ' | grep -q ' inet=no '" _ "$out"
+check "via the port that reaches it, not the default route's" out_has "RESULT kind=summary internet=yes via=eth0 defaultdev=eth1"
+check "  both targets tried on each port, in parallel" [ "$(grep -c '^ping ' "$FAKE_NM/pings")" = 4 ]
+run status
+check "the answer is kept: no new pings within 20 s" [ "$(grep -c '^ping ' "$FAKE_NM/pings")" = 4 ]
+reset ok
+unset NET_CTL_INET
+: > "$FAKE_NM/inet"
+run status
+check "no port reaches it: internet=no" out_has "RESULT kind=summary internet=no via= defaultdev=eth0"
+check "a port without a gateway is not checked" sh -c "! grep -q '^ping eth1' \"\$FAKE_NM/pings\"" _
+
+echo "== wired-set: static on the USB adapter (bound to its MAC)"
+reset ok
+run wired-set --iface=eth1 --mode=static --ip=192.168.20.250 --prefix=24 --gateway=192.168.20.1 --dns=1.1.1.1,9.9.9.9
+check "exit 0" [ "$rc" = 0 ]
+check "modify: manual, address, gateway, DNS, MAC bound, name binding dropped" called "connection|modify|uuid|aaaaaaaa-0000-0000-0000-000000000002|ipv4.method|manual|ipv4.addresses|192.168.20.250/24|ipv4.gateway|192.168.20.1|ipv4.dns|1.1.1.1,9.9.9.9|ipv4.never-default|no|ipv6.method|auto|802-3-ethernet.mac-address|00:E0:4C:69:B1:0E|connection.interface-name||"
+check "up on that port" called "--wait|60|connection|up|uuid|aaaaaaaa-0000-0000-0000-000000000002|ifname|eth1|"
+check "result: ok, address, MAC binding" out_has "RESULT kind=wired iface=eth1 mode=static ok=1 ip=192.168.20.250 profileuuid=aaaaaaaa-0000-0000-0000-000000000002 binding=mac"
+check "the profile is saved now" grep -q '^aaaaaaaa-0000-0000-0000-000000000002|.*|/etc/NetworkManager/system-connections/' "$FAKE_NM/eth"
+run status
+check "status then: static, bound to the MAC, saved" out_has "cfgprofile=Wired%20connection%202 saved=1 binding=mac cfgip=192.168.20.250 cfgprefix=24 cfggateway=192.168.20.1 cfgdns=1.1.1.1,9.9.9.9"
+
+echo "== wired-set: client, and eth0 keeps its name binding"
+reset ok
+run wired-set --iface=eth0 --mode=client
+check "client: auto, everything else cleared" called "connection|modify|uuid|aaaaaaaa-0000-0000-0000-000000000001|ipv4.method|auto|ipv4.addresses||ipv4.gateway||ipv4.dns||ipv4.never-default|no|ipv6.method|auto|"
+check "  no MAC binding for the built-in port" sh -c "! grep '^connection|modify' \"\$FAKE_NM/calls\" | grep -q mac-address"
+check "  exit 0" [ "$rc" = 0 ]
+
+echo "== wired-set: server mode and its preconditions"
+reset ok
+echo yes > "$FAKE_NM/dnsmasq-active"; echo enabled > "$FAKE_NM/dnsmasq-enabled"
+run wired-set --iface=eth1 --mode=server --ip=192.168.50.1
+check "exit 0" [ "$rc" = 0 ]
+check "the system dnsmasq is stopped" called "systemctl stop dnsmasq.service"
+check "  and masked" called "systemctl mask dnsmasq.service"
+check "the drop-in is written" grep -qx 'dhcp-option=3' "$NET_CTL_SHARED_DIR/90-micropanel-no-gateway.conf"
+check "  both options" grep -qx 'dhcp-option=6' "$NET_CTL_SHARED_DIR/90-micropanel-no-gateway.conf"
+check "shared, /24 by default, never-default, no IPv6" called "ipv4.method|shared|ipv4.addresses|192.168.50.1/24|ipv4.gateway||ipv4.dns||ipv4.never-default|yes|ipv6.method|disabled|"
+check "success only after NetworkManager's dnsmasq runs with the address and the drop-in directory" out_has "RESULT kind=wired iface=eth1 mode=server ok=1 ip=192.168.50.1"
+reset ok
+echo no > "$FAKE_NM/dnsmasq-active"; echo masked > "$FAKE_NM/dnsmasq-enabled"
+mkdir -p "$NET_CTL_SHARED_DIR"
+printf '# network-manager-app: serve addresses only - no router, no DNS server announced\ndhcp-option=3\ndhcp-option=6\n' \
+    > "$NET_CTL_SHARED_DIR/90-micropanel-no-gateway.conf"
+run wired-set --iface=eth1 --mode=server --ip=192.168.50.1
+check "preconditions already true (the image): no stop, no mask" sh -c "! grep -qE 'systemctl (stop|mask)' \"\$FAKE_NM/calls\""
+check "  no rewrite" sh -c "! printf '%s' \"\$1\" | grep -q 'NOTICE writing'" _ "$out"
+
+echo "== wired-set: the check fails, the previous settings come back"
+reset ok
+echo nodnsmasq > "$FAKE_NM/wiredmode"
+run wired-set --iface=eth1 --mode=server --ip=192.168.50.1
+check "no dnsmasq for the port: exit 3" [ "$rc" = 3 ]
+check "  reason=check-failed, restored=1" out_has "restored=1"
+check "  reason last" sh -c "printf '%s\n' \"\$1\" | grep -q 'reason=check-failed\$'" _ "$out"
+check "  the previous values put back, binding included" called "connection|modify|uuid|aaaaaaaa-0000-0000-0000-000000000002|ipv4.method|auto|ipv4.addresses||ipv4.gateway||ipv4.dns||ipv4.never-default|no|ipv6.method|auto|802-3-ethernet.mac-address||connection.interface-name|eth1|"
+check "  and up again" [ "$(grep -c '^--wait|60|connection|up|uuid|aaaaaaaa-0000-0000-0000-000000000002|ifname|eth1|' "$FAKE_NM/calls")" = 2 ]
+check "  the profile is a DHCP client again" grep -q '^aaaaaaaa-0000-0000-0000-000000000002|Wired connection 2|auto|' "$FAKE_NM/eth"
+reset ok
+echo fail > "$FAKE_NM/wiredmode"
+run wired-set --iface=eth1 --mode=static --ip=192.168.20.250 --prefix=24
+check "activation fails: exit 3, reason=activation-failed" sh -c "[ $rc = 3 ] && printf '%s' \"\$1\" | grep -q 'reason=activation-failed'" _ "$out"
+check "  the previous method is back" grep -q '^aaaaaaaa-0000-0000-0000-000000000002|Wired connection 2|auto|' "$FAKE_NM/eth"
+check "  the detail is the failure's, not the restore's" out_has "detail=Error:%20Connection%20activation%20failed:%20IP%20configuration%20could%20not%20be%20reserved"
+
+echo "== wired-set: refusals"
+reset ok
+run wired-set --iface=eth1 --mode=server --ip=192.168.1.5
+check "server subnet overlaps eth0's: exit 1 overlap" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'reason=overlap'" _ "$out"
+check "  says which" out_has "detail=192.168.1.5/24%20overlaps%20192.168.1.170/24%20on%20eth0"
+check "  nothing modified" not_called "connection|modify"
+for bad in "--mode=static --ip=192.168.1.300 --prefix=24" "--mode=static --ip=10.0.0.5 --prefix=31" \
+           "--mode=static --ip=10.0.0.0 --prefix=24" "--mode=static --ip=10.0.0.5 --prefix=24 --gateway=gw" \
+           "--mode=static --ip=10.0.0.5 --prefix=24 --dns=1.1.1.1,x" "--mode=bridge" ""; do
+    # shellcheck disable=SC2086
+    run wired-set --iface=eth1 $bad
+    check "refused: ${bad:-no mode}" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'reason=bad-arguments'" _ "$out"
+done
+run wired-set --iface=wlan0 --mode=client
+check "not a wired port: exit 1" [ "$rc" = 1 ]
+run wired-set --iface=vethnm --mode=client
+check "a veth is not a port without the test seam" [ "$rc" = 1 ]
+check "nothing modified by any refusal" not_called "connection|modify"
+
+echo "== wired-set: no cable, no profile, legacy takeover, dry run"
+reset ok
+echo 0 > "$work/sys/eth1/carrier"
+run wired-set --iface=eth1 --mode=static --ip=10.20.30.2 --prefix=24
+check "no cable: saved, pending, nothing brought up" sh -c "[ $rc = 0 ] && printf '%s' \"\$1\" | grep -q 'pending=1'" _ "$out"
+check "  no activation" not_called "connection|up|"
+reset ok
+printf '%s\n' "$W1" > "$FAKE_NM/eth"
+run wired-set --iface=eth1 --mode=client
+check "no profile: a new one for the adapter, bound to its MAC" called "connection|add|type|ethernet|con-name|USB adapter 00:E0:4C:69:B1:0E|ifname|eth1|connection.autoconnect|yes|ipv4.method|auto|"
+check "  MAC set on the new profile" called "802-3-ethernet.mac-address|00:E0:4C:69:B1:0E|connection.interface-name||"
+check "  exit 0" [ "$rc" = 0 ]
+reset ok
+printf '# Micropanel DHCP Server Configuration\ninterface=eth1\nbind-interfaces\n' > "$work/legacy.conf"
+run wired-set --iface=eth1 --mode=client
+check "legacy server: the OLED menu's stop first (stop, mask, conf removed)" sh -c "grep -q 'systemctl stop dnsmasq.service' \"\$FAKE_NM/calls\" && grep -q 'systemctl mask dnsmasq.service' \"\$FAKE_NM/calls\" && [ ! -f '$work/legacy.conf' ]"
+check "  then the new mode" called "connection|modify|uuid|aaaaaaaa-0000-0000-0000-000000000002|ipv4.method|auto|"
+reset ok
+run wired-set --iface=eth1 --mode=server --ip=192.168.50.1 --dry-run
+check "dry run: exit 0, says what it would do" sh -c "[ $rc = 0 ] && printf '%s' \"\$1\" | grep -q 'NOTICE dry-run: nmcli connection modify uuid aaaaaaaa-0000-0000-0000-000000000002'" _ "$out"
+check "  nothing modified, nothing up, no systemctl" sh -c "! grep -qE 'connection\|(modify|up)|systemctl (stop|mask)' \"\$FAKE_NM/calls\""
+
+echo "== dhcp-probe"
+reset ok
+printf 'OFFER server=192.168.1.1 offered=192.168.1.57 router=192.168.1.1\nOFFER server=192.168.20.1 offered=192.168.20.137 router=192.168.20.1\nOFFER server=192.168.1.1 offered=192.168.1.58\nOFFER server=192.168.1.170 offered=192.168.1.200\n' > "$FAKE_NM/offers"
+run dhcp-probe --iface=eth0
+check "one line per server" out_has "RESULT kind=offer iface=eth0 server=192.168.1.1 offered=192.168.1.57 router=192.168.1.1"
+check "  the second server" out_has "RESULT kind=offer iface=eth0 server=192.168.20.1 offered=192.168.20.137 router=192.168.20.1"
+check "  a server seen twice counts once, the rig's own address not at all" out_has "RESULT kind=probe iface=eth0 servers=2 carrier=1"
+reset ok
+: > "$FAKE_NM/offers"
+run dhcp-probe --iface=eth0
+check "nobody answers: servers=0" out_has "RESULT kind=probe iface=eth0 servers=0 carrier=1"
+echo 0 > "$work/sys/eth1/carrier"
+run dhcp-probe --iface=eth1
+check "no cable: not sent, carrier=0" out_has "RESULT kind=probe iface=eth1 servers=0 carrier=0"
+if command -v python3 >/dev/null 2>&1; then
+    check "net-dhcp-probe.py: DISCOVER and OFFER packets (self-test)" python3 "$here/../src/net-dhcp-probe.py" --self-test
+fi
+
+echo "== a change runs as its own systemd unit (rule 6a)"
+reset ok
+NET_CTL_UID=0 NET_CTL_INCLUDE_VETH=1 run wired-set --iface=eth1 --mode=client
+check "as root: re-executed through systemd-run --pipe --wait" called "systemd-run --quiet --collect --pipe --wait --description=net-ctl.sh wired-set --setenv=NET_CTL_DETACHED=1"
+check "  NET_CTL_* settings go along" sh -c "grep '^systemd-run' \"\$FAKE_NM/calls\" | grep -q -- '--setenv=NET_CTL_INCLUDE_VETH'"
+check "  only once" [ "$(grep -c '^systemd-run' "$FAKE_NM/calls")" = 1 ]
+check "  inside, it says so" out_has "NOTICE detached"
+check "  and does the change" sh -c "[ $rc = 0 ] && grep -q '^connection|modify|uuid|aaaaaaaa-0000-0000-0000-000000000002|' \"\$FAKE_NM/calls\""
+NET_CTL_UID=0 run wired-set --iface=eth1 --mode=bridge
+check "the exit code comes back through it" [ "$rc" = 1 ]
+reset ok
+NET_CTL_UID=0 run status
+check "a read does not detach" not_called "systemd-run"
+NET_CTL_UID=0 run wired-set --iface=eth1 --mode=client --dry-run
+check "a dry run does not detach" not_called "systemd-run"
+run wired-set --iface=eth1 --mode=client
+check "not root: runs in place" not_called "systemd-run"
+reset ok
+NET_CTL_UID=0 run_pw wifi-connect --ssid=Workshop
+check "a WiFi join detaches too, password still on stdin only" sh -c "grep -q '^systemd-run' \"\$FAKE_NM/calls\" && ! grep -q s3cret \"\$FAKE_NM/calls\" && grep -qxF '802-11-wireless-security.psk:$PASSWORD' \"\$FAKE_NM/stdin\""
+
+echo "== OWE is not open"
+reset ok
+run wifi-scan
+check "OWE (enhanced open) is 'other'" out_has "ssid=Enhanced%20Open signal=44 security=other"
+run_nopw wifi-connect --ssid=Enhanced%20Open
+check "  and refused" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'reason=unsupported'" _ "$out"
 
 if [ "$failures" -gt 0 ]; then echo "net-ctl: $failures failure(s)"; exit 1; fi
 echo "net-ctl: PASS"
