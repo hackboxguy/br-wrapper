@@ -942,7 +942,7 @@ Window {
         TextInput {
             id: fldInput
             anchors.fill: parent
-            anchors.leftMargin: 20 * s; anchors.rightMargin: 20 * s
+            anchors.leftMargin: 20 * s; anchors.rightMargin: fld.secret ? fldEye.width + 8 * s : 20 * s
             verticalAlignment: TextInput.AlignVCenter
             color: t.text
             selectionColor: withAlpha(t.accent, 0.5)
@@ -966,6 +966,33 @@ Window {
             font.family: t.font; font.pixelSize: 22 * s
         }
         MouseArea { anchors.fill: parent; onPressed: { fldInput.forceActiveFocus(); mouse.accepted = false } }
+        // Show / hide what is typed - the same switch as the keyboard's
+        // Show/Hide key. Acts on press, as the keys do (a touch release is not
+        // guaranteed on every panel), and leaves the focus in the field.
+        Rectangle {
+            id: fldEye
+            visible: fld.secret
+            anchors.right: parent.right; anchors.rightMargin: 6 * s
+            anchors.verticalCenter: parent.verticalCenter
+            width: 58 * s; height: parent.height - 12 * s
+            radius: 10 * s
+            color: eyeArea.pressed ? t.cardPressed : "transparent"
+            Image {
+                anchors.centerIn: parent
+                width: 34 * s; height: width
+                sourceSize: Qt.size(width, height)
+                source: "qrc:/icons/" + (keyboard.revealed ? "eye-off" : "eye") + ".svg"
+                opacity: keyboard.revealed ? 1 : 0.7
+            }
+            MouseArea {
+                id: eyeArea
+                anchors.fill: parent
+                onPressed: {
+                    keyboard.revealed = !keyboard.revealed
+                    fldInput.forceActiveFocus()
+                }
+            }
+        }
     }
 
     // One interface on the Overview

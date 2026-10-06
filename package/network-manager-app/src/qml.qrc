@@ -13,5 +13,7 @@
         <file>icons/bad.svg</file>
         <file>icons/warn.svg</file>
         <file>icons/info.svg</file>
+        <file>icons/eye.svg</file>
+        <file>icons/eye-off.svg</file>
     </qresource>
 </RCC>
