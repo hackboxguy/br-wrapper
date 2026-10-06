@@ -22,7 +22,9 @@
 #   available                       exit 0 when nmcli exists and NetworkManager runs
 #   status                          RESULT kind=iface ... per interface, then kind=summary
 #   monitor                         NOTICE changed whenever NetworkManager reports a change
-#   leases --iface=IF               RESULT kind=lease ... (root: the lease file is root-only)
+#   leases --iface=IF               RESULT kind=lease ... (root: the lease file is root-only),
+#                                   then kind=reservation mac= ip= per reservation in the
+#                                   port's subnet
 #   wifi-scan [--rescan]            RESULT kind=ap ... per SSID, then kind=saved ... per profile
 #   wifi-connect --ssid=S [--hidden] [--security=open|wpa2|wpa3]
 #                                   password on stdin when one is needed
@@ -36,6 +38,14 @@
 #                                   the port's profile (bound to the MAC for a USB
 #                                   adapter); restores the previous settings if the
 #                                   new ones do not come up (exit 3)
+#   dhcp-reserve --iface=IF --mac=M --ip=A
+#   dhcp-reserve --iface=IF --mac=M --forget
+#                                   (root) pins (or frees) the address a client of a
+#                                   serving port gets: a dhcp-host line in the file the
+#                                   image's drop-in names (dhcp-hostsfile=), then SIGHUP
+#                                   to the port's dnsmasq. RESULT kind=reservation
+#                                   iface= mac= ip= action=added|removed|unchanged.
+#                                   The client moves at its next renewal or reconnect.
 #   dhcp-probe --iface=IF           RESULT kind=offer ... per answering DHCP server,
 #                                   then kind=probe servers=N carrier=0|1 (root)
 #   ping --target=HOST [--iface=IF] [--count=N]
@@ -73,7 +83,8 @@
 # NET_CTL_DETACHED=1 (set inside the transient unit), NET_CTL_GUARD_DIR
 # (/run/net-ctl-guard), NET_CTL_NOTICE_FILE (/tmp/micropanel-notice),
 # NET_CTL_GUARD_INLINE=1 (the guard's check without systemd-run),
-# NET_CTL_GUARD_TIMEOUT (30 s: an undecided check has failed).
+# NET_CTL_GUARD_TIMEOUT (30 s: an undecided check has failed), NET_CTL_PID_DIR
+# (/run: NetworkManager's nm-dnsmasq-<port>.pid).
 
 # nft, iw and rfkill live in /usr/sbin, which is not in pi's non-login PATH.
 # Appended, not prepended: on merged-/usr hosts /usr/sbin also holds nmcli, and
@@ -91,6 +102,11 @@ MODPROBE_DIR=${NET_CTL_MODPROBE_DIR:-/etc/modprobe.d}
 COUNTRY=${NET_CTL_COUNTRY:-DE}
 SHARED_DIR=${NET_CTL_SHARED_DIR:-/etc/NetworkManager/dnsmasq-shared.d}
 DROPIN=$SHARED_DIR/90-micropanel-no-gateway.conf
+# Reservations: the image's drop-in names the file (dhcp-hostsfile=), which
+# dnsmasq re-reads on SIGHUP - a dhcp-host line in the drop-in directory would
+# need the port's dnsmasq restarted, i.e. the port re-activated
+RES_DROPIN=$SHARED_DIR/91-micropanel-reservations.conf
+PID_DIR=${NET_CTL_PID_DIR:-/run}
 PROBE=${NET_CTL_PROBE:-$(dirname "$(readlink -f "$0")")/net-dhcp-probe.py}
 INET_TARGETS=${NET_CTL_INET_TARGETS:-1.1.1.1 8.8.8.8}
 # The internet check (Tools) asks the port's DNS server for CHECK_NAME and
@@ -538,7 +554,108 @@ cmd_leases() {
         { kv ip "$ip"; kv mac "$mac"; kv host "$host"; kv expires "$expires"; } | emit lease
         n=$((n + 1))
     done < "$f"
+    # The reservations in this port's subnet (the file holds every port's)
+    net=$(port_net "$iface")
+    rf=$(res_file)
+    if [ -n "$net" ] && [ -n "$rf" ] && [ -r "$rf" ]; then
+        res_in_net "$rf" "$net" | while IFS=, read -r rmac rip; do
+            { kv mac "$rmac"; kv ip "$rip"; } | emit reservation
+        done
+    fi
     echo "RESULT kind=leases iface=$iface count=$n"
+}
+
+# ---- reservations ------------------------------------------------------------
+
+# The file the image's drop-in names, or nothing
+res_file() { sed -n 's/^dhcp-hostsfile=//p' "$RES_DROPIN" 2>/dev/null | head -n 1; }
+# A port's IPv4 network as "a.b.c.d/n" (its address/prefix), or nothing
+port_net() { ip -4 -o addr show dev "$1" scope global 2>/dev/null | awk '{ print $4; exit }'; }
+# "MAC,ip" lines of <file> whose ip is in <a.b.c.d/n>; MACs upper-case
+res_in_net() { # <file> <net>
+    awk -F , -v net="$2" '
+        function num(a,    p) { split(a, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }
+        BEGIN { split(net, n, "/"); size = 2 ^ (32 - n[2]); base = int(num(n[1]) / size) * size }
+        /^[[:space:]]*(#|$)/ { next }
+        NF == 2 && int(num($2) / size) * size == base { print toupper($1) "," $2 }' "$1"
+}
+# in_net <ip> <a.b.c.d/n>: same subnet, and neither its network nor its broadcast address
+in_net() {
+    awk -v ip="$1" -v net="$2" '
+        function num(a,    p) { split(a, p, "."); return ((p[1] * 256 + p[2]) * 256 + p[3]) * 256 + p[4] }
+        BEGIN { split(net, n, "/"); size = 2 ^ (32 - n[2]); base = int(num(n[1]) / size) * size
+                v = num(ip); exit !(int(v / size) * size == base && v != base && v != base + size - 1) }'
+}
+
+cmd_dhcp_reserve() {
+    [ "${NET_CTL_UID:-$(id -u)}" = 0 ] || fail 1 reservation bad-arguments "dhcp-reserve runs as root"
+    [ -n "$iface" ] || fail 1 reservation bad-arguments "--iface= is required"
+    mac=$(printf '%s' "$opt_mac" | tr 'a-f' 'A-F')
+    printf '%s' "$mac" | grep -Eqx '([0-9A-F]{2}:){5}[0-9A-F]{2}' \
+        || fail 1 reservation bad-arguments "--mac= is six hex pairs, e.g. 48:B0:2D:87:68:8D"
+    if [ "$opt_forget" = 0 ]; then
+        valid_ip "$opt_ip" || fail 1 reservation bad-arguments "--ip= is not an IPv4 address"
+    fi
+    need_unlocked reservation
+    rf=$(res_file)
+    [ -n "$rf" ] || fail 2 reservation unsupported "this image has no reservation file ($RES_DROPIN)"
+    [ "$(legacy_server_iface)" = "$iface" ] && \
+        fail 1 reservation legacy-server "$iface serves through the panel menu's DHCP server, which keeps no reservations"
+    net=$(port_net "$iface")
+    pidf="$PID_DIR/nm-dnsmasq-$iface.pid"
+    { [ -n "$net" ] && [ -f "$pidf" ]; } || fail 1 reservation not-serving "$iface is not serving addresses"
+    port_ip=${net%/*}
+
+    current=''
+    [ -r "$rf" ] && current=$(res_in_net "$rf" "$net" | awk -F , -v m="$mac" '$1 == m { print $2; exit }')
+    if [ "$opt_forget" = 1 ]; then
+        ip_out=$current
+        [ -n "$current" ] || { { kv iface "$iface"; kv mac "$mac"; kv ip ""; kv action unchanged; } | emit reservation; exit 0; }
+        action=removed
+    else
+        in_net "$opt_ip" "$net" || fail 1 reservation bad-arguments "$opt_ip is not a client address in $iface's network $net"
+        [ "$opt_ip" = "$port_ip" ] && fail 1 reservation bad-arguments "$opt_ip is $iface's own address"
+        if [ -r "$rf" ]; then
+            other=$(res_in_net "$rf" "$net" | awk -F , -v m="$mac" -v ip="$opt_ip" '$2 == ip && $1 != m { print $1; exit }')
+            [ -z "$other" ] || fail 1 reservation in-use "$opt_ip is reserved for $other"
+        fi
+        lf="$LEASE_DIR/dnsmasq-$iface.leases"
+        if [ -r "$lf" ]; then
+            other=$(awk -v ip="$opt_ip" -v m="$mac" '$3 == ip && toupper($2) != m { print toupper($2); exit }' "$lf")
+            [ -z "$other" ] || fail 1 reservation in-use "$opt_ip is leased to $other"
+        fi
+        ip_out=$opt_ip
+        if [ "$current" = "$opt_ip" ]; then
+            { kv iface "$iface"; kv mac "$mac"; kv ip "$opt_ip"; kv action unchanged; } | emit reservation; exit 0
+        fi
+        action=added
+    fi
+    if [ "$dry_run" = 1 ]; then
+        dry_note "$action $mac,$ip_out in $rf; SIGHUP $(cat "$pidf")"
+        { kv iface "$iface"; kv mac "$mac"; kv ip "$ip_out"; kv action "$action"; } | emit reservation; exit 0
+    fi
+
+    # The new file beside the old one, then a rename: dnsmasq never reads half a file
+    dir=$(dirname "$rf")
+    install -d -m0755 "$dir"
+    tmp=$(mktemp "$dir/.dhcp-reservations.XXXXXX") || fail 2 reservation write-failed "cannot write in $dir"
+    {
+        echo "# dhcp-host lines for the serving ports (network-manager-app, net-ctl.sh dhcp-reserve)"
+        if [ -r "$rf" ]; then
+            # every other line, minus this MAC's line in this port's network
+            awk -F , -v m="$mac" -v keep="$(res_in_net "$rf" "$net" | awk -F , -v m="$mac" '$1 == m { print $2 }')" '
+                /^[[:space:]]*#/ { next } /^[[:space:]]*$/ { next }
+                toupper($1) == m && $2 == keep { next }
+                { print }' "$rf"
+        fi
+        [ "$opt_forget" = 1 ] || echo "$mac,$opt_ip"
+    } > "$tmp" || { rm -f "$tmp"; fail 2 reservation write-failed "cannot write $tmp"; }
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$rf" || { rm -f "$tmp"; fail 2 reservation write-failed "cannot replace $rf"; }
+    # dnsmasq (running as nobody) must read it after SIGHUP
+    kill -HUP "$(cat "$pidf")" 2>/dev/null || notice "the reservation is saved; $iface's dnsmasq did not take the reload signal"
+    journal "reservation $action: $iface $mac $ip_out"
+    { kv iface "$iface"; kv mac "$mac"; kv ip "$ip_out"; kv action "$action"; } | emit reservation
 }
 
 # ---- WiFi -------------------------------------------------------------------
@@ -1546,7 +1663,7 @@ cmd_dhcp_guard() {
 # never in a dry run; without systemd-run (Buildroot) the change runs here.
 detach() { # <command> <args...>
     case $1 in
-        wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set) ;;
+        wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set|dhcp-reserve) ;;
         dhcp-guard) [ "$opt_retry" = 1 ] || return 0 ;;
         *) return 0 ;;
     esac
@@ -1571,7 +1688,7 @@ cmd=${1:-}
 iface='' ssid_enc='' opt_hidden=0 opt_security='' opt_rescan=0 opt_onoff='' dry_run=0
 opt_mode='' opt_ip='' opt_prefix='' opt_gateway='' opt_dns=''
 opt_target='' opt_count='' opt_host='' opt_secs='' opt_udp=0 opt_reverse=0 opt_stop=0
-opt_event='' opt_retry=0
+opt_event='' opt_retry=0 opt_mac='' opt_forget=0
 for arg in "$@"; do
     case $arg in
         --iface=*) iface=${arg#--iface=} ;;
@@ -1590,6 +1707,8 @@ for arg in "$@"; do
         --stop) opt_stop=1 ;;
         --event=*) opt_event=${arg#--event=} ;;
         --retry) opt_retry=1 ;;
+        --mac=*) opt_mac=${arg#--mac=} ;;
+        --forget) opt_forget=1 ;;
         --ssid=*) ssid_enc=${arg#--ssid=} ;;
         --hidden) opt_hidden=1 ;;
         --security=*) opt_security=${arg#--security=} ;;
@@ -1605,9 +1724,10 @@ case $opt_security in ''|open|wpa2|wpa3) ;; *) fail 1 connect bad-arguments "--s
 # One rule for --iface= (review v3, 2.2): a device NetworkManager lists
 # (list_devices), for every command that takes one
 case $cmd in
-    leases|wired-set|dhcp-probe|dhcp-guard|ping|internet-check)
+    leases|wired-set|dhcp-probe|dhcp-guard|dhcp-reserve|ping|internet-check)
         if [ -n "$iface" ]; then
             case $cmd in leases) k=lease ;; wired-set) k=wired ;; dhcp-probe) k=probe ;; dhcp-guard) k=guard ;;
+                         dhcp-reserve) k=reservation ;;
                          ping) k=ping ;; *) k=internet ;; esac
             need_nm
             list_devices | awk -F "$us" -v d="$iface" '$1 == d { f = 1 } END { exit !f }' \
@@ -1638,11 +1758,12 @@ case $cmd in
     wired-set) cmd_wired_set ;;
     dhcp-probe) cmd_dhcp_probe ;;
     dhcp-guard) cmd_dhcp_guard ;;
+    dhcp-reserve) cmd_dhcp_reserve ;;
     ping) cmd_ping ;;
     internet-check) cmd_internet_check ;;
     iperf-server) cmd_iperf_server ;;
     iperf-client) cmd_iperf_client ;;
     *)
-        echo "usage: net-ctl.sh available|status|monitor|leases|wifi-scan|wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set|dhcp-probe|dhcp-guard|ping|internet-check|iperf-server|iperf-client [options]" >&2
+        echo "usage: net-ctl.sh available|status|monitor|leases|wifi-scan|wifi-connect|wifi-disconnect|wifi-forget|wifi-autoconnect|wifi-radio|wired-set|dhcp-reserve|dhcp-probe|dhcp-guard|ping|internet-check|iperf-server|iperf-client [options]" >&2
         exit 1 ;;
 esac

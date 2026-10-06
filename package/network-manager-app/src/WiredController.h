@@ -19,6 +19,7 @@ class StatusController;
  *   sudo net-ctl.sh wired-set --iface= --mode=client|static|server ...
  *   sudo net-ctl.sh dhcp-probe --iface=        (net-dhcp-probe.py, ~5 s)
  *   sudo net-ctl.sh leases --iface=            (a serving port, every 10 s while shown)
+ *   sudo net-ctl.sh dhcp-reserve --iface= --mac= --ip= | --forget  (pin a client's address)
  *
  * The script keeps the previous settings until the new ones are up and puts
  * them back otherwise (exit 3), detached from the app (rule 6a); this class
@@ -42,6 +43,8 @@ class WiredController : public QObject
     Q_PROPERTY(QVariantMap probes READ probes NOTIFY probesChanged)
     // iface -> [{ip, mac, host, expires}]
     Q_PROPERTY(QVariantMap leases READ leases NOTIFY leasesChanged)
+    // iface -> [{mac, ip}]: the reserved addresses in a serving port's network
+    Q_PROPERTY(QVariantMap reservations READ reservations NOTIFY leasesChanged)
     // the last apply: kind ok|error|info, title, detail, iface
     Q_PROPERTY(QVariantMap outcome READ outcome NOTIFY outcomeChanged)
     Q_PROPERTY(bool dryRun READ dryRun CONSTANT)
@@ -60,6 +63,7 @@ public:
     QString phase() const { return m_phase; }
     QVariantMap probes() const { return m_probes; }
     QVariantMap leases() const { return m_leases; }
+    QVariantMap reservations() const { return m_reservations; }
     QVariantMap outcome() const { return m_outcome; }
     bool dryRun() const { return m_options.dryRun; }
 
@@ -75,6 +79,10 @@ public:
     Q_INVOKABLE void guardRetry(const QString &iface);
     // the lease tables of the serving ports, once (Tools: ping a client)
     Q_INVOKABLE void refreshLeases();
+    // Pin <ip> to <mac> on a serving port (the client moves at its next
+    // renewal), or free a reserved address
+    Q_INVOKABLE void reserve(const QString &iface, const QString &mac, const QString &ip);
+    Q_INVOKABLE void unreserve(const QString &iface, const QString &mac);
 
     static QVariantMap failureOutcome(const QString &reason, const QString &iface, const QString &mode,
                                       const QString &detail, int exitCode);
@@ -86,7 +94,7 @@ signals:
     void outcomeChanged();
 
 private:
-    enum class Op { None, Apply, Probe, Leases, Retry };
+    enum class Op { None, Apply, Probe, Leases, Retry, Reserve };
     void run(Op op, const QString &iface, const QStringList &args);
     void onResult(const QVariantMap &fields);
     void onProgress(const QVariantMap &fields);
@@ -105,8 +113,8 @@ private:
     QString m_applyMode;
     QString m_phase;
     bool m_active = false;
-    QVariantMap m_probes, m_leases, m_outcome;
-    QVariantList m_collectServers, m_collectLeases;
+    QVariantMap m_probes, m_leases, m_reservations, m_outcome;
+    QVariantList m_collectServers, m_collectLeases, m_collectReservations;
     QVariantMap m_lastResult;
     QHash<QString, int> m_carrier;            // last carrier seen per serving port
     QSet<QString> m_leasesAsked;              // serving ports whose leases were asked for

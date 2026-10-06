@@ -2128,22 +2128,50 @@ Window {
                                 }
                             }
 
-                            // the lease table of a serving port
+                            // the lease table of a serving port, with its reservations: a
+                            // reserved client that holds no lease gets a row of its own
                             Item {
+                                id: leaseTable
                                 visible: infoArea.what === "leases"
                                 anchors.fill: parent
-                                readonly property var rows: wired.leases[portCard.p.name] || []
-                                Row {
+                                readonly property string port: portCard.p.name
+                                readonly property var rows: {
+                                    var leases = wired.leases[port] || [], res = wired.reservations[port] || []
+                                    var out = [], byMac = {}
+                                    for (var i = 0; i < res.length; ++i) byMac[res[i].mac] = res[i].ip
+                                    for (var j = 0; j < leases.length; ++j) {
+                                        var l = leases[j]
+                                        out.push({ ip: l.ip, mac: l.mac, host: l.host, expires: l.expires,
+                                                   reserved: byMac[l.mac] || "", present: true })
+                                        delete byMac[l.mac]
+                                    }
+                                    for (var mac in byMac)
+                                        out.push({ ip: byMac[mac], mac: mac, host: "", expires: "", reserved: byMac[mac], present: false })
+                                    return out
+                                }
+                                // column widths, of the table's width
+                                readonly property var cols: [0.17, 0.235, 0.165, 0.15]
+                                Item {
                                     id: leaseHead
-                                    spacing: 0
-                                    Repeater {
-                                        model: [{ t: "ADDRESS", w: 0.22 }, { t: "MAC", w: 0.27 }, { t: "HOST NAME", w: 0.23 }, { t: "LEASE ENDS", w: 0.14 }]
-                                        Text {
-                                            width: infoArea.width * modelData.w
-                                            text: modelData.t
-                                            color: t.sub
-                                            font.family: t.font; font.pixelSize: 14 * s; font.weight: Font.DemiBold; font.letterSpacing: 1 * s
+                                    width: parent.width; height: 38 * s
+                                    Row {
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        Repeater {
+                                            model: ["ADDRESS", "MAC", "HOST NAME", "LEASE ENDS"]
+                                            Text {
+                                                width: infoArea.width * leaseTable.cols[index]
+                                                text: modelData
+                                                color: t.sub
+                                                font.family: t.font; font.pixelSize: 14 * s; font.weight: Font.DemiBold; font.letterSpacing: 1 * s
+                                            }
                                         }
+                                    }
+                                    // a client that is not in the table: by its MAC
+                                    ActionButton {
+                                        anchors.right: parent.right
+                                        height: 38 * s; width: infoArea.width * 0.26
+                                        label: "Reserve for a MAC…"
+                                        onClicked: sheet.openReserve(leaseTable.port, portCard.p.ip || "")
                                     }
                                 }
                                 ListView {
@@ -2152,36 +2180,75 @@ Window {
                                     width: parent.width
                                     clip: true
                                     boundsBehavior: Flickable.StopAtBounds
-                                    model: parent.rows
+                                    model: leaseTable.rows
                                     delegate: Row {
                                         id: leaseRow
                                         height: 44 * s
-                                        readonly property string ip: modelData.ip
-                                        Repeater {
-                                            model: [{ v: modelData.ip, w: 0.22 }, { v: modelData.mac, w: 0.27 },
-                                                    { v: modelData.host || "—", w: 0.23 },
-                                                    { v: Qt.formatTime(new Date(parseInt(modelData.expires) * 1000), "HH:mm"), w: 0.14 }]
+                                        readonly property var r: modelData
+                                        // the address column: a reserved one in the accent colour, marked
+                                        Item {
+                                            width: infoArea.width * leaseTable.cols[0]; height: leaseRow.height
+                                            Rectangle {
+                                                id: pin
+                                                visible: leaseRow.r.reserved !== ""
+                                                anchors.verticalCenter: parent.verticalCenter
+                                                width: 10 * s; height: width; radius: width / 2
+                                                color: t.accent
+                                            }
                                             Text {
-                                                width: infoArea.width * modelData.w
+                                                anchors.left: parent.left; anchors.leftMargin: pin.visible ? 18 * s : 0
+                                                anchors.right: parent.right
+                                                height: parent.height
+                                                verticalAlignment: Text.AlignVCenter
+                                                elide: Text.ElideRight
+                                                text: leaseRow.r.ip
+                                                color: leaseRow.r.reserved !== "" ? t.accent : t.text
+                                                font.family: t.font; font.pixelSize: 18 * s
+                                            }
+                                        }
+                                        Repeater {
+                                            // the last column: when the lease ends; a reserved client with no
+                                            // lease (away, or on a fixed address), or one that still holds
+                                            // another address, says so
+                                            model: [leaseRow.r.mac, leaseRow.r.host || "—",
+                                                    !leaseRow.r.present ? "no lease"
+                                                    : leaseRow.r.reserved !== "" && leaseRow.r.reserved !== leaseRow.r.ip
+                                                      ? "→ " + leaseRow.r.reserved
+                                                    : Qt.formatTime(new Date(parseInt(leaseRow.r.expires) * 1000), "HH:mm")]
+                                            Text {
+                                                width: infoArea.width * leaseTable.cols[index + 1]
                                                 height: leaseRow.height
                                                 verticalAlignment: Text.AlignVCenter
                                                 elide: Text.ElideRight
-                                                text: modelData.v
-                                                color: t.text
+                                                text: modelData
+                                                color: index === 2 && !leaseRow.r.present ? t.dim : t.text
                                                 font.family: t.font; font.pixelSize: 18 * s
                                             }
                                         }
                                         // Ping this client from its port (Tools)
                                         ActionButton {
-                                            height: 38 * s; width: infoArea.width * 0.14
+                                            height: 38 * s; width: infoArea.width * 0.12
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            opacity: leaseRow.r.present ? 1 : 0
+                                            enabled: leaseRow.r.present
                                             label: "Ping"
                                             onClicked: {
-                                                win.pingTarget = leaseRow.ip
+                                                win.pingTarget = leaseRow.r.ip
                                                 win.pingIface = portCard.p.name
                                                 win.tool = "ping"
                                                 win.section = "tools"
-                                                tools.ping(leaseRow.ip, portCard.p.name, 10)
+                                                tools.ping(leaseRow.r.ip, portCard.p.name, 10)
                                             }
+                                        }
+                                        Item { width: infoArea.width * 0.02; height: 1 }
+                                        // pin the address it has, or free the reserved one
+                                        ActionButton {
+                                            height: 38 * s; width: infoArea.width * 0.12
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            label: leaseRow.r.reserved !== "" ? "Release" : "Reserve"
+                                            onClicked: leaseRow.r.reserved !== ""
+                                                       ? wired.unreserve(leaseTable.port, leaseRow.r.mac)
+                                                       : wired.reserve(leaseTable.port, leaseRow.r.mac, leaseRow.r.ip)
                                         }
                                     }
                                     Text {
@@ -2727,12 +2794,31 @@ Window {
         function numDone() { if (numValid) { numSave(); close() } }
 
         // ---- an address (numeric pad) or a host name (keyboard) for a tool
-        property string hostFor: "ping"        // ping | client
+        // (also a reservation: the client's MAC on the keyboard, then its address on the pad)
+        property string hostFor: "ping"        // ping | client | reserve-mac | reserve-ip
         property string hostKeys: "num"        // num | abc
+        property string reservePort: ""
+        property string reserveNet: ""         // "192.168.10." - the pad starts there
+        property string reserveMac: ""
         readonly property bool hostValid: {
             var v = hostInput.text
+            if (hostFor === "reserve-mac") return macNorm(v) !== ""
+            if (hostFor === "reserve-ip") return win.ipOk(v)
             if (!/^[A-Za-z0-9][A-Za-z0-9.:_-]*$/.test(v)) return false
             return /^[0-9.]+$/.test(v) ? win.ipOk(v) : true
+        }
+        // a MAC typed with colons, dashes, dots or none (the colon is on the
+        // keyboard's 123 layer) -> "48:B0:2D:87:68:8D", or "" when it is not one
+        function macNorm(v) {
+            var h = v.replace(/[:.\- ]/g, "")
+            return /^[0-9A-Fa-f]{12}$/.test(h) ? h.toUpperCase().match(/../g).join(":") : ""
+        }
+        function openReserve(port, portIp) {
+            reservePort = port
+            reserveNet = portIp.substring(0, portIp.lastIndexOf(".") + 1)
+            reserveMac = ""
+            openHost("reserve-mac")
+            hostKeys = "abc"
         }
         function openHost(forWhat) {
             hostFor = forWhat
@@ -2745,6 +2831,16 @@ Window {
         }
         function hostDone() {
             if (!hostValid) return
+            if (hostFor === "reserve-mac") {
+                reserveMac = macNorm(hostInput.text)
+                hostFor = "reserve-ip"
+                hostInput.text = reserveNet
+                hostInput.cursorPosition = hostInput.text.length
+                hostKeys = "num"
+                hostInput.forceActiveFocus()
+                return
+            }
+            if (hostFor === "reserve-ip") { wired.reserve(reservePort, reserveMac, hostInput.text); close(); return }
             if (hostFor === "ping") win.pingTarget = hostInput.text
             else win.clientHost = hostInput.text
             close()
@@ -3169,13 +3265,17 @@ Window {
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 4 * s
                         Text {
-                            text: sheet.hostFor === "ping" ? "Ping" : "Speed test server"
+                            text: sheet.hostFor === "ping" ? "Ping"
+                                  : sheet.hostFor === "client" ? "Speed test server"
+                                  : "Reserve an address on " + sheet.reservePort
                             color: t.sub
                             font.family: t.font; font.pixelSize: 17 * s
                         }
                         Text {
                             width: parent.width; elide: Text.ElideRight
-                            text: "Address or host name"
+                            text: sheet.hostFor === "reserve-mac" ? "The client's MAC address (colons optional)"
+                                  : sheet.hostFor === "reserve-ip" ? "The address for " + sheet.reserveMac
+                                  : "Address or host name"
                             color: t.text
                             font.family: t.font; font.pixelSize: 24 * s; font.weight: Font.DemiBold
                         }
@@ -3221,8 +3321,9 @@ Window {
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 16 * s
                         // back from the keyboard (a name) to the pad (an address)
+                        // (a MAC: the keyboard only - it has the hex letters and the colon)
                         ActionButton {
-                            visible: sheet.hostKeys === "abc"
+                            visible: sheet.hostKeys === "abc" && sheet.hostFor !== "reserve-mac"
                             height: 66 * s; width: 190 * s
                             label: "Number pad"
                             onClicked: { sheet.hostKeys = "num"; hostInput.forceActiveFocus() }
@@ -3232,7 +3333,7 @@ Window {
                             height: 66 * s; width: 150 * s
                             primary: true
                             enabled: sheet.hostValid
-                            label: "Done"
+                            label: sheet.hostFor === "reserve-mac" ? "Next" : "Done"
                             onClicked: sheet.hostDone()
                         }
                     }
@@ -3262,7 +3363,7 @@ Window {
                 theme: t
                 target: sheet.editing
                 passwordMode: sheet.mode === "password" || (sheet.mode === "hidden" && sheet.editing === hiddenPassword)
-                doneLabel: sheet.mode === "host" ? "Done" : "Connect"
+                doneLabel: sheet.mode === "host" ? (sheet.hostFor === "reserve-mac" ? "Next" : "Done") : "Connect"
                 doneEnabled: sheet.mode === "host" ? sheet.hostValid : sheet.canJoin
                 onDone: sheet.mode === "host" ? sheet.hostDone() : sheet.join()
             }
@@ -3316,6 +3417,15 @@ Window {
                 sheet.openHost("ping")
                 if (parts[1] === "abc") { sheet.hostKeys = "abc"; hostInput.text = "bench-pc.lan" } else hostInput.text = "192.168.50."
             }
+        } else if (parts[0] === "reserve-mac" || parts[0] === "reserve-ip" || parts[0] === "reserve-done") {
+            // the reservation sheet, on the serving port's lease table
+            var rp = portByName(parts[1] || "eth1")
+            win.section = "wired"
+            if (parts[1]) win.wiredPort = parts[1]
+            sheet.openReserve(rp ? rp.name : "eth1", rp ? rp.ip || "" : "")
+            hostInput.text = "48b02d87688d"
+            if (parts[0] !== "reserve-mac") { sheet.hostDone(); hostInput.text = sheet.reserveNet + "2" }
+            if (parts[0] === "reserve-done") sheet.hostDone()
         } else if (parts[0] === "scroll-end") {
             scrollEnd.start()
         } else if (parts[0] === "hidden") {

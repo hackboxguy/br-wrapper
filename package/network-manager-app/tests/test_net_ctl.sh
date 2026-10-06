@@ -837,5 +837,65 @@ sh "$work/90-net-ctl-guard" lo pre-up
 check "pre-up and down reach net-ctl.sh, nothing else" sh -c "[ \"\$(cat \"$work/spy\")\" = 'dhcp-guard --iface=eth1 --event=pre-up
 dhcp-guard --iface=eth1 --event=down' ]"
 
+echo "== reservations (dhcp-reserve)"
+# eth1 serves 192.168.10.1/24; its dnsmasq is a shell that records SIGHUP
+reset ok
+printf 'eth0 192.168.1.170/24\neth1 192.168.10.1/24\n' > "$FAKE_NM/addrs"
+mkdir -p "$NET_CTL_SHARED_DIR" "$FAKE_NM/run" "$FAKE_NM/var"
+printf 'dhcp-hostsfile=%s/var/dhcp-reservations\n' "$FAKE_NM" > "$NET_CTL_SHARED_DIR/91-micropanel-reservations.conf"
+sh -c 'trap "echo hup >> \"$1\"" HUP; while :; do sleep 1; done' _ "$FAKE_NM/hups" &
+dns_pid=$!
+echo "$dns_pid" > "$FAKE_NM/run/nm-dnsmasq-eth1.pid"
+export NET_CTL_PID_DIR="$FAKE_NM/run" NET_CTL_DETACHED=1
+res="$FAKE_NM/var/dhcp-reservations"
+hups() { sleep 1.2; cat "$FAKE_NM/hups" 2>/dev/null | wc -l | tr -d ' '; }
+run dhcp-reserve --iface=eth1 --mac=48:b0:2d:87:68:8d --ip=192.168.10.2
+check "reserve as pi: refused" [ "$rc" = 1 ]
+check "  says it runs as root" out_has "reason=bad-arguments"
+export NET_CTL_UID=0
+run dhcp-reserve --iface=eth1 --mac=48:b0:2d:87:68:8d --ip=192.168.10.2
+check "reserve: exit 0" [ "$rc" = 0 ]
+check "  RESULT, MAC upper-case" out_has "RESULT kind=reservation iface=eth1 mac=48:B0:2D:87:68:8D ip=192.168.10.2 action=added"
+check "  the dhcp-host line" grep -qx '48:B0:2D:87:68:8D,192.168.10.2' "$res"
+check "  world-readable (dnsmasq reads it as nobody)" [ "$(stat -c %a "$res")" = 644 ]
+check "  the port's dnsmasq got SIGHUP" [ "$(hups)" = 1 ]
+run dhcp-reserve --iface=eth1 --mac=48:B0:2D:87:68:8D --ip=192.168.10.2
+check "the same again: unchanged, no reload" sh -c "printf '%s' \"\$1\" | grep -q 'action=unchanged' && [ \"\$(cat '$FAKE_NM/hups' | wc -l)\" = 1 ]" _ "$out"
+run dhcp-reserve --iface=eth1 --mac=48:B0:2D:87:68:8D --ip=192.168.10.3
+check "a new address for the same MAC replaces the line" sh -c "[ \"\$(grep -c '^48:B0:2D:87:68:8D,' '$res')\" = 1 ] && grep -qx '48:B0:2D:87:68:8D,192.168.10.3' '$res'"
+run dhcp-reserve --iface=eth1 --mac=02:00:00:00:00:01 --ip=192.168.10.3
+check "an address reserved for another MAC: refused" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'reason=in-use'" _ "$out"
+printf '1791262000 3c:22:fb:aa:bb:cc 192.168.10.61 laptop *\n' > "$work/leases/dnsmasq-eth1.leases"
+run dhcp-reserve --iface=eth1 --mac=02:00:00:00:00:01 --ip=192.168.10.61
+check "an address leased to another MAC: refused" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'leased%20to%203C:22:FB:AA:BB:CC'" _ "$out"
+run dhcp-reserve --iface=eth1 --mac=3C:22:FB:AA:BB:CC --ip=192.168.10.61
+check "pinning a client's own lease: added" out_has "ip=192.168.10.61 action=added"
+for bad in "--ip=192.168.11.5" "--ip=192.168.10.1" "--ip=192.168.10.255" "--ip=192.168.10.0" "--ip=300.1.1.1"; do
+    run dhcp-reserve --iface=eth1 --mac=02:00:00:00:00:02 $bad
+    check "refused: $bad" [ "$rc" = 1 ]
+done
+run dhcp-reserve --iface=eth1 --mac=02:00:00:00:00 --ip=192.168.10.9
+check "refused: a short MAC" [ "$rc" = 1 ]
+printf '02:00:00:00:00:09,192.168.50.7\n' >> "$res"
+run leases --iface=eth1
+check "leases lists this port's reservations" sh -c "printf '%s' \"\$1\" | grep -q 'RESULT kind=reservation mac=48:B0:2D:87:68:8D ip=192.168.10.3' && printf '%s' \"\$1\" | grep -q 'RESULT kind=reservation mac=3C:22:FB:AA:BB:CC ip=192.168.10.61'" _ "$out"
+check "  not another subnet's" sh -c "! printf '%s' \"\$1\" | grep -q '192.168.50.7'" _ "$out"
+run dhcp-reserve --iface=eth1 --mac=48:b0:2d:87:68:8d --forget
+check "forget: removed" out_has "RESULT kind=reservation iface=eth1 mac=48:B0:2D:87:68:8D ip=192.168.10.3 action=removed"
+check "  the line is gone, the others stay" sh -c "! grep -q '^48:B0:2D:87:68:8D,' '$res' && grep -qx '3C:22:FB:AA:BB:CC,192.168.10.61' '$res' && grep -qx '02:00:00:00:00:09,192.168.50.7' '$res'"
+run dhcp-reserve --iface=eth1 --mac=48:b0:2d:87:68:8d --forget
+check "forget again: unchanged" out_has "action=unchanged"
+before=$(cat "$res")
+run dhcp-reserve --iface=eth1 --mac=02:00:00:00:00:05 --ip=192.168.10.5 --dry-run
+check "dry run: says so, changes nothing" sh -c "printf '%s' \"\$1\" | grep -q 'NOTICE dry-run' && [ \"\$(cat '$res')\" = \"\$2\" ]" _ "$out" "$before"
+run dhcp-reserve --iface=eth0 --mac=02:00:00:00:00:05 --ip=192.168.1.9
+check "a port that does not serve: refused" sh -c "[ $rc = 1 ] && printf '%s' \"\$1\" | grep -q 'reason=not-serving'" _ "$out"
+rm "$NET_CTL_SHARED_DIR/91-micropanel-reservations.conf"
+run dhcp-reserve --iface=eth1 --mac=02:00:00:00:00:05 --ip=192.168.10.5
+check "an image without the drop-in: unsupported, exit 2" sh -c "[ $rc = 2 ] && printf '%s' \"\$1\" | grep -q 'reason=unsupported'" _ "$out"
+kill "$dns_pid" 2>/dev/null
+rm -f "$work/leases/dnsmasq-eth1.leases"
+unset NET_CTL_UID NET_CTL_PID_DIR NET_CTL_DETACHED
+
 if [ "$failures" -gt 0 ]; then echo "net-ctl: $failures failure(s)"; exit 1; fi
 echo "net-ctl: PASS"

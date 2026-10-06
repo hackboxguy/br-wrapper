@@ -25,7 +25,10 @@ of screen 2. Built the way `system-manager-app` is built; the design is
   leases, no gateway, no DNS). The line above **Hold to apply** says what will happen, including
   the address this rig loses. Before a port starts serving, the section asks the network whether
   another DHCP server is there and says so; a serving port shows its lease table, with a **Ping**
-  per client. A port the OLED menu put in its own server mode is shown as such, with that
+  per client and **Reserve** / **Release**: a reserved client always gets the same address
+  (marked in the table; a reserved client with no lease has a row of its own, and one that still
+  holds another address shows where it moves). **Reserve for a MAC…** reserves for a client that
+  is not in the table: its MAC (colons optional), then the address on the pad. A port the OLED menu put in its own server mode is shown as such, with that
   server's leases, and taken over by any of the three modes.
 - **Tools** — **Ping** (ten packets, one box per reply or loss as it happens; targets: gateways,
   the clients of serving ports, two public resolvers, or a typed address or name; optionally
@@ -98,7 +101,8 @@ previous settings were restored · `4` NetworkManager not available.
 | `available` | no | `RESULT kind=available ok=0\|1 [reason=…]` |
 | `status` | no | `RESULT kind=iface …` per wired/WiFi device (incl. `inet=yes\|no`, the configured profile `profileuuid= cfgprofile= saved= binding=name\|mac\|any cfgip= cfgprefix= cfggateway= cfgdns=`), then `RESULT kind=summary internet= via= defaultdev= wifi= country= volatile= wifiboot=` |
 | `monitor` | no | `NOTICE changed` on every NetworkManager event, until killed (or until its caller is gone) |
-| `leases --iface=` | yes | `RESULT kind=lease ip= mac= host= expires=` …, `RESULT kind=leases count=`; the OLED menu's server: from the system dnsmasq's lease file |
+| `leases --iface=` | yes | `RESULT kind=lease ip= mac= host= expires=` …, `RESULT kind=reservation mac= ip=` per reservation in the port's network, `RESULT kind=leases count=`; the OLED menu's server: from the system dnsmasq's lease file |
+| `dhcp-reserve --iface= --mac= --ip=` / `--iface= --mac= --forget` | yes | a change: `RESULT kind=reservation iface= mac= ip= action=added\|removed\|unchanged [reason=bad-arguments\|in-use\|not-serving\|legacy-server\|unsupported\|locked]` |
 | `wifi-scan [--rescan]` | rescan | `RESULT kind=ap ssid= signal= security= band= saved= active=` (strongest BSSID per SSID), then `RESULT kind=saved …` per profile |
 | `wifi-connect --ssid= [--hidden] [--security=open\|wpa2\|wpa3]` | yes | `PROGRESS phase=associating\|authenticating\|address`, `RESULT kind=connect ok= … [reason=bad-password\|not-found\|no-address\|timeout\|unsupported\|need-password\|radio-off\|locked]` |
 | `wifi-disconnect`, `wifi-forget --ssid=`, `wifi-autoconnect --ssid= --on\|--off`, `wifi-radio --on\|--off` | yes | `RESULT kind=… ok=` |
@@ -164,6 +168,34 @@ internet. Measured on the rig (NetworkManager 1.42.4):
   run for real on a veth pair for all three modes. The card's tiles show what Apply would set
   up, not the menu server's own range.
 - `wired-set` refuses a server subnet that overlaps another port's.
+
+### Reserved addresses
+
+A reservation pins the address a serving port gives one client, by its MAC. The image ships a
+second drop-in, `91-micropanel-reservations.conf`, with
+`dhcp-hostsfile=/var/lib/micropanel/dhcp-reservations`; `dhcp-reserve` writes `MAC,ip` lines
+there (atomically, `0644` — NetworkManager's dnsmasq runs as `nobody`) and sends `SIGHUP` to the
+port's dnsmasq (`/run/nm-dnsmasq-<port>.pid`), which re-reads the file. Nothing is restarted
+and the port stays up. Measured with bookworm's dnsmasq and on rig 1 (NetworkManager 1.42.4):
+
+- **SIGHUP is enough for a hostsfile, not for the drop-in directory.** A `dhcp-host=` line in a
+  file under `dnsmasq-shared.d` is read only when dnsmasq starts, i.e. when the port is
+  re-activated (the link drops); the same line in the hostsfile is applied by `SIGHUP` — added
+  and removed alike. A missing hostsfile is logged ("cannot read …") and is not fatal.
+- **One file for every port.** A port's dnsmasq applies only the lines in its own network; the
+  others are ignored there. `leases` shows each port's own.
+- **Outside the pool is fine.** The address must be in the port's network (not its own address,
+  not the network or broadcast address); it need not be in `.10–.254` — `.2` works.
+- **When the client moves.** A client that holds another address keeps it until it renews (half
+  the one-hour lease) or reconnects; dnsmasq then refuses the old address and hands out the
+  reserved one. A device on a fixed address (the Xavier, `192.168.10.2`) never asks; its
+  reservation is a note to everyone else's leases, which then never get that address.
+- **Refused:** an address reserved for another MAC or leased to another client (`in-use`), a port
+  that does not serve (`not-serving`), the OLED menu's own server (`legacy-server`: the system
+  dnsmasq reads no hostsfile), an image without the drop-in (`unsupported`, exit 2).
+- **Where it lives.** `/var/lib/micropanel` is bound from `/data` on the micropanel A/B image, so
+  reservations survive reboots and updates; a factory reset empties them (misc-tools
+  `PERSISTENCE.md`).
 
 ### The DHCP guard (a serving port that comes up)
 

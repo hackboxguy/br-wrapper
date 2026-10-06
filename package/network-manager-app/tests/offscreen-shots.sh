@@ -96,6 +96,14 @@ echo 1 > "$work/sys/eth0/carrier"
 shot overview-dead-uplink dead-uplink
 shot wired-client online-serving --section wired --screenshot-delay 1000
 shot wired-serving online-serving --section wired --open-sheet wired-server:eth1 --screenshot-delay 1500
+# reservations (review v2 of the cluster round, Part D): the lease table with two
+# reserved clients (one connected and moving at its renewal, one away), the sheet's
+# two steps, and the refusal
+shot wired-reserved reserved --section wired --open-sheet wired-server:eth1 --screenshot-delay 1500
+shot wired-reserve-mac reserved --section wired --open-sheet reserve-mac:eth1 --screenshot-delay 1500
+shot wired-reserve-ip reserved --section wired --open-sheet reserve-ip:eth1 --screenshot-delay 1500
+shot wired-reserve-done reserved --section wired --open-sheet reserve-done:eth1 --screenshot-delay 2500
+shot wired-reserve-fail reserve-fail --section wired --open-sheet reserve-done:eth1 --screenshot-delay 2500
 shot wired-static wired-static --section wired --screenshot-delay 1000
 shot wired-static-edit online-serving --section wired --open-sheet wired-static --screenshot-delay 1000
 shot wired-server-draft probe-none --section wired --open-sheet wired-server --screenshot-delay 1000

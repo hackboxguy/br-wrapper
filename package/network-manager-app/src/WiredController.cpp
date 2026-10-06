@@ -68,8 +68,9 @@ void WiredController::run(Op op, const QString &iface, const QStringList &args)
     m_lastResult.clear();
     m_collectServers.clear();
     m_collectLeases.clear();
+    m_collectReservations.clear();
     QStringList full = args;
-    if ((op == Op::Apply || op == Op::Retry) && m_options.dryRun) full << "--dry-run";
+    if ((op == Op::Apply || op == Op::Retry || op == Op::Reserve) && m_options.dryRun) full << "--dry-run";
     m_tool->run(full, true);
 }
 
@@ -142,6 +143,20 @@ void WiredController::refreshLeases()
     }
 }
 
+void WiredController::reserve(const QString &iface, const QString &mac, const QString &ip)
+{
+    if (iface.isEmpty() || mac.isEmpty() || ip.isEmpty()) return;
+    clearOutcome();
+    run(Op::Reserve, iface, {"dhcp-reserve", "--iface=" + iface, "--mac=" + mac, "--ip=" + ip});
+}
+
+void WiredController::unreserve(const QString &iface, const QString &mac)
+{
+    if (iface.isEmpty() || mac.isEmpty()) return;
+    clearOutcome();
+    run(Op::Reserve, iface, {"dhcp-reserve", "--iface=" + iface, "--mac=" + mac, "--forget"});
+}
+
 // A serving port whose cable just came in: is someone else serving there?
 void WiredController::onStatus()
 {
@@ -180,6 +195,8 @@ void WiredController::onResult(const QVariantMap &fields)
         m_lastResult = fields;
     } else if (m_op == Op::Leases && kind == "lease") {
         m_collectLeases.append(fields);
+    } else if (m_op == Op::Leases && kind == "reservation") {
+        m_collectReservations.append(fields);
     } else {
         m_lastResult = fields;
     }
@@ -246,6 +263,7 @@ void WiredController::onFinished(int exitCode)
     } else if (op == Op::Leases) {
         if (exitCode == 0) {
             m_leases[iface] = m_collectLeases;
+            m_reservations[iface] = m_collectReservations;
             emit leasesChanged();
         }
     } else if (op == Op::Apply) {
@@ -273,6 +291,26 @@ void WiredController::onFinished(int exitCode)
         emit busyChanged();
         if (m_status) m_status->refresh();
         if (mode == "server" || exitCode != 0) QTimer::singleShot(1500, this, &WiredController::refreshLeases);
+    } else if (op == Op::Reserve) {
+        const QString mac = m_lastResult.value("mac").toString();
+        const QString ip = m_lastResult.value("ip").toString();
+        const QString action = m_lastResult.value("action").toString();
+        if (exitCode == 0 && m_options.dryRun)
+            setOutcome("info", "Dry run", "Nothing was changed.", iface);
+        else if (exitCode == 0 && action == "removed")
+            setOutcome("ok", "Reservation removed",
+                       mac + " gets any free address from " + iface + " from now on; " + ip + " is free again.", iface);
+        else if (exitCode == 0)
+            setOutcome("ok", "Address reserved",
+                       mac + " gets " + ip + " from " + iface + ". A client that holds another address moves at its "
+                       "next renewal, or at once when it reconnects.", iface);
+        else {
+            m_outcome = failureOutcome(m_lastResult.value("reason").toString(), iface, "server",
+                                       m_lastResult.value("detail").toString(), exitCode);
+            m_outcome["title"] = "Could not reserve";
+            emit outcomeChanged();
+        }
+        refreshLeases();
     } else if (op == Op::Retry) {
         m_busyState = "idle";
         m_applyingIface.clear();

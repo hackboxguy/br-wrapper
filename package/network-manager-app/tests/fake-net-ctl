@@ -7,7 +7,9 @@
 #                      connect-ok | connect-bad-password | connect-not-found |
 #                      connect-no-address | connect-timeout |
 #                      wired-static | probe-found | probe-none | probe-no-cable |
-#                      legacy-server | wired-fail | guard-stopped | guard-checking
+#                      legacy-server | wired-fail | guard-stopped | guard-checking |
+#                      reserved (online-serving with two reserved clients: one with
+#                      its lease, one away) | reserve-fail (dhcp-reserve refuses)
 #   FAKE_NET_STEP      seconds between PROGRESS lines of a change (default 0.4)
 #   FAKE_TOOL          the Tools' outcome: ok (default) | loss | no-reply | unknown-host
 #                      (ping) · dns-fail | gateway-fail | captive | tls (internet-check)
@@ -85,7 +87,7 @@ status() {
             echo "$eth0_up"; echo "$wlan_on"; echo "$eth1_checking"; sum yes eth0 eth0 on DE ;;
         *)
             echo "$eth0_up"; echo "$wlan_on"
-            case $scenario in online-serving|wired-fail) echo "$eth1_serving" ;; esac
+            case $scenario in online-serving|wired-fail|reserved|reserve-fail) echo "$eth1_serving" ;; esac
             sum yes eth0 eth0 on DE ;;
     esac
 }
@@ -143,7 +145,24 @@ case $cmd in
         echo "RESULT kind=lease ip=192.168.50.23 mac=B8:27:EB:01:02:03 host=pi-bench-2 expires=1791262000"
         echo "RESULT kind=lease ip=192.168.50.61 mac=3C:22:FB:AA:BB:CC host=laptop expires=1791262500"
         echo "RESULT kind=lease ip=192.168.50.88 mac=DC:A6:32:44:55:66 host= expires=1791263100"
+        case $scenario in reserved|reserve-fail)
+            echo "RESULT kind=reservation mac=B8:27:EB:01:02:03 ip=192.168.50.23"
+            echo "RESULT kind=reservation mac=3C:22:FB:AA:BB:CC ip=192.168.50.5"
+            echo "RESULT kind=reservation mac=48:B0:2D:87:68:8D ip=192.168.50.2" ;;
+        esac
         echo "RESULT kind=leases iface=$iface count=3" ;;
+    dhcp-reserve)
+        echo "NOTICE detached"
+        sleep "$step"
+        m=''; ip=''; forget=0
+        for a in "$@"; do case $a in --mac=*) m=${a#--mac=} ;; --ip=*) ip=${a#--ip=} ;; --forget) forget=1 ;; esac; done
+        m=$(printf '%s' "$m" | tr 'a-f' 'A-F')
+        if [ "$scenario" = reserve-fail ]; then
+            echo "RESULT kind=reservation ok=0 detail=$ip%20is%20leased%20to%20DC:A6:32:44:55:66 reason=in-use"
+            exit 1
+        fi
+        if [ "$forget" = 1 ]; then echo "RESULT kind=reservation iface=$iface mac=$m ip=192.168.50.5 action=removed"
+        else echo "RESULT kind=reservation iface=$iface mac=$m ip=$ip action=added"; fi ;;
     dhcp-probe)
         sleep "$step"; sleep "$step"
         case $scenario in
