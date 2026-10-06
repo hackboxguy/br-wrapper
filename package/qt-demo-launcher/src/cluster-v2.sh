@@ -20,11 +20,17 @@
 #
 # Where the V2 install is: $CLUSTER_V2_HOME, else /home/pi/qt-cluster-demo,
 # else a qt-cluster-demo directory beside this script's prefix (so a relocated
-# tree still works). Its binary is where the repo's unit runs it from.
+# tree still works). In it, the installed app (bin/qt-cluster-demo, the DMS
+# files in share/qt-cluster-demo/ - the micropanel image) or the repo's build
+# tree (build-pi-agx/src/qt-cluster-demo, where the repo's unit runs it from).
+# Environment: systemd/qt-cluster-demo.env of the install, then the operator's
+# override /data/cluster/qt-cluster-demo.env (the later file wins; both read
+# as data). On the A/B image the first is image content, the second survives
+# reboots and updates.
 # Log: /tmp/cluster-v2.log (this script and the app; rewritten at each start).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BIN_REL=build-pi-agx/src/qt-cluster-demo
+DATA_ENV=/data/cluster/qt-cluster-demo.env
 
 CHECK=0 THEME=""
 for arg in "$@"; do
@@ -39,14 +45,19 @@ unavailable() {
     exit 1
 }
 
+# find_home: the install directory and the binary in it, as "<dir> <rel>"
 find_home() {
     for d in "${CLUSTER_V2_HOME:-}" /home/pi/qt-cluster-demo "$SCRIPT_DIR/../../../qt-cluster-demo"; do
-        [ -n "$d" ] && [ -x "$d/$BIN_REL" ] && { (cd "$d" && pwd -P); return 0; }
+        [ -n "$d" ] || continue
+        for rel in bin/qt-cluster-demo build-pi-agx/src/qt-cluster-demo; do
+            [ -x "$d/$rel" ] && { echo "$(cd "$d" && pwd -P) $rel"; return 0; }
+        done
     done
     return 1
 }
 
-HOME_DIR=$(find_home) || unavailable "Cluster V2 not installed"
+found=$(find_home) || unavailable "Cluster V2 not installed"
+HOME_DIR=${found% *} BIN_REL=${found##* }
 systemctl is-active --quiet can-proxyd.service || unavailable "CAN proxy not running"
 [ "$CHECK" = 1 ] && exit 0
 
@@ -54,10 +65,8 @@ LOG=/tmp/cluster-v2.log
 exec >"$LOG" 2>&1
 log() { echo "cluster-v2: $*"; }
 
-# The service's environment file: KEY=value lines, read as data (no eval)
-CLUSTER_ARGS="--source=proxy --contract-if=vcan0" EXTRA_ARGS="" DMS_ENABLED=0 SOMEIP_IFACE=eth0
-ENV_FILE="$HOME_DIR/systemd/qt-cluster-demo.env"
-if [ -r "$ENV_FILE" ]; then
+# The environment files: KEY=value lines, read as data (no eval)
+read_env() {
     while IFS= read -r line; do
         case $line in
             CLUSTER_ARGS=*) CLUSTER_ARGS=${line#CLUSTER_ARGS=} ;;
@@ -65,9 +74,18 @@ if [ -r "$ENV_FILE" ]; then
             DMS_ENABLED=*) DMS_ENABLED=${line#DMS_ENABLED=} ;;
             SOMEIP_IFACE=*) SOMEIP_IFACE=${line#SOMEIP_IFACE=} ;;
         esac
-    done < "$ENV_FILE"
+    done < "$1"
+}
+CLUSTER_ARGS="--source=proxy --contract-if=vcan0" EXTRA_ARGS="" DMS_ENABLED=0 SOMEIP_IFACE=eth0
+ENV_FILE="$HOME_DIR/systemd/qt-cluster-demo.env"
+if [ -r "$ENV_FILE" ]; then
+    read_env "$ENV_FILE"
 else
     log "no $ENV_FILE; defaults: $CLUSTER_ARGS"
+fi
+if [ -r "$DATA_ENV" ]; then
+    read_env "$DATA_ENV"
+    log "override: $DATA_ENV"
 fi
 
 # The tile's theme wins over the file's
@@ -96,10 +114,13 @@ if [ "$DMS_ENABLED" = 1 ]; then
     else
         log "SOME/IP: WARNING could not set the multicast route on $SOMEIP_IFACE"
     fi
-    if [ -x "$HOME_DIR/scripts/pi-dms-production-baseline.sh" ]; then
-        SOMEIP_IFACE="$SOMEIP_IFACE" timeout 10 "$HOME_DIR/scripts/pi-dms-production-baseline.sh" someip-preflight \
+    for preflight in "$HOME_DIR/share/qt-cluster-demo/pi-dms-production-baseline.sh" \
+                     "$HOME_DIR/scripts/pi-dms-production-baseline.sh"; do
+        [ -x "$preflight" ] || continue
+        SOMEIP_IFACE="$SOMEIP_IFACE" timeout 10 "$preflight" someip-preflight \
             || log "SOME/IP: preflight failed (logged, not fatal)"
-    fi
+        break
+    done
 fi
 
 # eglfs as in the unit, also when started by the launcher (which runs on
@@ -111,8 +132,9 @@ export QSG_RENDER_LOOP=threaded
 VSOMEIP_LIB=/home/pi/.codex-deps/prefix/vsomeip-3.5.11/lib
 export LD_LIBRARY_PATH="$VSOMEIP_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
-# The DMS's vsomeip configuration path in the repo's IDs file is relative to
-# the install, as in the unit (WorkingDirectory)
+# As the unit (WorkingDirectory): an IDs file from before qt-cluster-demo
+# named its vsomeip configuration relative to the IDs file needs this; the
+# current app resolves it beside the IDs file from any directory
 cd "$HOME_DIR" || unavailable "cannot enter $HOME_DIR"
 log "exec $HOME_DIR/$BIN_REL$ARGS"
 # shellcheck disable=SC2086 # ARGS is a word list, as the unit's $CLUSTER_ARGS
