@@ -806,6 +806,28 @@ run wired-set --iface=eth1 --mode=client
 check "a stopped port given a mode by wired-set loses the verdict and the notice" sh -c "[ ! -e \"\$FAKE_NM/guard/eth1.stopped\" ] && [ ! -e \"\$FAKE_NM/notice\" ]"
 unset NET_CTL_GUARD_DIR NET_CTL_NOTICE_FILE NET_CTL_GUARD_INLINE
 
+echo "== the guard's time limit (review v4, 3.1)"
+guard_reset
+mkdir -p "$FAKE_NM/guard"
+old=$(( $(date +%s) - 60 ))
+touch -d "@$old" "$FAKE_NM/guard/eth1.checking"
+run status
+check "status: a check older than 30 s is no verdict (guard= empty)" sh -c "printf '%s' \"\$1\" | grep 'name=eth1 ' | grep -q ' guard= guardserver= guardtime='" _ "$out"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=expire
+check "expire: the gate opens, the port serves unchecked" out_has "RESULT kind=guard iface=eth1 action=serving reason=check-timeout"
+check "  the hung check stopped, the gate open, the marker gone" sh -c "grep -q 'systemctl stop net-ctl-guard-eth1.service' \"\$FAKE_NM/calls\" && grep -q 'nft delete element inet net_ctl_guard gated { \"eth1\" }' \"\$FAKE_NM/calls\" && [ ! -e \"\$FAKE_NM/guard/eth1.checking\" ]"
+: > "$FAKE_NM/guard/eth1.checking"
+run status
+check "status: a fresh check is 'checking'" sh -c "printf '%s' \"\$1\" | grep 'name=eth1 ' | grep -q ' guard=checking '" _ "$out"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=expire
+check "expire on a check still in time: nothing" sh -c "printf '%s' \"\$1\" | grep -q 'action=none' && [ -e \"\$FAKE_NM/guard/eth1.checking\" ]" _ "$out"
+rm -f "$FAKE_NM/guard/eth1.checking"
+unset NET_CTL_GUARD_INLINE
+: > "$FAKE_NM/offers"
+NET_CTL_UID=0 run dhcp-guard --iface=eth1 --event=pre-up
+check "pre-up arms the time limit with the check" sh -c "grep -q 'systemd-run --quiet --collect --no-block --unit=net-ctl-guard-eth1 ' \"\$FAKE_NM/calls\" && grep -q 'systemd-run --quiet --collect --no-block --on-active=30 --unit=net-ctl-guard-expire-eth1-' \"\$FAKE_NM/calls\""
+unset NET_CTL_GUARD_DIR NET_CTL_NOTICE_FILE
+
 echo "== the dispatcher script"
 sed "s|@NET_CTL@|$work/bin/guard-spy|" "$here/../src/90-net-ctl-guard.in" > "$work/90-net-ctl-guard"
 printf '#!/bin/sh\necho "$*" >> "%s/spy"\n' "$work" > "$work/bin/guard-spy"; chmod +x "$work/bin/guard-spy"

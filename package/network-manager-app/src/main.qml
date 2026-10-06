@@ -307,6 +307,24 @@ Window {
         var bits = Math.min(parseInt(pa), parseInt(pb)), div = Math.pow(2, 32 - bits)
         return Math.floor(ipNum(a) / div) === Math.floor(ipNum(b) / div)
     }
+    // A wired DHCP client on another network than the port the internet goes
+    // through (else the default route's): its DHCP server, and that it is
+    // not that port's network - a cable that goes to some other router then
+    // shows on the card (round 5, part C). WiFi on another network is normal.
+    function refPort() {
+        var list = status.interfaces, name = summary.via || summary.defaultdev || ""
+        for (var i = 0; i < list.length; ++i) if (list[i].name === name) return list[i]
+        return null
+    }
+    function gatewayLine(f) {
+        var g = refPort()
+        var other = f.type === "ethernet" && !!f.ip && !!f.dhcpserver && !!g && g.name !== f.name && !!g.ip
+                    && !sameNet(f.ip, f.prefix || 24, g.ip, g.prefix || 24)
+        if (!other) return "Gateway " + f.gateway
+        var head = f.dhcpserver === f.gateway ? "Gateway + DHCP " + f.gateway
+                                              : "Gateway " + f.gateway + " · DHCP " + f.dhcpserver
+        return head + " · not " + g.name + "'s network"
+    }
     // Another interface whose subnet overlaps a.b.c.d/n (plan 4.3), or null
     function overlapWith(iface, ip, prefix) {
         var list = status.interfaces
@@ -1050,7 +1068,7 @@ Window {
                     visible: text !== ""
                     text: ic.f.mode === "server" || ic.f.mode === "legacy-server"
                           ? (ic.f.clients !== undefined ? (ic.f.clients === 1 ? "1 client" : ic.f.clients + " clients") : "")
-                          : ic.f.gateway ? "Gateway " + ic.f.gateway : ""
+                          : ic.f.gateway ? win.gatewayLine(ic.f) : ""
                     color: t.sub
                     font.family: t.font; font.pixelSize: 20 * s
                 }

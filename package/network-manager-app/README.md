@@ -105,7 +105,7 @@ previous settings were restored · `4` NetworkManager not available.
 | `wired-set --iface= --mode=client` | yes | `PROGRESS phase=activating\|checking`, `RESULT kind=wired ok= ip= binding= [reason=activation-failed\|check-failed\|overlap\|bad-arguments\|locked]` |
 | `wired-set --iface= --mode=static --ip= --prefix= [--gateway=] [--dns=a,b]` | yes | as above |
 | `wired-set --iface= --mode=server --ip= [--prefix=24]` | yes | as above; stops and masks the system `dnsmasq.service` and writes the no-gateway drop-in if needed |
-| `dhcp-guard --iface= --event=pre-up\|check\|down` | yes | the DHCP guard (the dispatcher script calls it): `RESULT kind=guard iface= action=none\|checking\|serving\|stopped [server=]` |
+| `dhcp-guard --iface= --event=pre-up\|check\|expire\|down` | yes | the DHCP guard (the dispatcher script calls it): `RESULT kind=guard iface= action=none\|checking\|serving\|stopped [server=]` |
 | `dhcp-guard --iface= --retry` | yes | a change: the port up again, the guard decides; `action=serving\|stopped` |
 | `dhcp-probe --iface=` | yes | `RESULT kind=offer server= offered= router=` per other server, `RESULT kind=probe servers=N carrier=0\|1` |
 | `ping --target= [--iface=] [--count=1..100]` | no | `RESULT kind=reply seq= ms= from=` / `kind=lost seq= [reason=unreachable]` as they happen, then `kind=ping target= sent= received= avg= loss= [reason=unknown-host\|unreachable\|bad-interface]` |
@@ -190,6 +190,17 @@ closes about 0.1 s after dnsmasq starts. With a client asking once a second, **n
 rig reached it** on a network with another server (the guard took the port down 5 s after
 `pre-up`); without the guard the first offer came 2.3 s after the cable. On a clean network
 serving starts ~5.7 s after the cable instead of 2.3 s.
+
+**The one case in which a serving port is not checked: the probe fails** (no `python3`, a
+socket error — anything but an answer). The guard then fails open: the gate opens and the port
+serves, as without the guard, so a broken probe cannot disable a bench server. The journal says
+so: `dhcp-guard: <port>: the probe failed; serving`. **A check that never decides** (its unit did
+not start, or died before it could clean up) is treated the same way: `pre-up` also arms a
+30-second time limit (`systemd-run --on-active=30 … dhcp-guard --event=expire`), which stops the
+check, opens the gate and logs `dhcp-guard: <port>: the check did not finish within 30 s; gate
+opened, serving unchecked`. The limit is a timer and not a test at the next `status`, because
+with the app closed nothing calls `status`; `status` reports a marker older than 30 s as no
+verdict (`guard=`), as after a probe failure, so the app agrees with the timer.
 
 "Try again" (and any `wired-set` on the port) forgets the verdict; the port comes up and the
 guard probes again. The notice keeps another writer's line (System Manager's "Power cycle

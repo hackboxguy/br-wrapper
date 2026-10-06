@@ -47,7 +47,8 @@
 #   iperf-client --host=H [--secs=5|10|30] [--udp] [--reverse]
 #                                   kind=iperf per second, kind=iperf-sum, kind=iperf-done
 # The tools are reads: they never detach, and stop with their caller.
-#   dhcp-guard --iface=IF --event=pre-up|check|down   (root; the dispatcher script)
+#   dhcp-guard --iface=IF --event=pre-up|check|expire|down   (root; the dispatcher script;
+#                                   expire: the 30 s limit pre-up arms for an undecided check)
 #                                   a serving port that comes up: gate its DHCP replies,
 #                                   probe; another server -> the port down, the notice
 #   dhcp-guard --iface=IF --retry   (root, a change) the port up again; the guard decides
@@ -71,7 +72,8 @@
 # none), NET_CTL_INET_TARGETS, NET_CTL_UID (the uid the detach rule sees),
 # NET_CTL_DETACHED=1 (set inside the transient unit), NET_CTL_GUARD_DIR
 # (/run/net-ctl-guard), NET_CTL_NOTICE_FILE (/tmp/micropanel-notice),
-# NET_CTL_GUARD_INLINE=1 (the guard's check without systemd-run).
+# NET_CTL_GUARD_INLINE=1 (the guard's check without systemd-run),
+# NET_CTL_GUARD_TIMEOUT (30 s: an undecided check has failed).
 
 # nft, iw and rfkill live in /usr/sbin, which is not in pi's non-login PATH.
 # Appended, not prepended: on merged-/usr hosts /usr/sbin also holds nmcli, and
@@ -390,7 +392,7 @@ iface_result() { # <dev> <type> <active uuid or ""> <default dev> <legacy iface>
         if [ -f "$GUARD_DIR/$dev.stopped" ]; then
             kv guard stopped; kv guardserver "$(sed -n 's/^server=//p' "$GUARD_DIR/$dev.stopped")"
             kv guardtime "$(sed -n 's/^time=//p' "$GUARD_DIR/$dev.stopped")"
-        elif [ -f "$GUARD_DIR/$dev.checking" ]; then
+        elif [ -f "$GUARD_DIR/$dev.checking" ] && [ "$(file_age "$GUARD_DIR/$dev.checking")" -le "$GUARD_TIMEOUT" ]; then
             kv guard checking; kv guardserver ""; kv guardtime ""
         else
             kv guard ""; kv guardserver ""; kv guardtime ""
@@ -1362,7 +1364,13 @@ cmd_iperf_client() {
 # and the app calls dhcp-guard --iface=IF --retry ("Try again": the port up
 # again; the guard's probe decides).
 GUARD_DIR=${NET_CTL_GUARD_DIR:-/run/net-ctl-guard}
+# A check that has not decided after this long has failed (its unit did not
+# start, or died before its EXIT trap): the gate opens, as on a probe failure
+GUARD_TIMEOUT=${NET_CTL_GUARD_TIMEOUT:-30}
 NOTICE_FILE=${NET_CTL_NOTICE_FILE:-/tmp/micropanel-notice}
+
+# seconds since a file was last written (busybox stat has -c %Y too)
+file_age() { echo $(( $(date +%s) - $(stat -c %Y "$1" 2>/dev/null || date +%s) )); }
 
 guard_log() { logger -t net-ctl.sh -- "dhcp-guard: $*" 2>/dev/null; return 0; }
 notice_line() { echo "DHCP serving stopped: $1"; }
@@ -1500,15 +1508,35 @@ cmd_dhcp_guard() {
                     --description="net-ctl.sh DHCP guard $iface" $envs \
                     "$(readlink -f "$0")" dhcp-guard --iface="$iface" --event=check >/dev/null 2>&1 \
                     || guard_log "$iface: a check is already running"
+                # and a timer: a check that never decides must not leave the
+                # gate shut and "checking" for good (the app may be closed)
+                # shellcheck disable=SC2086
+                systemd-run --quiet --collect --no-block --on-active="$GUARD_TIMEOUT" \
+                    --unit="net-ctl-guard-expire-$iface-$(date +%s)" \
+                    --description="net-ctl.sh DHCP guard $iface: time limit" $envs \
+                    "$(readlink -f "$0")" dhcp-guard --iface="$iface" --event=expire >/dev/null 2>&1 \
+                    || guard_log "$iface: could not arm the check's time limit"
                 echo "RESULT kind=guard iface=$iface action=checking"
             else
                 guard_check
             fi ;;
         check) guard_check ;;
+        expire)
+            # the time limit armed at pre-up: a check still undecided has failed
+            m="$GUARD_DIR/$iface.checking"
+            if [ -e "$m" ] && [ "$(file_age "$m")" -ge "$GUARD_TIMEOUT" ]; then
+                systemctl stop "net-ctl-guard-$iface.service" >/dev/null 2>&1
+                gate_off "$iface"
+                rm -f "$m"
+                guard_log "$iface: the check did not finish within $GUARD_TIMEOUT s; gate opened, serving unchecked"
+                echo "RESULT kind=guard iface=$iface action=serving reason=check-timeout"
+            else
+                echo "RESULT kind=guard iface=$iface action=none"
+            fi ;;
         down)
             gate_off "$iface"
             echo "RESULT kind=guard iface=$iface action=none" ;;
-        *) fail 1 guard bad-arguments "--event= is pre-up, check or down; or --retry" ;;
+        *) fail 1 guard bad-arguments "--event= is pre-up, check, expire or down; or --retry" ;;
     esac
 }
 
