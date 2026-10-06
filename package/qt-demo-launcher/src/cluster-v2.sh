@@ -27,10 +27,16 @@
 # override /data/cluster/qt-cluster-demo.env (the later file wins; both read
 # as data). On the A/B image the first is image content, the second survives
 # reboots and updates.
+# The DMS button in the app's control row (camera box on/off) is remembered
+# across starts in /data/cluster/dms-video-view.state, which the app writes
+# (--dms-video-view-state=) and this script turns back into --dms-video-view=
+# - only where /data/cluster is writable (the A/B image) and the app knows the
+# option. The operator's env file is never written. A reset forgets it.
 # Log: /tmp/cluster-v2.log (this script and the app; rewritten at each start).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_ENV=/data/cluster/qt-cluster-demo.env
+VIEW_STATE=/data/cluster/dms-video-view.state
 
 CHECK=0 THEME=""
 for arg in "$@"; do
@@ -126,6 +132,18 @@ fi
 # eglfs as in the unit, also when started by the launcher (which runs on
 # linuxfb and passes that on); the touch device the launcher found
 # (QT_QPA_EVDEV_TOUCHSCREEN_PARAMETERS) is inherited as it is
+# The DMS button's last choice (the app writes it; read here as data)
+if [ "$DMS_ENABLED" = 1 ] && [ -w "${VIEW_STATE%/*}" ] \
+        && grep -qa -- "dms-video-view-state" "$HOME_DIR/$BIN_REL"; then
+    ARGS="$ARGS --dms-video-view-state=$VIEW_STATE"
+    if [ -r "$VIEW_STATE" ]; then
+        case $(head -c 4 "$VIEW_STATE") in
+            on*) ARGS="$ARGS --dms-video-view=on"; log "DMS camera box: on (last choice)" ;;
+            off*) ARGS="$ARGS --dms-video-view=off"; log "DMS camera box: off (last choice)" ;;
+        esac
+    fi
+fi
+
 export QT_QPA_PLATFORM=eglfs
 export QT_QPA_EGLFS_ALWAYS_SET_MODE=1
 export QSG_RENDER_LOOP=threaded
