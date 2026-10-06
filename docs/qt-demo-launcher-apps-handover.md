@@ -19,6 +19,7 @@ The package READMEs are the reference for each app; this document is the part th
 | `disp-tester` | pattern generator (incl. `edge-ruler`), calibration flows | QML | test patterns |
 | `touch-gallery` | photo / report viewer: one-finger pan, double-tap zoom, momentum | QML | touch handling |
 | `network-manager-app` | the Network tile: interfaces, WiFi, wired port modes (client / fixed / DHCP server), ping, internet check, iperf3 | QML (Qt 5.15 inline components, no Quick Controls) + one C++ controller per section; `net-ctl.sh` (POSIX sh) the only thing that talks to NetworkManager | the on-screen keyboard and numeric pad; a change that must outlive the app (`systemd-run`); per-port internet checks |
+| `qt-cluster-demo` (separate repo) + `car-can-proxy` + `car-can-emulator` | Cluster Demo V2: the modern cluster (seven themes, FocusDrive DMS over SOME/IP) on the CAN proxy's contract (vcan0), bench vehicle on vcan1 | QML + C++, own prefix `/home/pi/qt-cluster-demo`; proxy and emulator as always-on services; started from the launcher's `cluster-v2` page by `qt-demo-launcher/src/cluster-v2.sh` | an app that lives outside br-wrapper: the tile script reproduces its systemd unit's environment |
 
 Scripts the apps drive live in **space6-architecture** `code/disptool/tools/` (`update-iocs.sh`, `update-fpga.sh`,
 installed beside `disptool` in `/home/pi/micropanel/bin` by that repo's CMake). Firmware and FPGA images and the

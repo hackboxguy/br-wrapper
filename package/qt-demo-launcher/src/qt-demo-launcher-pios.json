@@ -215,6 +215,290 @@
         "border_radius": 20
       },
       {
+        "id": "cluster-v2",
+        "enabled": true,
+        "text": "Cluster Demo V2",
+        "subtitle": "CAN proxy, seven themes",
+        "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
+        "action": "navigate",
+        "target_page": "cluster-v2",
+        "page_title": "Cluster Demo V2",
+        "position": {
+          "row": 4,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#FACC15",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F"
+      },
+      {
+        "id": "cluster-v2-analog",
+        "enabled": true,
+        "page": "cluster-v2",
+        "text": "Analog",
+        "subtitle": "Needle dials",
+        "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
+        "program": "/usr/share/qt-apps/cluster-v2.sh",
+        "available_command": "/usr/share/qt-apps/cluster-v2.sh --check",
+        "arguments": [
+          "--theme=analog"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 0,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#FACC15",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F"
+      },
+      {
+        "id": "cluster-v2-ev",
+        "enabled": true,
+        "page": "cluster-v2",
+        "text": "EV",
+        "subtitle": "EV bar gauges",
+        "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
+        "program": "/usr/share/qt-apps/cluster-v2.sh",
+        "available_command": "/usr/share/qt-apps/cluster-v2.sh --check",
+        "arguments": [
+          "--theme=ev"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 0,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#34D399",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F"
+      },
+      {
+        "id": "cluster-v2-harman",
+        "enabled": true,
+        "page": "cluster-v2",
+        "text": "Harman",
+        "subtitle": "Eco coach",
+        "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
+        "program": "/usr/share/qt-apps/cluster-v2.sh",
+        "available_command": "/usr/share/qt-apps/cluster-v2.sh --check",
+        "arguments": [
+          "--theme=harman"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 0,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#38BDF8",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F"
+      },
+      {
+        "id": "cluster-v2-tiles",
+        "enabled": true,
+        "page": "cluster-v2",
+        "text": "Tiles",
+        "subtitle": "One card per capability",
+        "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
+        "program": "/usr/share/qt-apps/cluster-v2.sh",
+        "available_command": "/usr/share/qt-apps/cluster-v2.sh --check",
+        "arguments": [
+          "--theme=tiles"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 1,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#A78BFA",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F"
+      },
+      {
+        "id": "cluster-v2-fable1",
+        "enabled": true,
+        "page": "cluster-v2",
+        "text": "Fable",
+        "subtitle": "The Horizon",
+        "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
+        "program": "/usr/share/qt-apps/cluster-v2.sh",
+        "available_command": "/usr/share/qt-apps/cluster-v2.sh --check",
+        "arguments": [
+          "--theme=fable1"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 1,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#FB923C",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F"
+      },
+      {
+        "id": "cluster-v2-atelier",
+        "enabled": true,
+        "page": "cluster-v2",
+        "text": "Atelier",
+        "subtitle": "A watchmaker's chronograph",
+        "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
+        "program": "/usr/share/qt-apps/cluster-v2.sh",
+        "available_command": "/usr/share/qt-apps/cluster-v2.sh --check",
+        "arguments": [
+          "--theme=atelier"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 1,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#E2E8F0",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F"
+      },
+      {
+        "id": "cluster-v2-neo",
+        "enabled": true,
+        "page": "cluster-v2",
+        "text": "Neo",
+        "subtitle": "A cinematic EV scene",
+        "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
+        "program": "/usr/share/qt-apps/cluster-v2.sh",
+        "available_command": "/usr/share/qt-apps/cluster-v2.sh --check",
+        "arguments": [
+          "--theme=neo"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 2,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#22D3EE",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F"
+      },
+      {
+        "id": "cluster-v2-auto",
+        "enabled": true,
+        "page": "cluster-v2",
+        "text": "Auto",
+        "subtitle": "From the vehicle's drivetrain",
+        "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
+        "program": "/usr/share/qt-apps/cluster-v2.sh",
+        "available_command": "/usr/share/qt-apps/cluster-v2.sh --check",
+        "arguments": [
+          "--theme=auto"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 2,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#F472B6",
+        "background_color": "#2C3E50",
+        "hover_color": "#1A252F"
+      },
+      {
         "id": "slideshow",
         "enabled": false,
         "text": "Slideshow",

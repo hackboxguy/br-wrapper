@@ -90,6 +90,7 @@ install(PROGRAMS
     src/dual-video.sh
     src/usb-media.sh
     src/usb-media-autostart.sh
+    src/cluster-v2.sh
     update-config-paths.sh
     update-service-paths.sh
     DESTINATION ${DATA_DIR}

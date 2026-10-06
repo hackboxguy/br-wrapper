@@ -373,6 +373,33 @@ it is pressed (0 ms with animations off), so the ripple is visible before the la
 }
 ```
 
+### Cluster Demo V2 (`cluster-v2.sh`)
+
+On the micropanel image, screen 2 carries **Cluster Demo V2** (`"action": "navigate"`,
+page `cluster-v2`) beside Network. Its page has one tile per theme of the modern cluster
+from the separate `qt-cluster-demo` repository — analog (needle dials), ev (EV bar gauges),
+harman (eco coach), tiles (one card per capability), fable1 (the Horizon), atelier (a
+watchmaker's chronograph), neo (a cinematic EV scene) — and **Auto** (the theme from the
+vehicle's drivetrain). Each tile runs `share/qt-apps/cluster-v2.sh --theme=<name>`; the old
+**Cluster Demo** tile (this repository's `package/qt-cluster-demo`) is unchanged.
+
+`cluster-v2.sh` does what the repository's `qt-cluster-demo.service` does around the app:
+it reads `systemd/qt-cluster-demo.env` of the install (`CLUSTER_ARGS`, `EXTRA_ARGS`,
+`DMS_ENABLED`, `SOMEIP_IFACE`), sets the eglfs environment and vsomeip's library path, adds
+the SOME/IP multicast route (`sudo -n ip route replace 224.0.0.0/4 dev $SOMEIP_IFACE`), runs
+the SOME/IP preflight, passes `--dms-advertise-ip=` with the SOME/IP port's own address and
+the tile's `--theme=` (over the file's), and execs the app from the install directory. A
+missing address, route or preflight is logged, never fatal: the cluster starts and its DMS
+panel waits. Log: `/tmp/cluster-v2.log`.
+
+- Install: `$CLUSTER_V2_HOME`, else `/home/pi/qt-cluster-demo`, else a `qt-cluster-demo`
+  beside the script's prefix; the binary is the unit's (`build-pi-agx/src/qt-cluster-demo`).
+- `cluster-v2.sh --check` (the tiles' `available_command`): exit 0 when the binary is there
+  and `can-proxyd.service` is active, else "Cluster V2 not installed" or "CAN proxy not
+  running".
+- Exit: tap the screen; the cluster's buttons appear top right for 3 s; **X** quits back to
+  the launcher. The launcher's `stop-app` (SIGTERM) ends it as well.
+
 ## Building
 
 ### Prerequisites
