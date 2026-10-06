@@ -399,6 +399,9 @@ panel waits. Log: `/tmp/cluster-v2.log`.
   running".
 - Exit: tap the screen; the cluster's buttons appear top right for 3 s; **X** quits back to
   the launcher. The launcher's `stop-app` (SIGTERM) ends it as well.
+- The same row's **DMS** button shows or hides the live camera box. Where `/data/cluster` is
+  writable (the A/B image), the choice is kept in `/data/cluster/dms-video-view.state` and the
+  next start begins that way; a factory reset forgets it.
 
 ## Building
 
