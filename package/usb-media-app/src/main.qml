@@ -152,8 +152,34 @@ Window {
         x: 40 * s; y: 20 * s
         width: win.width - 80 * s; height: 76 * s
 
+        // Back, top left: the same round button as the Network and System
+        // Manager apps' headers (back to the launcher, as Escape)
+        Rectangle {
+            id: backButton
+            width: 76 * s; height: width; radius: width / 2
+            anchors.verticalCenter: parent.verticalCenter
+            color: backArea.pressed ? t.cardPressed : t.card
+            border.color: t.border
+            Canvas {
+                anchors.fill: parent
+                onPaint: {
+                    var ctx = getContext("2d")
+                    ctx.reset()
+                    ctx.strokeStyle = t.text
+                    ctx.lineWidth = Math.max(2, width * 0.06)
+                    ctx.lineCap = "round"; ctx.lineJoin = "round"
+                    ctx.beginPath()
+                    ctx.moveTo(width * 0.56, height * 0.32)
+                    ctx.lineTo(width * 0.40, height * 0.5)
+                    ctx.lineTo(width * 0.56, height * 0.68)
+                    ctx.stroke()
+                }
+            }
+            MouseArea { id: backArea; anchors.fill: parent; onClicked: media.back() }
+        }
         Column {
-            anchors.left: parent.left
+            anchors.left: backButton.right; anchors.leftMargin: 28 * s
+            anchors.right: headerStatus.left; anchors.rightMargin: 24 * s
             anchors.verticalCenter: parent.verticalCenter
             Text {
                 text: "USB Media"
@@ -161,12 +187,14 @@ Window {
                 font.family: t.font; font.pixelSize: 36 * s; font.weight: Font.Bold
             }
             Text {
+                width: parent.width; elide: Text.ElideMiddle
                 text: media.root + (media.readOnly ? "   ·   read-only" : "")
                 color: t.sub
                 font.family: t.font; font.pixelSize: 18 * s
             }
         }
         Row {
+            id: headerStatus
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             spacing: 16 * s
@@ -184,6 +212,7 @@ Window {
         // SMPTE strip, as in the launcher's header
         Row {
             anchors.top: parent.bottom; anchors.topMargin: 8 * s
+            anchors.left: backButton.right; anchors.leftMargin: 28 * s
             Repeater {
                 model: ["#C0C0C0", "#C0C000", "#00C0C0", "#00C000", "#C000C0", "#C00000", "#0000C0"]
                 Rectangle { width: 36 * s; height: 4 * s; color: modelData }
@@ -408,19 +437,11 @@ Window {
             on: media.autostart
             onToggled: media.autostart = !media.autostart
         }
-        Row {
-            spacing: 12 * s
-            ActionButton {
-                width: (side.width - 12 * s) / 2
-                label: media.readOnly ? "Read-only" : media.dirty ? "Save" : "Saved"
-                enabled: !media.readOnly && media.dirty
-                onClicked: media.save()
-            }
-            ActionButton {
-                width: (side.width - 12 * s) / 2
-                label: "Back"
-                onClicked: media.back()
-            }
+        ActionButton {
+            width: side.width
+            label: media.readOnly ? "Read-only" : media.dirty ? "Save" : "Saved"
+            enabled: !media.readOnly && media.dirty
+            onClicked: media.save()
         }
         ActionButton {
             width: side.width; height: 96 * s
