@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QString>
 
+class QFileSystemWatcher;
+
 // A switch of the control row that a launcher can remember: the map behind
 // every theme (MAP, and the B key), the telltales' ghost of an unlit lamp
 // (T) and the info bar (B). Each starts from its option (--map-backdrop,
@@ -12,6 +14,11 @@
 // not at all, so a launcher can start the next run the way this one was
 // left (br-wrapper's cluster-v2.sh). Without one the choice lasts for the
 // run (the stand-alone board).
+//
+// The file is also watched: a change written by someone else (the Stream
+// Deck's keys, a script) is applied at once, so every UI controls the same
+// switch through the same file. The state's own writes do not re-trigger it
+// (the file's word equals the state); an unknown word is ignored and logged.
 class OnOffState : public QObject
 {
     Q_OBJECT
@@ -25,14 +32,20 @@ public:
     void setEnabled(bool enabled);
     Q_INVOKABLE void toggle() { setEnabled(!m_enabled); }
     QString stateFile() const { return m_stateFile; }
+    // Re-read the state file; true when it changed the state (the watcher
+    // calls it; public for the tests)
+    bool reload();
 
 signals:
     void changed();
 
 private:
     void save() const;
+    void watch();
 
     QString m_name;
     bool m_enabled;
     QString m_stateFile;
+    QFileSystemWatcher *m_watcher = nullptr;
+    QString m_lastBadWord;
 };
