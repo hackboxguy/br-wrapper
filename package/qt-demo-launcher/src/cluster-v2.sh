@@ -27,7 +27,8 @@
 # override /data/cluster/qt-cluster-demo.env (the later file wins; both read
 # as data). On the A/B image the first is image content, the second survives
 # reboots and updates.
-# The DMS button in the app's control row (camera box on/off) is remembered
+# The DMS button in the app's control row (the DMS panel: on, camera off,
+# off - written as on/off/none) is remembered
 # across starts in /data/cluster/dms-video-view.state, which the app writes
 # (--dms-video-view-state=) and this script turns back into --dms-video-view=
 # - only where /data/cluster is writable (the A/B image) and the app knows the
@@ -138,8 +139,12 @@ if [ "$DMS_ENABLED" = 1 ] && [ -w "${VIEW_STATE%/*}" ] \
     ARGS="$ARGS --dms-video-view-state=$VIEW_STATE"
     if [ -r "$VIEW_STATE" ]; then
         case $(head -c 4 "$VIEW_STATE") in
-            on*) ARGS="$ARGS --dms-video-view=on"; log "DMS camera box: on (last choice)" ;;
-            off*) ARGS="$ARGS --dms-video-view=off"; log "DMS camera box: off (last choice)" ;;
+            on*) ARGS="$ARGS --dms-video-view=on"; log "DMS panel: on (last choice)" ;;
+            off*) ARGS="$ARGS --dms-video-view=off"; log "DMS panel: camera off (last choice)" ;;
+            # the panel switched off: only a cluster that has that state
+            none*) if grep -qa -- "on, off or none" "$HOME_DIR/$BIN_REL"; then
+                       ARGS="$ARGS --dms-video-view=none"; log "DMS panel: off (last choice)"
+                   fi ;;
         esac
     fi
 fi

@@ -399,8 +399,10 @@ panel waits. Log: `/tmp/cluster-v2.log`.
   running".
 - Exit: tap the screen; the cluster's buttons appear top right for 3 s; **X** quits back to
   the launcher. The launcher's `stop-app` (SIGTERM) ends it as well.
-- The same row's **DMS** button shows or hides the live camera box. Where `/data/cluster` is
-  writable (the A/B image), the choice is kept in `/data/cluster/dms-video-view.state` and the
+- The same row's **DMS** button cycles the driver-monitoring panel: on (camera box, vitals,
+  bars; filled green) → camera off (green outline) → off (grey: no panel, the theme uses the
+  middle). The NCAP icons stay in every state. Where `/data/cluster` is writable (the A/B
+  image), the choice is kept in `/data/cluster/dms-video-view.state` (`on`/`off`/`none`) and the
   next start begins that way; a factory reset forgets it.
 
 ## Building
