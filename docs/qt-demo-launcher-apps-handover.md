@@ -255,6 +255,12 @@ flash.
   controller as absent.
 - The FPGA display-link wedge (class W, ~1 in 38 flashes): exit 6 → power cycle → rerun resumes. The GOLDEN keeps
   the display alive meanwhile.
+- The 988's port-0 bus wedged with the 988 itself answering (2026-10-07): FPGA, display MCU and brightness gone,
+  picture fine, the driver blind to it. A 988 digital reset cleared it; `hh983-serializer` now probes the FPGA and
+  does that reset itself (`bus_*` parameters, package README). Fault A (the 988 itself gone) still needs power.
+- Swapping `hh983-serializer` by hand on rig 1 (`rmmod`/`insmod`) loses the picture until a power cycle: the
+  remove's 983 digital reset, after which the DP source does not re-train. Plan a power cycle after a module test,
+  and `sync` before cutting power - a deletion on `/data` seconds earlier was lost once.
 - The first `sudo` tool run created a shared log directory root-owned; the app's own log silently failed.
 - A dry run wrote a `last-install` record that a later real fallback message would have named. Dry runs write no
   state that real runs read.

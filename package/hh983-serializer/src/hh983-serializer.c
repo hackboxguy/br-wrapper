@@ -326,6 +326,82 @@ static int link_retrain_ok_count;
 module_param(link_retrain_ok_count, int, 0444);
 MODULE_PARM_DESC(link_retrain_ok_count, "Mode 1: FPD-Link re-trains that brought the 988 back (read-only)");
 
+/* Poll backoff in fault A (2026-10-07): once the 988 itself stops answering,
+ * every poll blocks the shared back channel for ~500 ms and touch stalls
+ * (3 of 416 reads >100 ms with the 1 s poll, 0 of 585 without it).  The poll
+ * then runs every link_lost_poll_s until the 988 answers again. */
+static int link_lost_poll_s = 30;
+module_param(link_lost_poll_s, int, 0644);
+MODULE_PARM_DESC(link_lost_poll_s, "Mode 1: poll interval in seconds while the 988 is unreachable (default 30; 0 = keep poll_interval_ms)");
+
+/* 988 port-0 I2C bus recovery (mode 1), 2026-10-07.
+ *
+ * Fault B (tmp-docs/non-responsive-mcu-fpga-debug.md section 2a): the 988's
+ * own registers answer, but every device on its external port-0 bus -- the
+ * FPGA, the display MCU, the PMICs, an empty address -- times out at the
+ * 983's ~500 ms back-channel timeout instead of answering or NACKing in a few
+ * ms.  The 988 poll alone never sees it.  A 988 digital reset (register 0x01
+ * bit 0, self-clearing, registers kept) cleared it in ~2 s with the picture,
+ * touch and brightness unaffected.
+ * Re-checked on a healthy rig 1 the same day: the panel FPGA keeps "external
+ * video present" (TP status 0x03) through the reset -- its LVDS receiver drops
+ * and re-locks (LOCK_LOST sticky) -- and the owner saw the picture stay.  What
+ * does cost the picture on that rig is reloading this module: the remove's
+ * 983 digital reset, after which the DP source does not re-train.
+ *
+ * Detection: every bus_check_interval polls, only when the 988 answered in
+ * that poll, one combined read of the FPGA's VERSION register (read-only,
+ * latches nothing) -- on its 0x1E slave when it has one, which no other
+ * program addresses with a split write/read (als-dimmer reads its sensor on
+ * 0x1D with a separate pointer write and read; a probe between the two would
+ * move its pointer).  The transfer is timed inside the adapter's bus lock, so
+ * waiting behind a tool's long read does not count: an answer or a NACK in
+ * milliseconds is a healthy bus; a failure that took >= BUS_PROBE_SLOW_MS is
+ * a suspect.  bus_wedge_polls consecutive suspects (15 s at the defaults) are
+ * a wedge: digital reset of the 988, wait for its relock, 988 pass-through
+ * again, probe, and a look at whether the panel FPGA still sees video.  Bounded like the re-train: backoff 1/2/5/10/30/60 s, at most
+ * bus_reset_max resets per wedge.  The check lives inside the poll, so the
+ * update tools' poll_interval_ms=0 stops it too. */
+static int bus_recover = 1;
+module_param(bus_recover, int, 0644);
+MODULE_PARM_DESC(bus_recover, "Mode 1: 1 = watch the 988 port-0 I2C bus through the FPGA and digital-reset the 988 when it wedges (default); 0 = off");
+
+static int bus_check_interval = 5;
+module_param(bus_check_interval, int, 0644);
+MODULE_PARM_DESC(bus_check_interval, "Mode 1: probe the FPGA every N polls in which the 988 answered (default 5, i.e. every 5 s)");
+
+static int bus_wedge_polls = 3;
+module_param(bus_wedge_polls, int, 0644);
+MODULE_PARM_DESC(bus_wedge_polls, "Mode 1: consecutive timed-out FPGA probes that count as a wedged bus (default 3)");
+
+static int bus_reset_max = 5;
+module_param(bus_reset_max, int, 0644);
+MODULE_PARM_DESC(bus_reset_max, "Mode 1: maximum 988 digital resets per wedge before giving up until the FPGA answers again (default 5)");
+
+static int force_bus_reset;
+module_param(force_bus_reset, int, 0644);
+MODULE_PARM_DESC(force_bus_reset, "Mode 1: write 1 to run one 988 digital reset at the next poll (test hook; reads back 0 once done)");
+
+static int bus_probe_count;
+module_param(bus_probe_count, int, 0444);
+MODULE_PARM_DESC(bus_probe_count, "Mode 1: FPGA bus probes since load (read-only)");
+
+static int bus_probe_timeout_count;
+module_param(bus_probe_timeout_count, int, 0444);
+MODULE_PARM_DESC(bus_probe_timeout_count, "Mode 1: FPGA bus probes that timed out (read-only)");
+
+static int bus_wedge_count;
+module_param(bus_wedge_count, int, 0444);
+MODULE_PARM_DESC(bus_wedge_count, "Mode 1: 988 port-0 bus wedges detected since load (read-only)");
+
+static int bus_reset_count;
+module_param(bus_reset_count, int, 0444);
+MODULE_PARM_DESC(bus_reset_count, "Mode 1: 988 digital resets for the port-0 bus since load, forced ones included (read-only)");
+
+static int bus_reset_ok_count;
+module_param(bus_reset_ok_count, int, 0444);
+MODULE_PARM_DESC(bus_reset_ok_count, "Mode 1: 988 digital resets after which the FPGA answered (read-only)");
+
 /* HX8530 on the 984's local I2C Port 1: physical address vs host-visible alias. */
 #define OTS_TOUCH_PHYS_ADDR	0x49	/* actual 7-bit addr on the 984 Port 1 bus */
 #define OTS_TOUCH_HOST_ADDR	0x48	/* address presented to the Pi (himax DT reg) */
@@ -427,6 +503,8 @@ MODULE_PARM_DESC(link_retrain_ok_count, "Mode 1: FPD-Link re-trains that brought
 #define DES984_GPIO6_COMBINED_LOCK 0xC2 /* Mode-dependent Lock indication (default) */
 
 /* 988 Deserializer registers */
+#define DES988_RESET_CTL         0x01  /* [0] digital reset, self-clearing, registers preserved */
+#define DES988_DIGITAL_RESET     0x01
 #define DES988_I2C_CONTROL       0x04
 #define DES988_GPIO4_PIN_CTL     0x19  /* GPIO4 pin control (LOCK0 on display driver board) */
 #define DES988_GPIO6_PIN_CTL     0x1B  /* GPIO6 pin control (LOCK_DUAL on display driver board) */
@@ -485,6 +563,16 @@ struct hh983_data {
 	int fpd_attempts;            /* re-train attempts in the current loss */
 	unsigned long fpd_next_at;   /* jiffies: earliest next re-train */
 	unsigned long fpd_log_at;    /* jiffies: next "still down" log line */
+	bool fpd_unreachable;        /* the 988 itself does not answer (fault A): poll backed off */
+	/* Mode 1 988 port-0 bus check */
+	u8 bus_addr;                 /* probe target: 0 = not yet decided */
+	bool bus_new_slave;          /* bus_addr is the FPGA's page/register slave */
+	bool bus_off;                /* no FPGA answers: check off until reload */
+	int bus_polls;               /* polls since the last probe */
+	int bus_suspect;             /* consecutive timed-out probes */
+	int bus_resets;              /* resets in the current wedge */
+	bool bus_gave_up;            /* bus_reset_max reached in this wedge */
+	unsigned long bus_next_at;   /* jiffies: earliest next reset */
 };
 
 static int hh983_write_reg(struct i2c_client *client, u8 reg, u8 value)
@@ -1760,9 +1848,10 @@ static bool hh983_fpd_link_check(struct hh983_data *data)
 	}
 
 	sts0 = hh983_read_deser_quiet(client, data->deser_addr, DES988_GP_STATUS_0);
+	data->fpd_unreachable = sts0 < 0;
 	if (sts0 >= 0 && (sts0 & 0x01)) {
 		if (data->fpd_fail)
-			dev_notice(&client->dev, "FPD-Link to the 988 is back after %d polls (%d re-train attempts)\n",
+			dev_notice(&client->dev, "988 answers again after %d polls (%d re-train attempts)\n",
 				   data->fpd_fail, data->fpd_attempts);
 		data->fpd_fail = 0;
 		data->fpd_attempts = 0;
@@ -1771,14 +1860,23 @@ static bool hh983_fpd_link_check(struct hh983_data *data)
 
 	if (data->fpd_fail == 0) {
 		link_lost_count++;
-		dev_warn(&client->dev, "FPD-Link to the 988 lost (%s, loss #%d)\n",
-			 sts0 < 0 ? "988 unreachable" : "FPD4_LOCK clear", link_lost_count);
+		if (sts0 < 0)
+			dev_warn(&client->dev, "988 unreachable over the back channel (port-0 I2C block gone, class W, loss #%d); the FPD-Link and video are usually fine; a power cycle is needed\n",
+				 link_lost_count);
+		else
+			dev_warn(&client->dev, "FPD-Link to the 988 lost (FPD4_LOCK clear, loss #%d)\n",
+				 link_lost_count);
 		data->fpd_attempts = 0;
 		data->fpd_next_at = jiffies;
 		data->fpd_log_at = jiffies + 30 * HZ;
 	} else if (time_after_eq(jiffies, data->fpd_log_at)) {
-		dev_warn(&client->dev, "FPD-Link to the 988 still down (%d polls, %d re-train attempts)\n",
-			 data->fpd_fail, data->fpd_attempts);
+		if (sts0 < 0)
+			dev_warn(&client->dev, "988 still unreachable (%d polls, now every %d s; %d re-train attempts)\n",
+				 data->fpd_fail, link_lost_poll_s > 0 ? link_lost_poll_s : poll_interval_ms / 1000,
+				 data->fpd_attempts);
+		else
+			dev_warn(&client->dev, "FPD-Link to the 988 still down (%d polls, %d re-train attempts)\n",
+				 data->fpd_fail, data->fpd_attempts);
 		data->fpd_log_at = jiffies + 30 * HZ;
 	}
 	data->fpd_fail++;
@@ -1801,6 +1899,207 @@ static bool hh983_fpd_link_check(struct hh983_data *data)
 				 data->fpd_attempts);
 	}
 	return true;
+}
+
+/* The 0x1D legacy FPGA slave also exposes this page/register slave (new
+ * bitstreams); only it is probed by default, see bus_recover. */
+#define FPGA_NEW_SLAVE_ADDR	0x1E
+/* A healthy port answers or NACKs in 3-20 ms through the back channel; a
+ * wedged one fails after the 983's ~500 ms timeout. */
+#define BUS_PROBE_SLOW_MS	250
+
+enum hh983_probe { PROBE_ACK, PROBE_NACK, PROBE_TIMEOUT };
+
+/* One combined read of the FPGA's VERSION register (offset 0x00, read-only,
+ * latches nothing): [0x00] on the page/register slave, [00 00 00 00] on the
+ * legacy one, then one byte.  Timed with the adapter locked, so the time is
+ * this transaction's alone. */
+static enum hh983_probe hh983_bus_probe(struct hh983_data *data, u8 addr, bool new_slave)
+{
+	struct i2c_client *client = data->client;
+	struct i2c_adapter *adap = client->adapter;
+	u8 ptr[4] = { 0, 0, 0, 0 }, val = 0;
+	struct i2c_msg msgs[2] = {
+		{ .addr = addr, .flags = 0, .len = new_slave ? 1 : 4, .buf = ptr },
+		{ .addr = addr, .flags = I2C_M_RD, .len = 1, .buf = &val },
+	};
+	ktime_t t0;
+	s64 ms;
+	int ret;
+
+	i2c_lock_bus(adap, I2C_LOCK_ROOT_ADAPTER);
+	t0 = ktime_get();
+	ret = __i2c_transfer(adap, msgs, 2);
+	ms = ktime_ms_delta(ktime_get(), t0);
+	i2c_unlock_bus(adap, I2C_LOCK_ROOT_ADAPTER);
+
+	bus_probe_count++;
+	if (ret == 2) {
+		dev_dbg(&client->dev, "bus probe 0x%02x: 0x%02x in %lld ms\n", addr, val, ms);
+		return PROBE_ACK;
+	}
+	if (ret == -ETIMEDOUT || ms >= BUS_PROBE_SLOW_MS) {
+		bus_probe_timeout_count++;
+		dev_dbg(&client->dev, "bus probe 0x%02x: %d after %lld ms (timeout)\n", addr, ret, ms);
+		return PROBE_TIMEOUT;
+	}
+	dev_dbg(&client->dev, "bus probe 0x%02x: %d in %lld ms (NACK)\n", addr, ret, ms);
+	return PROBE_NACK;
+}
+
+/* Which slave to probe, decided on the first probe that is not a timeout:
+ * the page/register slave if it answers, else the legacy one, else none (no
+ * FPGA on this board's port 0, or a board without one: the check stops). */
+static enum hh983_probe hh983_bus_probe_fpga(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	enum hh983_probe r;
+
+	if (data->bus_addr)
+		return hh983_bus_probe(data, data->bus_addr, data->bus_new_slave);
+
+	if (fpga_addr == 0x1D) {
+		r = hh983_bus_probe(data, FPGA_NEW_SLAVE_ADDR, true);
+		if (r != PROBE_NACK) {
+			if (r == PROBE_ACK) {
+				data->bus_addr = FPGA_NEW_SLAVE_ADDR;
+				data->bus_new_slave = true;
+				dev_info(&client->dev, "988 port-0 bus check: probing the FPGA at 0x%02x every %d polls\n",
+					 data->bus_addr, bus_check_interval);
+			}
+			return r;
+		}
+	}
+	r = hh983_bus_probe(data, fpga_addr, false);
+	if (r == PROBE_ACK) {
+		data->bus_addr = fpga_addr;
+		data->bus_new_slave = false;
+		dev_info(&client->dev, "988 port-0 bus check: probing the FPGA at 0x%02x (legacy slave) every %d polls\n",
+			 data->bus_addr, bus_check_interval);
+	} else if (r == PROBE_NACK) {
+		data->bus_off = true;
+		dev_info(&client->dev, "988 port-0 bus check: no FPGA answers at 0x%02x; check off\n", fpga_addr);
+	}
+	return r;
+}
+
+/* The panel FPGA's TP status (page-0 0x23 on its page/register slave; bit 0 =
+ * external video present), or -1. */
+static int hh983_fpga_tp_status(struct hh983_data *data)
+{
+	u8 reg = 0x23, val = 0;
+	struct i2c_msg msgs[2] = {
+		{ .addr = data->bus_addr, .flags = 0, .len = 1, .buf = &reg },
+		{ .addr = data->bus_addr, .flags = I2C_M_RD, .len = 1, .buf = &val },
+	};
+
+	return i2c_transfer(data->client->adapter, msgs, 2) == 2 ? val : -1;
+}
+
+/* Digital reset of the 988 for a wedged port-0 bus.  Returns true when the
+ * FPGA answers afterwards. */
+static bool hh983_bus_reset(struct hh983_data *data, const char *why)
+{
+	struct i2c_client *client = data->client;
+	int i, tp_pre, tp, sts0 = -1;
+
+	bus_reset_count++;
+	dev_warn(&client->dev, "%s; digital reset of the 988 (#%d)\n", why, bus_reset_count);
+
+	tp_pre = data->bus_new_slave ? hh983_fpga_tp_status(data) : -1;
+	hh983_write_deser_reg(client, data->deser_addr, DES988_RESET_CTL, DES988_DIGITAL_RESET);
+	msleep(200);
+	/* Relock: FPD4_LOCK within 2 s (the video bit is checked below) */
+	for (i = 0; i < 40; i++) {
+		sts0 = hh983_read_deser_quiet(client, data->deser_addr, DES988_GP_STATUS_0);
+		if (sts0 >= 0 && (sts0 & 0x01))
+			break;
+		msleep(50);
+	}
+	if (sts0 < 0 || !(sts0 & 0x01))
+		dev_notice(&client->dev, "988 not locked 2 s after its reset (sts0=%d)\n", sts0);
+
+	/* The reset keeps the registers (pass-through measured 0xD9 after it);
+	 * written again as the re-train does, as a safety */
+	hh983_write_deser_reg(client, data->deser_addr, DES988_I2C_CONTROL, DES988_ENABLE_PASSTHROUGH);
+	data->recovery_cooldown = 3;                     /* the DTG guard does not read across the relock */
+	msleep(500);
+
+	/* The panel FPGA's own view of the video (TP status bit 0, external
+	 * video present): it stayed set through every reset on rig 1, but if a
+	 * reset ever costs the picture the log should say so */
+	tp = data->bus_new_slave ? hh983_fpga_tp_status(data) : -1;
+	if (tp >= 0 && !(tp & 0x01) && (tp_pre < 0 || (tp_pre & 0x01)))
+		dev_warn(&client->dev, "the panel FPGA sees no video after the 988 reset (TP status 0x%02x); the panel shows its test pattern\n",
+			 tp);
+
+	if (data->bus_off || hh983_bus_probe_fpga(data) == PROBE_ACK) {
+		bus_reset_ok_count++;
+		dev_notice(&client->dev, "988 port-0 bus recovered (988 STS0=0x%02x), ok count %d\n",
+			   sts0 & 0xff, bus_reset_ok_count);
+		return true;
+	}
+	return false;
+}
+
+/* The bus check, run from the poll only when the 988 answered in it. */
+static void hh983_bus_check(struct hh983_data *data)
+{
+	static const int backoff_s[] = { 1, 2, 5, 10, 30, 60 };
+	struct i2c_client *client = data->client;
+	enum hh983_probe r;
+	char why[128];
+
+	if (force_bus_reset) {
+		force_bus_reset = 0;
+		if (hh983_bus_reset(data, "force_bus_reset requested")) {
+			data->bus_suspect = 0;
+			data->bus_resets = 0;
+			data->bus_gave_up = false;
+		}
+		return;
+	}
+	if (!bus_recover || data->bus_off || fpga_addr <= 0 || fpga_addr > 0x7F)
+		return;
+	if (++data->bus_polls < max(bus_check_interval, 1))
+		return;
+	data->bus_polls = 0;
+
+	r = hh983_bus_probe_fpga(data);
+	if (r != PROBE_TIMEOUT) {
+		if (data->bus_suspect >= bus_wedge_polls || data->bus_gave_up)
+			dev_notice(&client->dev, "988 port-0 bus: the FPGA answers again (%d resets in this wedge)\n",
+				   data->bus_resets);
+		data->bus_suspect = 0;
+		data->bus_resets = 0;
+		data->bus_gave_up = false;
+		return;
+	}
+
+	if (++data->bus_suspect < max(bus_wedge_polls, 1) || data->bus_gave_up)
+		return;
+	if (data->bus_suspect == max(bus_wedge_polls, 1)) {
+		bus_wedge_count++;
+		data->bus_resets = 0;
+		data->bus_next_at = jiffies;
+	}
+	if (!time_after_eq(jiffies, data->bus_next_at))
+		return;
+
+	snprintf(why, sizeof(why),
+		 "988 port-0 I2C bus wedged (FPGA 0x%02x unreachable for %d polls, 988 answers)",
+		 data->bus_addr ? data->bus_addr : fpga_addr, data->bus_suspect);
+	if (hh983_bus_reset(data, why)) {
+		data->bus_suspect = 0;
+		data->bus_resets = 0;
+		return;
+	}
+	data->bus_next_at = jiffies + backoff_s[min_t(int, data->bus_resets, ARRAY_SIZE(backoff_s) - 1)] * HZ;
+	if (++data->bus_resets >= max(bus_reset_max, 1)) {
+		data->bus_gave_up = true;
+		dev_warn(&client->dev, "988 port-0 bus stays wedged after %d resets; power cycle needed\n",
+			 data->bus_resets);
+	}
 }
 
 /* Periodic link status monitor — detects DP input video loss/return
@@ -1904,13 +2203,22 @@ static void hh983_link_work_fn(struct work_struct *work)
 	if (hh983_fpd_link_check(data))
 		goto resched;                   /* FPD-Link down: nothing behind the 988 is reachable */
 
+	/* The 988 answered: is the bus behind it alive? */
+	hh983_bus_check(data);
+
 	if (data->link_up && data->recovery_cooldown == 0)
 		hh983_des988_check_dtg(data);
 
 resched:
-	if (poll_interval_ms > 0)
-		schedule_delayed_work(&data->link_work,
-				      msecs_to_jiffies(poll_interval_ms));
+	if (poll_interval_ms > 0) {
+		unsigned int ms = poll_interval_ms;
+
+		/* Fault A: every poll of an unreachable 988 blocks the back
+		 * channel ~500 ms; poll it rarely until it answers again */
+		if (data->fpd_unreachable && link_lost_poll_s > 0)
+			ms = max_t(unsigned int, ms, link_lost_poll_s * 1000);
+		schedule_delayed_work(&data->link_work, msecs_to_jiffies(ms));
+	}
 }
 
 /* Program one of the 983's remote-target slots.
