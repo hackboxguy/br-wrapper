@@ -41,12 +41,20 @@
 # telltale-min-dark-level, info-bar). The LD/PC choice is the app's own
 # (/data/cluster/fpga-ldpc-state.json, written and applied by the app).
 # Two displays (the Pi's two HDMI outputs both connected): the second shows
-# the same picture as the first - Qt's eglfs draws one window on one output
-# and leaves the other on the console, so the script hands Qt a KMS
-# configuration in which every further connected HDMI output clones the
-# first (/tmp/cluster-v2-kms.json). One output: nothing changes. An
-# environment that sets QT_QPA_EGLFS_KMS_CONFIG itself keeps it, and
-# KMS_MIRROR=0 in the environment files turns the mirror off.
+# the same cluster. KMS_MIRROR in the environment files:
+#   auto (default)  the app's own second window on the second output
+#                   (--mirror-screen=HDMI2), only for a binary that has the
+#                   option; an older one gets one display
+#   clone           Qt eglfs-kms's output cloning (HDMI2 clones HDMI1,
+#                   /tmp/cluster-v2-kms.json). On the Pi's two CRTCs it leaks
+#                   a GBM buffer whenever the clone's flip ends after the next
+#                   frame and freezes the clone (Qt 5.15, QEglFSKmsGbmScreen::
+#                   flip/updateFlipStatus; 10 of 10 starts measured), so this
+#                   script watches for "Could not lock GBM surface front
+#                   buffer" and restarts the cluster on one display, once
+#   off             one display (also the old KMS_MIRROR=0; 1 is auto)
+# One output: nothing changes. An environment that sets
+# QT_QPA_EGLFS_KMS_CONFIG itself keeps it (no clone file is written).
 # Log: /tmp/cluster-v2.log (this script and the app; rewritten at each start).
 # (CLUSTER_V2_DATA_DIR, CLUSTER_V2_LOG and CLUSTER_V2_DRM move /data/cluster,
 # the log and /sys/class/drm for the tests.)
@@ -101,7 +109,7 @@ read_env() {
         esac
     done < "$1"
 }
-CLUSTER_ARGS="--source=proxy --contract-if=vcan0" EXTRA_ARGS="" DMS_ENABLED=0 SOMEIP_IFACE=eth0 KMS_MIRROR=1
+CLUSTER_ARGS="--source=proxy --contract-if=vcan0" EXTRA_ARGS="" DMS_ENABLED=0 SOMEIP_IFACE=eth0 KMS_MIRROR=auto
 ENV_FILE="$HOME_DIR/systemd/qt-cluster-demo.env"
 if [ -r "$ENV_FILE" ]; then
     read_env "$ENV_FILE"
@@ -187,7 +195,10 @@ export QT_QPA_EGLFS_ALWAYS_SET_MODE=1
 
 # Mirror onto a second display: the connected HDMI outputs in DRM's order
 # (HDMI-A-1, HDMI-A-2), named as Qt names them (HDMI1, HDMI2)
-if [ "$KMS_MIRROR" != 0 ] && [ -z "${QT_QPA_EGLFS_KMS_CONFIG:-}" ]; then
+case $KMS_MIRROR in 0|off) KMS_MIRROR=off ;; 1|on|auto|window) KMS_MIRROR=auto ;; clone) ;;
+    *) log "KMS_MIRROR=$KMS_MIRROR unknown: auto"; KMS_MIRROR=auto ;; esac
+CLONE=0
+if [ "$KMS_MIRROR" != off ]; then
     outputs=""
     for st in "${CLUSTER_V2_DRM:-/sys/class/drm}"/card*-HDMI-A-*/status; do
         [ -r "$st" ] && [ "$(cat "$st")" = connected ] || continue
@@ -197,12 +208,22 @@ if [ "$KMS_MIRROR" != 0 ] && [ -z "${QT_QPA_EGLFS_KMS_CONFIG:-}" ]; then
     set -- $outputs
     if [ $# -ge 2 ]; then
         first=$1; shift
-        kms=/tmp/cluster-v2-kms.json
-        { printf '{ "outputs": ['; sep=""
-          for o in "$@"; do printf '%s { "name": "%s", "clones": "%s" }' "$sep" "$o" "$first"; sep=","; done
-          printf ' ] }\n'; } > "$kms"
-        export QT_QPA_EGLFS_KMS_CONFIG="$kms"
-        log "displays: $first, mirrored on $*"
+        if [ "$KMS_MIRROR" = auto ]; then
+            if grep -qa -- "mirror-screen" "$HOME_DIR/$BIN_REL"; then
+                ARGS="$ARGS --mirror-screen=$1"
+                log "displays: $first, and a second window on $1"
+            else
+                log "displays: $first only (this cluster has no --mirror-screen)"
+            fi
+        elif [ -z "${QT_QPA_EGLFS_KMS_CONFIG:-}" ]; then
+            kms=/tmp/cluster-v2-kms.json
+            { printf '{ "outputs": ['; sep=""
+              for o in "$@"; do printf '%s { "name": "%s", "clones": "%s" }' "$sep" "$o" "$first"; sep=","; done
+              printf ' ] }\n'; } > "$kms"
+            export QT_QPA_EGLFS_KMS_CONFIG="$kms"
+            CLONE=1
+            log "displays: $first, cloned on $* (KMS_MIRROR=clone, watched)"
+        fi
     fi
 fi
 export QSG_RENDER_LOOP=threaded
@@ -214,5 +235,27 @@ export LD_LIBRARY_PATH="$VSOMEIP_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 # current app resolves it beside the IDs file from any directory
 cd "$HOME_DIR" || unavailable "cannot enter $HOME_DIR"
 log "exec $HOME_DIR/$BIN_REL$ARGS"
+if [ "$CLONE" = 1 ]; then
+    # Qt's clone, watched: the app runs as this script's child (the
+    # launcher's SIGTERM is passed on); a clone whose GBM front buffer can no
+    # longer be locked has frozen for good - restart on one display, once
+    # shellcheck disable=SC2086
+    "$HOME_DIR/$BIN_REL" $ARGS &
+    pid=$!
+    trap 'kill -TERM "$pid" 2>/dev/null; wait "$pid"; exit 143' TERM INT HUP
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep "${CLUSTER_V2_WATCH_S:-1}"
+        if [ "$(grep -c "Could not lock GBM surface front buffer" "$LOG" 2>/dev/null)" -ge 10 ]; then
+            kill -TERM "$pid" 2>/dev/null; wait "$pid"
+            trap - TERM INT HUP
+            log "mirror: Qt's output clone froze (GBM front buffer); restarting on one display"
+            unset QT_QPA_EGLFS_KMS_CONFIG
+            # shellcheck disable=SC2086
+            exec "$HOME_DIR/$BIN_REL" $ARGS
+        fi
+    done
+    wait "$pid"
+    exit $?
+fi
 # shellcheck disable=SC2086 # ARGS is a word list, as the unit's $CLUSTER_ARGS
 exec "$HOME_DIR/$BIN_REL" $ARGS

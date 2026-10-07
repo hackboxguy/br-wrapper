@@ -411,13 +411,14 @@ panel waits. Log: `/tmp/cluster-v2.log`.
   `classic-telltale-min-dark-level.state` and `classic-info-bar.state`. **LD/PC** is kept by
   the apps themselves in `fpga-ldpc-state.json` (shared by every app with LD/PC buttons) and
   written into the FPGA at each start. A factory reset forgets all of them.
-- Two displays (both HDMI outputs connected): the second shows the same picture as the first.
-  Qt draws its one window on the first output only, so `cluster-v2.sh` gives it a KMS
-  configuration in which every further connected HDMI output clones the first
-  (`/tmp/cluster-v2-kms.json`, `QT_QPA_EGLFS_KMS_CONFIG`; same size needed - the outputs here
-  are both 1920x720). One display: nothing changes. `KMS_MIRROR=0` in
-  `/data/cluster/qt-cluster-demo.env` turns it off; a `QT_QPA_EGLFS_KMS_CONFIG` in the
-  environment is kept. Touch and the control row are the first display's.
+- Two displays (both HDMI outputs connected): the second shows the same cluster, as a second
+  window of the app on that output (`--mirror-screen=HDMI2`; `KMS_MIRROR=auto`, the default).
+  Qt's own output cloning froze the second output on every start on the Pi (a GBM buffer
+  leaked whenever the clone's page flip ended after the next frame); it is kept only as
+  `KMS_MIRROR=clone`, watched: when "Could not lock GBM surface front buffer" repeats, the
+  script restarts the cluster on one display and logs one line. `KMS_MIRROR=off` (or `0`): one
+  display. Set in `/data/cluster/qt-cluster-demo.env`. Touch and the control row are the
+  first display's. An older cluster without `--mirror-screen` gets one display.
 - Host test: `sh tests/test-cluster-v2-state.sh` (the remembered states - DMS, MAP, T, B -
   and the mirror, against a fake install).
 

@@ -23,7 +23,7 @@ fake_binary() {
     {
         echo '#!/bin/sh'
         echo "echo \"\$*\" > '$T/args'; echo \"\${QT_QPA_EGLFS_KMS_CONFIG:-}\" > '$T/kmsenv'"
-        [ "$1" = yes ] && echo '# map-backdrop-state telltale-min-dark-level-state info-bar-state dms-video-view-state on, off or none'
+        [ "$1" = yes ] && echo '# map-backdrop-state telltale-min-dark-level-state info-bar-state dms-video-view-state on, off or none mirror-screen'
     } > "$T/home/bin/qt-cluster-demo"
     chmod +x "$T/home/bin/qt-cluster-demo"
 }
@@ -69,20 +69,45 @@ echo 'DMS_ENABLED=1' >> "$T/home/systemd/qt-cluster-demo.env"
 echo none > "$T/data/dms-video-view.state"; echo off > "$T/data/map-backdrop.state"; run
 check "both remembered" 'grep -q -- "--dms-video-view=none" "$T/args" && grep -q -- "--map-backdrop=off" "$T/args"'
 
-# Two displays: the second mirrors the first; one: nothing
+# Two displays: the app's second window (KMS_MIRROR=auto); one: nothing
 mkdir -p "$T/drm/card1-HDMI-A-1" "$T/drm/card1-HDMI-A-2"
 echo connected > "$T/drm/card1-HDMI-A-1/status"; echo disconnected > "$T/drm/card1-HDMI-A-2/status"
 run
-check "one display: no KMS configuration" '[ ! -s "$T/kmsenv" ] || [ "$(cat "$T/kmsenv")" = "" ]'
+check "one display: no mirror, no KMS configuration" '! grep -q -- "--mirror-screen" "$T/args" && [ "$(cat "$T/kmsenv")" = "" ]'
 echo connected > "$T/drm/card1-HDMI-A-2/status"; run
-check "two displays: HDMI2 clones HDMI1" 'grep -q "\"name\": \"HDMI2\", \"clones\": \"HDMI1\"" "$(cat "$T/kmsenv")"'
-check "the configuration is JSON" 'python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$(cat "$T/kmsenv")"'
-check "the log says so" 'grep -q "displays: HDMI1, mirrored on HDMI2" "$T/log"'
+check "two displays: a second window on HDMI2" 'grep -q -- "--mirror-screen=HDMI2" "$T/args" && [ "$(cat "$T/kmsenv")" = "" ]'
+check "  the log says so" 'grep -q "displays: HDMI1, and a second window on HDMI2" "$T/log"'
+fake_binary no; run; fake_binary yes
+check "an older cluster: one display, no clone" '! grep -q -- "--mirror-screen" "$T/args" && [ "$(cat "$T/kmsenv")" = "" ] && grep -q "has no --mirror-screen" "$T/log"'
 echo 'KMS_MIRROR=0' >> "$T/home/systemd/qt-cluster-demo.env"; run
-check "KMS_MIRROR=0: no mirror" '[ "$(cat "$T/kmsenv")" = "" ]'
+check "KMS_MIRROR=0: one display" '! grep -q -- "--mirror-screen" "$T/args" && [ "$(cat "$T/kmsenv")" = "" ]'
 sed -i '/KMS_MIRROR/d' "$T/home/systemd/qt-cluster-demo.env"
+
+# KMS_MIRROR=clone: Qt's clone, watched. The fake app, run with the clone,
+# reports the frozen clone's lock failures and keeps running; the script
+# must stop it and start it again on one display, once, with one log line
+echo 'KMS_MIRROR=clone' >> "$T/home/systemd/qt-cluster-demo.env"
+cat > "$T/home/bin/qt-cluster-demo" <<EOF
+#!/bin/sh
+# mirror-screen (the option text the script looks for)
+echo "\$*" > '$T/args'; echo "\${QT_QPA_EGLFS_KMS_CONFIG:-}" >> '$T/kmsenv'
+if [ -n "\${QT_QPA_EGLFS_KMS_CONFIG:-}" ]; then
+    grep -q '"name": "HDMI2", "clones": "HDMI1"' "\$QT_QPA_EGLFS_KMS_CONFIG" && echo clone-config-ok >> '$T/kmsenv'
+    i=0; while [ \$i -lt 40 ]; do echo "Could not lock GBM surface front buffer!"; i=\$((i + 1)); sleep 0.05; done
+    sleep 30
+fi
+EOF
+chmod +x "$T/home/bin/qt-cluster-demo"
+rm -f "$T/kmsenv"; CLUSTER_V2_WATCH_S=0.2 run
+check "clone: Qt's clone configuration first" 'grep -q clone-config-ok "$T/kmsenv"'
+check "  restarted once, on one display" '[ "$(sed -n 3p "$T/kmsenv")" = "" ] && [ "$(wc -l < "$T/kmsenv")" = 3 ]'
+check "  one line says so" '[ "$(grep -c "mirror: Qt.s output clone froze" "$T/log")" = 1 ]'
+check "  no clone option to the app" '! grep -q -- "--mirror-screen" "$T/args"'
+sed -i '/KMS_MIRROR/d' "$T/home/systemd/qt-cluster-demo.env"; fake_binary yes
+echo 'KMS_MIRROR=clone' >> "$T/home/systemd/qt-cluster-demo.env"
 QT_QPA_EGLFS_KMS_CONFIG=/etc/own.json run
 check "an operator's own KMS configuration is kept" '[ "$(cat "$T/kmsenv")" = /etc/own.json ]'
+sed -i '/KMS_MIRROR/d' "$T/home/systemd/qt-cluster-demo.env"
 
 echo "test-cluster-v2-state: $pass passed, $fail failed"
 [ "$fail" = 0 ]
