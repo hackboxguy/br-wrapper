@@ -1,6 +1,7 @@
 #!/bin/sh
 # shellcheck disable=SC2016 # the checks are eval'd strings, expanded when run
-# Host test for cluster-v2.sh's remembered states: the DMS panel and the map.
+# Host test for cluster-v2.sh's remembered states (the DMS panel, MAP, T, B)
+# and the mirror onto a second display.
 # Runs the script against a fake install whose "binary" records its
 # arguments, with systemctl and sudo stubbed and the data directory and log
 # moved into a temporary directory. Run: sh tests/test-cluster-v2-state.sh
@@ -22,7 +23,7 @@ fake_binary() {
     {
         echo '#!/bin/sh'
         echo "echo \"\$*\" > '$T/args'; echo \"\${QT_QPA_EGLFS_KMS_CONFIG:-}\" > '$T/kmsenv'"
-        [ "$1" = yes ] && echo '# map-backdrop-state dms-video-view-state on, off or none'
+        [ "$1" = yes ] && echo '# map-backdrop-state telltale-min-dark-level-state info-bar-state dms-video-view-state on, off or none'
     } > "$T/home/bin/qt-cluster-demo"
     chmod +x "$T/home/bin/qt-cluster-demo"
 }
@@ -32,27 +33,36 @@ run() { rm -f "$T/args" "$T/kmsenv"; PATH="$T/stub:$PATH" CLUSTER_V2_HOME="$T/ho
 fake_binary yes
 run
 check "no map state file: the env's choice, the state file passed" \
-    'grep -q -- "--map-backdrop=on --theme=analog --map-backdrop-state=$T/data/map-backdrop.state$" "$T/args"'
+    'grep -q -- "--map-backdrop=on --theme=analog --map-backdrop-state=$T/data/map-backdrop.state --telltale" "$T/args"'
 
 echo off > "$T/data/map-backdrop.state"; run
 check "map off remembered: --map-backdrop=off after the env's" \
-    'grep -q -- "--map-backdrop-state=$T/data/map-backdrop.state --map-backdrop=off$" "$T/args"'
+    'grep -q -- "--map-backdrop-state=$T/data/map-backdrop.state --map-backdrop=off --telltale" "$T/args"'
 check "the log says so" 'grep -q "map: off (last choice)" "$T/log"'
 
 echo on > "$T/data/map-backdrop.state"; run
-check "map on remembered" 'grep -q -- "--map-backdrop=on$" "$T/args"'
+check "map on remembered" 'grep -q -- "--map-backdrop-state=$T/data/map-backdrop.state --map-backdrop=on " "$T/args"'
 
 echo junk > "$T/data/map-backdrop.state"; run
 check "junk in the file: ignored, the env's choice stays" \
-    'grep -q -- "--map-backdrop-state=$T/data/map-backdrop.state$" "$T/args"'
+    'grep -q -- "--map-backdrop-state=$T/data/map-backdrop.state --telltale" "$T/args"'
 
 echo off > "$T/data/map-backdrop.state"; fake_binary no; run
-check "a binary without the option gets neither" '! grep -q -- "map-backdrop-state\|--map-backdrop=off" "$T/args"'
+check "a binary without the options gets none of them" '! grep -q -- "-state=\|--map-backdrop=off" "$T/args"'
 
 fake_binary yes; chmod a-w "$T/data"; run; chmod u+w "$T/data"
 if [ "$(id -u)" != 0 ]; then
-    check "a read-only data directory: nothing passed" '! grep -q -- "map-backdrop-state" "$T/args"'
+    check "a read-only data directory: nothing passed" '! grep -q -- "-state=" "$T/args"'
 fi
+
+# T and B: their own files, passed back as their options
+rm -f "$T/data/map-backdrop.state"
+run
+check "T and B: their state files passed" 'grep -q -- "--telltale-min-dark-level-state=$T/data/telltale-min-dark-level.state --info-bar-state=$T/data/info-bar.state$" "$T/args"'
+echo on > "$T/data/telltale-min-dark-level.state"; echo off > "$T/data/info-bar.state"; run
+check "T on and B off remembered" 'grep -q -- "--telltale-min-dark-level=on --info-bar-state=$T/data/info-bar.state --info-bar=off$" "$T/args"'
+check "the log says so" 'grep -q "telltale ghost: on (last choice)" "$T/log" && grep -q "info bar: off (last choice)" "$T/log"'
+rm -f "$T/data/telltale-min-dark-level.state" "$T/data/info-bar.state"
 
 # The DMS panel's state (only with DMS_ENABLED=1) next to the map's
 echo 'DMS_ENABLED=1' >> "$T/home/systemd/qt-cluster-demo.env"

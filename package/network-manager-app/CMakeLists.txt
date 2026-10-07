@@ -65,6 +65,12 @@ set(NET_CTL "${CMAKE_INSTALL_FULL_BINDIR}/net-ctl.sh")
 configure_file(src/90-net-ctl-guard.in ${CMAKE_CURRENT_BINARY_DIR}/90-net-ctl-guard @ONLY)
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/90-net-ctl-guard
         DESTINATION ${CMAKE_INSTALL_DATADIR}/network-manager-app)
+# The WiFi switch's restore unit, likewise a template the board's image hook
+# installs (into /etc/systemd/system) with this install's net-ctl.sh
+configure_file(src/micropanel-wifi-radio-restore.service.in
+               ${CMAKE_CURRENT_BINARY_DIR}/micropanel-wifi-radio-restore.service @ONLY)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/micropanel-wifi-radio-restore.service
+        DESTINATION ${CMAKE_INSTALL_DATADIR}/network-manager-app)
 
 message(STATUS "network-manager-app: configured")
 message(STATUS "  Install binary + net-ctl.sh, net-dhcp-probe.py, net-badge.sh to: ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_BINDIR}")

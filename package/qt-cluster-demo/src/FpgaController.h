@@ -6,14 +6,23 @@
 #include <QString>
 #include <cstdint>
 
-// Auto-detects new (0x1E) and legacy (0x1D) FPGA LD/PC transports. Legacy
-// registers are write-only; the last requested state is retained in
-// /tmp/fpga-ldpc-state.json for app restarts within the current system boot.
+// Auto-detects new (0x1E) and legacy (0x1D) FPGA LD/PC transports. The last
+// state the user set is kept in /data/cluster/fpga-ldpc-state.json where
+// /data/cluster is a writable directory (the micropanel A/B image: it
+// survives power cycles and updates, a factory reset forgets it), else in
+// /tmp/fpga-ldpc-state.json (this boot only: the stand-alone board). Every
+// app with LD/PC buttons shares the file (see below; Display Settings has its
+// own controller with the same file and the same rules). The FPGA forgets LD/PC at power loss, so the
+// saved state is written to it whenever the controller (re)finds the FPGA;
+// no file, nothing is written and the FPGA keeps its power-on default (both
+// on). Legacy registers are write-only, so there the file is also what the
+// buttons show; on the new FPGA the registers' readback is shown.
 //
-// One implementation, two copies: br-wrapper/package/qt-cluster-demo/src/
-// (the original cluster) and qt-cluster-demo/src/ (Cluster Demo V2) carry
-// this file and FpgaController.cpp byte for byte; the two apps live in
-// separate repositories and build trees. Change both or neither.
+// One implementation, four copies, byte for byte (this file and
+// FpgaController.cpp): qt-cluster-demo/src/ (Cluster Demo V2) and, in
+// br-wrapper/package/, qt-cluster-demo/src/ (the original cluster),
+// touch-gallery/src/ and disp-tester/src/. The apps live in separate
+// repositories and build trees. Change all of them or none.
 class FpgaController : public QObject
 {
     Q_OBJECT
@@ -56,8 +65,10 @@ private:
     bool writeNew(int fd, uint8_t reg, const uint8_t *data, int len);
     bool readLegacy(int fd, uint8_t reg, uint8_t *data, int len);
     bool writeLegacy(int fd, uint8_t reg, const uint8_t *data, int len);
+    static QString stateFilePath();
     bool loadLegacyState(bool *ld, bool *pc) const;
     void saveLegacyState() const;
+    void applySavedState();
     void updateConnected(bool connected);
     QString m_i2cBus;
     QString m_protocolOverride;

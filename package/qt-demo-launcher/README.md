@@ -405,7 +405,12 @@ panel waits. Log: `/tmp/cluster-v2.log`.
   image), the choice is kept in `/data/cluster/dms-video-view.state` (`on`/`off`/`none`) and the
   next start begins that way; a factory reset forgets it.
 - The **MAP** button switches the map behind every theme (lit while it shows); kept the same
-  way in `/data/cluster/map-backdrop.state` (`on`/`off`), with or without the DMS.
+  way in `/data/cluster/map-backdrop.state` (`on`/`off`), with or without the DMS. So are
+  **T** (`telltale-min-dark-level.state`) and **B** (the info bar, `info-bar.state`). The
+  original Cluster Demo's T and B are kept by `cluster-launcher.sh` in
+  `classic-telltale-min-dark-level.state` and `classic-info-bar.state`. **LD/PC** is kept by
+  the apps themselves in `fpga-ldpc-state.json` (shared by every app with LD/PC buttons) and
+  written into the FPGA at each start. A factory reset forgets all of them.
 - Two displays (both HDMI outputs connected): the second shows the same picture as the first.
   Qt draws its one window on the first output only, so `cluster-v2.sh` gives it a KMS
   configuration in which every further connected HDMI output clones the first
@@ -413,8 +418,8 @@ panel waits. Log: `/tmp/cluster-v2.log`.
   are both 1920x720). One display: nothing changes. `KMS_MIRROR=0` in
   `/data/cluster/qt-cluster-demo.env` turns it off; a `QT_QPA_EGLFS_KMS_CONFIG` in the
   environment is kept. Touch and the control row are the first display's.
-- Host test: `sh tests/test-cluster-v2-state.sh` (the remembered states and the mirror, against
-  a fake install).
+- Host test: `sh tests/test-cluster-v2-state.sh` (the remembered states - DMS, MAP, T, B -
+  and the mirror, against a fake install).
 
 ## Building
 

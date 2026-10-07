@@ -20,8 +20,9 @@ Window {
 
     // Performance: detect high-res displays (fullHD or larger)
     property bool hiResDisplay: (Screen.width * Screen.height) >= (1920 * 1080)
-    property bool telltaleMinDarkLevelEnabled: true
-    property bool bottomBarEnabled: true
+    // T and B: OnOffState objects, remembered by cluster-launcher.sh
+    readonly property bool telltaleMinDarkLevelEnabled: telltaleDarkLevel.enabled
+    readonly property bool bottomBarEnabled: infoBar.enabled
 
     // Telltale row (top)
     TelltaleRow {
@@ -118,8 +119,8 @@ Window {
         z: 100
         minDarkLevelEnabled: root.telltaleMinDarkLevelEnabled
         bottomBarEnabled: root.bottomBarEnabled
-        onMinDarkLevelToggled: root.telltaleMinDarkLevelEnabled = !root.telltaleMinDarkLevelEnabled
-        onBottomBarToggled: root.bottomBarEnabled = !root.bottomBarEnabled
+        onMinDarkLevelToggled: telltaleDarkLevel.toggle()
+        onBottomBarToggled: infoBar.toggle()
     }
 
     // Escape key to quit (for keyboard-attached setups)

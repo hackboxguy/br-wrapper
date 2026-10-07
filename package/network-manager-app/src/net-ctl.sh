@@ -31,7 +31,15 @@
 #   wifi-disconnect                 disconnects the WiFi device
 #   wifi-forget --ssid=S            deletes the saved profile(s) for S
 #   wifi-autoconnect --ssid=S --on|--off
-#   wifi-radio --on|--off           --on also unblocks rfkill and sets the country if unset
+#   wifi-radio --on|--off           --on also unblocks rfkill and sets the country if unset;
+#                                   the choice is kept in /data/network/wifi-radio.state
+#                                   where that directory exists (the A/B image)
+#   wifi-radio-restore              (root, at boot BEFORE NetworkManager starts: the
+#                                   micropanel-wifi-radio-restore unit) a kept "off" goes
+#                                   into NetworkManager's state file (WirelessEnabled=false),
+#                                   so NetworkManager starts with WiFi off; anything else
+#                                   (no file, "on") leaves the image's default.
+#                                   RESULT kind=radio-restore wifi=off|default
 #   wired-set --iface=IF --mode=client
 #   wired-set --iface=IF --mode=static --ip=A --prefix=N [--gateway=G] [--dns=D[,D]]
 #   wired-set --iface=IF --mode=server --ip=A [--prefix=24]
@@ -84,7 +92,9 @@
 # (/run/net-ctl-guard), NET_CTL_NOTICE_FILE (/tmp/micropanel-notice),
 # NET_CTL_GUARD_INLINE=1 (the guard's check without systemd-run),
 # NET_CTL_GUARD_TIMEOUT (30 s: an undecided check has failed), NET_CTL_PID_DIR
-# (/run: NetworkManager's nm-dnsmasq-<port>.pid).
+# (/run: NetworkManager's nm-dnsmasq-<port>.pid), NET_CTL_RADIO_STATE
+# (/data/network/wifi-radio.state), NET_CTL_NM_STATE
+# (/var/lib/NetworkManager/NetworkManager.state).
 
 # nft, iw and rfkill live in /usr/sbin, which is not in pi's non-login PATH.
 # Appended, not prepended: on merged-/usr hosts /usr/sbin also holds nmcli, and
@@ -107,6 +117,13 @@ DROPIN=$SHARED_DIR/90-micropanel-no-gateway.conf
 # need the port's dnsmasq restarted, i.e. the port re-activated
 RES_DROPIN=$SHARED_DIR/91-micropanel-reservations.conf
 PID_DIR=${NET_CTL_PID_DIR:-/run}
+# The WiFi switch, as the user left it: on the A/B image /var is rebuilt from
+# the read-only root at every boot, so NetworkManager's own memory of it
+# (WirelessEnabled in its state file) does not last; this file on /data does,
+# and the restore unit puts it back before NetworkManager starts. A factory
+# reset wipes it: the image's default (WiFi on) again.
+RADIO_STATE=${NET_CTL_RADIO_STATE:-/data/network/wifi-radio.state}
+NM_STATE=${NET_CTL_NM_STATE:-/var/lib/NetworkManager/NetworkManager.state}
 PROBE=${NET_CTL_PROBE:-$(dirname "$(readlink -f "$0")")/net-dhcp-probe.py}
 INET_TARGETS=${NET_CTL_INET_TARGETS:-1.1.1.1 8.8.8.8}
 # The internet check (Tools) asks the port's DNS server for CHECK_NAME and
@@ -503,9 +520,14 @@ cmd_status() {
     # (plan 5.4) set cfg80211's regulatory domain; without them it starts off
     wifiboot=off
     grep -qs 'ieee80211_regdom=' "$MODPROBE_DIR"/*.conf && wifiboot=on
+    # Is the switch kept across a restart? Where the state's directory exists
+    # (the A/B image's /data), wifi-radio writes it and the boot restores it
+    wifikept=0
+    [ -d "${RADIO_STATE%/*}" ] && wifikept=1
     {
         kv internet "$internet"; kv via "$via"; kv defaultdev "$defdev"; kv connectivity "$conn"
         kv wifi "$radio"; kv country "$country"; kv volatile "$volatile"; kv wifiboot "$wifiboot"
+        kv wifikept "$wifikept"
     } | emit summary
 }
 
@@ -929,6 +951,46 @@ cmd_wifi_autoconnect() {
     { kv ssid "$ssid"; kv ok 1; kv autoconnect "$([ "$value" = yes ] && echo 1 || echo 0)"; } | emit autoconnect
 }
 
+# The switch's state, whole or not at all (root; the directory is the
+# skeleton's). No directory: nothing to keep (a writable root keeps
+# NetworkManager's own state). A failure costs the memory, not the switch.
+save_radio() { # on|off
+    [ -d "${RADIO_STATE%/*}" ] || return 0
+    tmp="$RADIO_STATE.tmp.$$"
+    if printf '%s\n' "$1" > "$tmp" && mv -f "$tmp" "$RADIO_STATE"; then
+        sync "$RADIO_STATE" 2>/dev/null
+    else
+        rm -f "$tmp"; notice "could not keep the WiFi switch in $RADIO_STATE"
+    fi
+}
+
+# At boot, before NetworkManager: a kept "off" becomes WirelessEnabled=false
+# in NetworkManager's (volatile) state file, which it reads at start
+cmd_wifi_radio_restore() {
+    saved=$(head -c 3 "$RADIO_STATE" 2>/dev/null)
+    case $saved in
+        off*) ;;
+        *) echo "RESULT kind=radio-restore ok=1 wifi=default"; exit 0 ;;
+    esac
+    if [ "$dry_run" = 1 ]; then dry_note "WirelessEnabled=false in $NM_STATE"; echo "RESULT kind=radio-restore ok=1 wifi=off dryrun=1"; exit 0; fi
+    mkdir -p "${NM_STATE%/*}" || fail 2 radio-restore failed "cannot create ${NM_STATE%/*}"
+    tmp="$NM_STATE.tmp.$$"
+    if [ -s "$NM_STATE" ]; then
+        awk 'BEGIN { done = 0 }
+             /^\[/ { if (sect == "main" && !done) { print "WirelessEnabled=false"; done = 1 }
+                     sect = ($0 == "[main]") ? "main" : "other" }
+             sect == "main" && /^WirelessEnabled=/ { if (!done) print "WirelessEnabled=false"; done = 1; next }
+             { print }
+             END { if (!done) { if (sect != "main") print "[main]"; print "WirelessEnabled=false" } }' \
+            "$NM_STATE" > "$tmp" || { rm -f "$tmp"; fail 2 radio-restore failed "cannot write $NM_STATE"; }
+    else
+        printf '[main]\nWirelessEnabled=false\n' > "$tmp" || fail 2 radio-restore failed "cannot write $NM_STATE"
+    fi
+    mv -f "$tmp" "$NM_STATE" || { rm -f "$tmp"; fail 2 radio-restore failed "cannot write $NM_STATE"; }
+    journal "WiFi kept off: WirelessEnabled=false"
+    echo "RESULT kind=radio-restore ok=1 wifi=off"
+}
+
 cmd_wifi_radio() {
     need_nm
     [ -n "$opt_onoff" ] || fail 1 radio bad-arguments "--on or --off is required"
@@ -937,6 +999,7 @@ cmd_wifi_radio() {
     if [ "$opt_onoff" = off ]; then
         if [ "$dry_run" = 1 ]; then dry_note "nmcli radio wifi off"; echo "RESULT kind=radio ok=1 wifi=off dryrun=1"; exit 0; fi
         out=$(nmcli radio wifi off 2>&1) || fail 2 radio failed "$out"
+        save_radio off
         echo "RESULT kind=radio ok=1 wifi=off"
         exit 0
     fi
@@ -948,6 +1011,7 @@ cmd_wifi_radio() {
     fi
     rfkill unblock wifi 2>/dev/null
     out=$(nmcli radio wifi on 2>&1) || fail 2 radio failed "$out"
+    save_radio on
     if [ -z "$country" ] || [ "$country" = 00 ]; then
         iw reg set "$COUNTRY" 2>/dev/null && country=$COUNTRY
     fi
@@ -1755,6 +1819,7 @@ case $cmd in
     wifi-forget) cmd_wifi_forget ;;
     wifi-autoconnect) cmd_wifi_autoconnect ;;
     wifi-radio) cmd_wifi_radio ;;
+    wifi-radio-restore) cmd_wifi_radio_restore ;;
     wired-set) cmd_wired_set ;;
     dhcp-probe) cmd_dhcp_probe ;;
     dhcp-guard) cmd_dhcp_guard ;;

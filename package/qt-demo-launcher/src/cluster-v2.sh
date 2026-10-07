@@ -33,9 +33,13 @@
 # (--dms-video-view-state=) and this script turns back into --dms-video-view=
 # - only where /data/cluster is writable (the A/B image) and the app knows the
 # option. The operator's env file is never written. A reset forgets it.
-# The MAP button (the map behind every theme, on/off) is remembered the same
-# way in /data/cluster/map-backdrop.state (--map-backdrop-state= /
-# --map-backdrop=), with or without the DMS.
+# The row's on/off switches are remembered the same way, with or without
+# the DMS, one file each: MAP (the map behind every theme) in
+# map-backdrop.state, T (the telltales' ghost) in telltale-min-dark-level.state,
+# B (the info bar) in info-bar.state - written by the app through
+# --<option>-state= and passed back as --<option>= (map-backdrop,
+# telltale-min-dark-level, info-bar). The LD/PC choice is the app's own
+# (/data/cluster/fpga-ldpc-state.json, written and applied by the app).
 # Two displays (the Pi's two HDMI outputs both connected): the second shows
 # the same picture as the first - Qt's eglfs draws one window on one output
 # and leaves the other on the console, so the script hands Qt a KMS
@@ -51,7 +55,6 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR=${CLUSTER_V2_DATA_DIR:-/data/cluster}
 DATA_ENV=$DATA_DIR/qt-cluster-demo.env
 VIEW_STATE=$DATA_DIR/dms-video-view.state
-MAP_STATE=$DATA_DIR/map-backdrop.state
 
 CHECK=0 THEME=""
 for arg in "$@"; do
@@ -164,16 +167,20 @@ if [ "$DMS_ENABLED" = 1 ] && [ -w "${VIEW_STATE%/*}" ] \
     fi
 fi
 
-# The MAP button's last choice, likewise; the map is not part of the DMS
-if [ -w "${MAP_STATE%/*}" ] && grep -qa -- "map-backdrop-state" "$HOME_DIR/$BIN_REL"; then
-    ARGS="$ARGS --map-backdrop-state=$MAP_STATE"
-    if [ -r "$MAP_STATE" ]; then
-        case $(head -c 3 "$MAP_STATE") in
-            on*) ARGS="$ARGS --map-backdrop=on"; log "map: on (last choice)" ;;
-            off*) ARGS="$ARGS --map-backdrop=off"; log "map: off (last choice)" ;;
-        esac
-    fi
-fi
+# The on/off switches' last choices, likewise (not part of the DMS)
+remember() { # <option> <what, for the log>: <option>.state <-> --<option>=
+    file=$DATA_DIR/$1.state
+    [ -w "$DATA_DIR" ] && grep -qa -- "$1-state" "$HOME_DIR/$BIN_REL" || return 0
+    ARGS="$ARGS --$1-state=$file"
+    [ -r "$file" ] || return 0
+    case $(head -c 3 "$file") in
+        on*) ARGS="$ARGS --$1=on"; log "$2: on (last choice)" ;;
+        off*) ARGS="$ARGS --$1=off"; log "$2: off (last choice)" ;;
+    esac
+}
+remember map-backdrop map
+remember telltale-min-dark-level "telltale ghost"
+remember info-bar "info bar"
 
 export QT_QPA_PLATFORM=eglfs
 export QT_QPA_EGLFS_ALWAYS_SET_MODE=1

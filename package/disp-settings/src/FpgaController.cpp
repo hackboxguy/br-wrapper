@@ -2,6 +2,7 @@
 #include "config.h"
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
@@ -23,7 +24,12 @@
 #define FPGA_NEW_I2C_ADDR  0x1E
 
 namespace {
-const char * const LEGACY_STATE_FILE = "/tmp/fpga-ldpc-state.json";
+// The LD/PC choice, shared with the cluster apps and the gallery
+// (FpgaController there): /data/cluster/fpga-ldpc-state.json on the A/B
+// image (survives power cycles and updates), else /tmp (this boot only)
+const char * const DATA_STATE_DIR = "/data/cluster";
+const char * const STATE_NAME = "fpga-ldpc-state.json";
+const char * const TMP_STATE_FILE = "/tmp/fpga-ldpc-state.json";
 
 // The 0x1E slave keeps its page/register pointer between transactions, and
 // other processes (update-fpga.sh's flash scan, the launcher's update badge)
@@ -162,18 +168,18 @@ bool FpgaController::readRegisterNew(int fd, uint8_t reg, uint8_t *data, int len
 
 bool FpgaController::readRegisterLegacy(int fd, uint8_t reg, uint8_t *data, int len)
 {
+    // ONE repeated-start transfer (the handover's I2C rule): als-dimmer and
+    // the serializer driver's bus check share this bus, and a pointer write
+    // followed by a separate read can return what another master selected
+    const uint16_t address = static_cast<uint16_t>(m_i2cAddress);
     uint8_t regAddr[4] = {0x00, 0x00, 0x00, reg};
-    if (write(fd, regAddr, 4) != 4) {
-        qWarning() << "FpgaController: Failed to write register address";
+    struct i2c_msg msgs[2] = {{address, 0, 4, regAddr},
+                              {address, I2C_M_RD, static_cast<__u16>(len), data}};
+    struct i2c_rdwr_ioctl_data transfer = {msgs, 2};
+    if (ioctl(fd, I2C_RDWR, &transfer) != 2) {
+        qWarning() << "FpgaController: Failed to read register";
         return false;
     }
-
-    // Read data
-    if (read(fd, data, len) != len) {
-        qWarning() << "FpgaController: Failed to read register data";
-        return false;
-    }
-
     return true;
 }
 
@@ -243,7 +249,40 @@ bool FpgaController::ensureProtocol()
     qDebug() << "FpgaController: selected"
              << (m_protocol == Protocol::New ? "new FPGA protocol (0x1E)"
                                                : "legacy FPGA protocol (0x1D)");
+    applySavedState();
     return true;
+}
+
+// The user's last LD/PC choice back into an FPGA that has just been found:
+// the FPGA forgets it at power loss. Only through the selected protocol.
+void FpgaController::applySavedState()
+{
+    bool ld = true, pc = true;
+    if (!loadLegacyState(&ld, &pc)) return;
+    const int fd = openI2c();
+    if (fd < 0) return;
+    bool ok;
+    if (m_protocol == Protocol::New) {
+        const uint8_t ldValue = ld ? 0 : 1, pcValue = pc ? 0 : 1;
+        ok = writeRegisterNew(fd, REG_LOCAL_DIMMING, &ldValue, 1)
+           & writeRegisterNew(fd, REG_PIXEL_COMP, &pcValue, 1);
+    } else {
+        const uint8_t ldValue = ld ? 0 : 1;
+        const uint8_t pcValue[2] = {0x00, static_cast<uint8_t>(pc ? 0x70 : 0x00)};
+        ok = writeRegisterLegacy(fd, REG_LEGACY_LOCAL_DIMMING, &ldValue, 1)
+           & writeRegisterLegacy(fd, REG_LEGACY_PIXEL_COMP, pcValue, 2);
+    }
+    closeI2c(fd);
+    qDebug() << "FpgaController: saved state" << (ok ? "applied" : "NOT applied")
+             << "- local dimming" << ld << "pixel compensation" << pc;
+}
+
+QString FpgaController::stateFilePath()
+{
+    const QFileInfo dir(QString::fromLatin1(DATA_STATE_DIR));
+    return dir.isDir() && dir.isWritable()
+        ? dir.filePath() + QLatin1Char('/') + QLatin1String(STATE_NAME)
+        : QString::fromLatin1(TMP_STATE_FILE);
 }
 
 bool FpgaController::newSlaveAnswers()
@@ -277,13 +316,13 @@ void FpgaController::clearProtocol()
 
 bool FpgaController::loadLegacyState(bool *localDimming, bool *pixelCompensation) const
 {
-    QFile file(LEGACY_STATE_FILE);
+    QFile file(stateFilePath());
     if (!file.open(QIODevice::ReadOnly)) return false;
     QJsonParseError error;
     const QJsonDocument document = QJsonDocument::fromJson(file.readAll(), &error);
     if (error.error != QJsonParseError::NoError || !document.isObject()) return false;
     const QJsonObject state = document.object();
-    if (state.value("protocol").toString() != "legacy") return false;
+    // whichever protocol it was set on: a swapped display keeps the choice
     *localDimming = state.value("local_dimming").toBool(true);
     *pixelCompensation = state.value("pixel_compensation").toBool(true);
     return true;
@@ -293,10 +332,10 @@ void FpgaController::saveLegacyState() const
 {
     QJsonObject state;
     state["version"] = 1;
-    state["protocol"] = "legacy";
+    state["protocol"] = m_protocol == Protocol::New ? "new" : "legacy";
     state["local_dimming"] = m_localDimmingEnabled;
     state["pixel_compensation"] = m_pixelCompEnabled;
-    QSaveFile file(LEGACY_STATE_FILE);
+    QSaveFile file(stateFilePath());
     if (!file.open(QIODevice::WriteOnly) ||
         file.write(QJsonDocument(state).toJson(QJsonDocument::Compact)) < 0 || !file.commit())
         qWarning() << "FpgaController: failed to save legacy LD/PC state";
@@ -318,7 +357,8 @@ void FpgaController::initializeLegacyState()
     if (pcChanged) emit pixelCompChanged();
     if (firstObservation || ldChanged || pcChanged) {
         qDebug() << "FpgaController: legacy LD/PC state"
-                 << (restored ? "synchronized from /tmp" : "assumed on after FPGA power-on");
+                 << (restored ? "synchronized from " + stateFilePath()
+                              : QString("assumed on after FPGA power-on"));
     }
 }
 

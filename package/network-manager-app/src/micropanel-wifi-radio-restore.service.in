@@ -1,0 +1,19 @@
+# The WiFi switch as the user left it (net-ctl.sh wifi-radio keeps it in
+# /data/network/wifi-radio.state): a kept "off" is written into
+# NetworkManager's state file before NetworkManager starts, so WiFi stays off
+# without coming up first. No file (a new or factory-reset device, or a
+# kept "on"): nothing to do, the image's default (WiFi on). The board's
+# image hook installs this into /etc/systemd/system and enables it.
+[Unit]
+Description=micropanel: restore the WiFi switch
+DefaultDependencies=no
+After=local-fs.target data.mount ab-factory-reset.service micropanel-data-skeleton.service
+Before=NetworkManager.service
+ConditionPathExists=/data/network/wifi-radio.state
+
+[Service]
+Type=oneshot
+ExecStart=@NET_CTL@ wifi-radio-restore
+
+[Install]
+WantedBy=NetworkManager.service

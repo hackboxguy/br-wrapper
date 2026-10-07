@@ -99,13 +99,14 @@ previous settings were restored · `4` NetworkManager not available.
 | Command | Root | Output |
 |---|---|---|
 | `available` | no | `RESULT kind=available ok=0\|1 [reason=…]` |
-| `status` | no | `RESULT kind=iface …` per wired/WiFi device (incl. `inet=yes\|no`, the configured profile `profileuuid= cfgprofile= saved= binding=name\|mac\|any cfgip= cfgprefix= cfggateway= cfgdns=`), then `RESULT kind=summary internet= via= defaultdev= wifi= country= volatile= wifiboot=` |
+| `status` | no | `RESULT kind=iface …` per wired/WiFi device (incl. `inet=yes\|no`, the configured profile `profileuuid= cfgprofile= saved= binding=name\|mac\|any cfgip= cfgprefix= cfggateway= cfgdns=`), then `RESULT kind=summary internet= via= defaultdev= wifi= country= volatile= wifiboot= wifikept=` (`wifikept=1`: the switch is kept across restarts, `/data/network` exists) |
 | `monitor` | no | `NOTICE changed` on every NetworkManager event, until killed (or until its caller is gone) |
 | `leases --iface=` | yes | `RESULT kind=lease ip= mac= host= expires=` …, `RESULT kind=reservation mac= ip=` per reservation in the port's network, `RESULT kind=leases count=`; the OLED menu's server: from the system dnsmasq's lease file |
 | `dhcp-reserve --iface= --mac= --ip=` / `--iface= --mac= --forget` | yes | a change: `RESULT kind=reservation iface= mac= ip= action=added\|removed\|unchanged [reason=bad-arguments\|in-use\|not-serving\|legacy-server\|unsupported\|locked]` |
 | `wifi-scan [--rescan]` | rescan | `RESULT kind=ap ssid= signal= security= band= saved= active=` (strongest BSSID per SSID), then `RESULT kind=saved …` per profile |
 | `wifi-connect --ssid= [--hidden] [--security=open\|wpa2\|wpa3]` | yes | `PROGRESS phase=associating\|authenticating\|address`, `RESULT kind=connect ok= … [reason=bad-password\|not-found\|no-address\|timeout\|unsupported\|need-password\|radio-off\|locked]` |
-| `wifi-disconnect`, `wifi-forget --ssid=`, `wifi-autoconnect --ssid= --on\|--off`, `wifi-radio --on\|--off` | yes | `RESULT kind=… ok=` |
+| `wifi-disconnect`, `wifi-forget --ssid=`, `wifi-autoconnect --ssid= --on\|--off`, `wifi-radio --on\|--off` | yes | `RESULT kind=… ok=`. `wifi-radio` keeps the choice in `/data/network/wifi-radio.state` where that directory exists (the A/B image) |
+| `wifi-radio-restore` | yes (boot) | run by `micropanel-wifi-radio-restore.service` before NetworkManager starts (the template is installed to `share/network-manager-app/`; the image hook puts it in `/etc/systemd/system`): a kept `off` becomes `WirelessEnabled=false` in NetworkManager's state file; otherwise nothing. `RESULT kind=radio-restore wifi=off\|default` |
 | `wired-set --iface= --mode=client` | yes | `PROGRESS phase=activating\|checking`, `RESULT kind=wired ok= ip= binding= [reason=activation-failed\|check-failed\|overlap\|bad-arguments\|locked]` |
 | `wired-set --iface= --mode=static --ip= --prefix= [--gateway=] [--dns=a,b]` | yes | as above |
 | `wired-set --iface= --mode=server --ip= [--prefix=24]` | yes | as above; stops and masks the system `dnsmasq.service` and writes the no-gateway drop-in if needed |

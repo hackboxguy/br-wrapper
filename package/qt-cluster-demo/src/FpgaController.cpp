@@ -2,6 +2,7 @@
 
 #include <QDebug>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
@@ -13,7 +14,9 @@
 
 namespace {
 const char * const kBus = "/dev/i2c-1";
-const char * const kStateFile = "/tmp/fpga-ldpc-state.json";
+const char * const kDataStateDir = "/data/cluster";
+const char * const kStateName = "fpga-ldpc-state.json";
+const char * const kTmpStateFile = "/tmp/fpga-ldpc-state.json";
 const uint8_t kLegacyAddr = 0x1D, kNewAddr = 0x1E;
 const uint8_t kVersion = 0x00, kLegacyLd = 0x29, kNewLd = 0x2C;
 const uint8_t kNewPc = 0x2D, kLegacyPc = 0x47;
@@ -130,7 +133,27 @@ bool FpgaController::ensureProtocol() {
     }
     m_legacyStateInitialized = false;
     qDebug() << "FpgaController: selected" << (m_protocol == Protocol::New ? "new FPGA protocol (0x1E)" : "legacy FPGA protocol (0x1D)");
+    applySavedState();
     return true;
+}
+// The user's last LD/PC choice, back into an FPGA that has just been found
+// (app start, or the FPGA back after it stopped answering - e.g. a display
+// power cycle, which resets it to its default). Writes only through the
+// selected protocol, so a 0x1E FPGA never gets legacy writes.
+void FpgaController::applySavedState() {
+    bool ld = true, pc = true;
+    if (!loadLegacyState(&ld, &pc)) return;
+    const int fd = openI2c(); if (fd < 0) return;
+    bool ok;
+    if (m_protocol == Protocol::New) {
+        const uint8_t ldValue = ld ? 0 : 1, pcValue = pc ? 0 : 1;
+        ok = writeNew(fd, kNewLd, &ldValue, 1) & writeNew(fd, kNewPc, &pcValue, 1);
+    } else {
+        const uint8_t ldValue = ld ? 0 : 1, pcValue[2] = {0, static_cast<uint8_t>(pc ? 0x70 : 0)};
+        ok = writeLegacy(fd, kLegacyLd, &ldValue, 1) & writeLegacy(fd, kLegacyPc, pcValue, 2);
+    }
+    closeI2c(fd);
+    qDebug() << "FpgaController: saved state" << (ok ? "applied" : "NOT applied") << "- local dimming" << ld << "pixel compensation" << pc;
 }
 bool FpgaController::pingCurrentProtocol(int fd) {
     uint8_t version[4];
@@ -145,21 +168,28 @@ void FpgaController::clearProtocol() {
     if (ldChanged) emit localDimmingChanged();
     if (pcChanged) emit pixelCompChanged();
 }
+QString FpgaController::stateFilePath() {
+    const QFileInfo dir(QString::fromLatin1(kDataStateDir));
+    return dir.isDir() && dir.isWritable() ? dir.filePath() + QLatin1Char('/') + QLatin1String(kStateName)
+                                           : QString::fromLatin1(kTmpStateFile);
+}
+// The saved choice, whichever FPGA protocol it was set on (a display swapped
+// for one with the other FPGA keeps the user's choice)
 bool FpgaController::loadLegacyState(bool *ld, bool *pc) const {
-    QFile file(kStateFile); if (!file.open(QIODevice::ReadOnly)) return false;
+    QFile file(stateFilePath()); if (!file.open(QIODevice::ReadOnly)) return false;
     QJsonParseError error;
     const QJsonDocument doc = QJsonDocument::fromJson(file.readAll(), &error);
     if (error.error != QJsonParseError::NoError || !doc.isObject()) return false;
     const QJsonObject state = doc.object();
-    if (state.value("protocol").toString() != "legacy") return false;
     *ld = state.value("local_dimming").toBool(true);
     *pc = state.value("pixel_compensation").toBool(true);
     return true;
 }
 void FpgaController::saveLegacyState() const {
-    QJsonObject state; state["version"] = 1; state["protocol"] = "legacy";
+    QJsonObject state; state["version"] = 1;
+    state["protocol"] = m_protocol == Protocol::New ? "new" : "legacy";
     state["local_dimming"] = m_localDimmingEnabled; state["pixel_compensation"] = m_pixelCompEnabled;
-    QSaveFile file(kStateFile);
+    QSaveFile file(stateFilePath());
     if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(state).toJson(QJsonDocument::Compact)) < 0 || !file.commit())
         qWarning() << "FpgaController: failed to save legacy LD/PC state";
 }
@@ -171,7 +201,7 @@ void FpgaController::initializeLegacyState() {
     m_localDimmingSupported = true; m_localDimmingEnabled = ld; m_pixelCompSupported = true; m_pixelCompEnabled = pc;
     if (ldChanged) emit localDimmingChanged(); if (pcChanged) emit pixelCompChanged();
     if (firstObservation || ldChanged || pcChanged)
-        qDebug() << "FpgaController: legacy LD/PC state" << (restored ? "synchronized from /tmp" : "assumed on after FPGA power-on");
+        qDebug() << "FpgaController: legacy LD/PC state" << (restored ? "synchronized from " + stateFilePath() : QString("assumed on after FPGA power-on"));
 }
 void FpgaController::readToggleSettings(int fd) {
     if (m_protocol == Protocol::Legacy) { initializeLegacyState(); return; }

@@ -157,6 +157,8 @@ printf 'overlayroot / overlay rw 0 0\n' > "$work/mounts"
 export PATH="$work/bin:$PATH" FAKE_NM="$work/nm" NET_CTL_PROBE="$work/bin/probe" NET_CTL_PYTHON="$work/bin/fake-python3"
 export NET_CTL_SYSFS="$work/sys" NET_CTL_LEASE_DIR="$work/leases" NET_CTL_LOCK="$work/lock"
 export NET_CTL_LEGACY_CONF="$work/legacy.conf" NET_CTL_MOUNTS="$work/mounts" NET_CTL_MODPROBE_DIR="$work/modprobe"
+# The WiFi switch's kept state (no directory yet: an image without /data/network)
+export NET_CTL_RADIO_STATE="$work/data/network/wifi-radio.state" NET_CTL_NM_STATE="$work/nmstate/NetworkManager.state"
 
 PASSWORD='s3cret pass=%"word'   # spaces, =, % and a quote: none may reach argv
 failures=0
@@ -361,6 +363,43 @@ run wifi-radio --on
 check "radio on: country left alone when set" not_called "iw reg set"
 run wifi-radio --off
 check "radio off" called "radio|wifi|off|"
+check "no /data/network: nothing kept" [ ! -e "$NET_CTL_RADIO_STATE" ]
+
+echo "== the WiFi switch kept across a restart (A/B: /data/network)"
+mkdir -p "$work/data/network"
+run status
+check "status: wifikept=1 where the state's directory exists" out_has "wifikept=1"
+run wifi-radio --off
+check "radio off: kept as off" [ "$(cat "$NET_CTL_RADIO_STATE")" = off ]
+check "  no temporary file left" sh -c "! ls \"\$1\"/*.tmp.* 2>/dev/null | grep -q ." _ "$work/data/network"
+run wifi-radio --on
+check "radio on: kept as on" [ "$(cat "$NET_CTL_RADIO_STATE")" = on ]
+run wifi-radio --off --dry-run
+check "dry run: the kept state unchanged" [ "$(cat "$NET_CTL_RADIO_STATE")" = on ]
+# the restore unit's decision (before NetworkManager starts: nmcli is not used)
+mkdir -p "$work/nmstate"
+printf '[main]\nNetworkingEnabled=true\nWirelessEnabled=true\nWWANEnabled=true\n' > "$NET_CTL_NM_STATE"
+run wifi-radio-restore
+check "restore, kept on: the image's default" out_has "RESULT kind=radio-restore ok=1 wifi=default"
+check "  NetworkManager's state untouched" grep -qx "WirelessEnabled=true" "$NET_CTL_NM_STATE"
+echo off > "$NET_CTL_RADIO_STATE"
+: > "$FAKE_NM/calls"
+run wifi-radio-restore
+check "restore, kept off: WirelessEnabled=false" sh -c "grep -qx WirelessEnabled=false \"\$1\" && ! grep -qx WirelessEnabled=true \"\$1\"" _ "$NET_CTL_NM_STATE"
+check "  the other keys kept" sh -c "grep -qx NetworkingEnabled=true \"\$1\" && grep -qx WWANEnabled=true \"\$1\"" _ "$NET_CTL_NM_STATE"
+check "  RESULT wifi=off" out_has "RESULT kind=radio-restore ok=1 wifi=off"
+check "  nmcli not called" not_called "radio|"
+printf '[main]\nNetworkingEnabled=true\n[other]\nx=1\n' > "$NET_CTL_NM_STATE"
+run wifi-radio-restore
+check "restore: the key added to [main] when absent" sh -c "sed -n '2,3p' \"\$1\" | grep -qx WirelessEnabled=false" _ "$NET_CTL_NM_STATE"
+rm -f "$NET_CTL_NM_STATE"
+run wifi-radio-restore
+check "restore: no state file yet: one written" sh -c "printf '[main]\\nWirelessEnabled=false\\n' | cmp -s - \"\$1\"" _ "$NET_CTL_NM_STATE"
+rm -f "$NET_CTL_RADIO_STATE" "$NET_CTL_NM_STATE"
+run wifi-radio-restore
+check "restore, nothing kept (new or reset device): the image's default" out_has "wifi=default"
+check "  nothing written" [ ! -e "$NET_CTL_NM_STATE" ]
+rm -rf "$work/data"
 
 echo "== arguments"
 run bogus

@@ -1356,8 +1356,10 @@ Window {
                 readonly property bool radioOn: win.radio === "on"
                 readonly property bool busy: wifi.busyState === "connecting" || wifi.busyState === "working"
                 readonly property bool volatileRoot: summary.volatile === "1"
-                // On the A/B images the radio state is volatile (plan 4.2)
-                readonly property string bootNote: !volatileRoot ? ""
+                // On an A/B image the switch is kept on /data and restored at
+                // boot (wifikept, net-ctl.sh wifi-radio-restore); only an
+                // image without that place forgets it at the next start
+                readonly property string bootNote: !volatileRoot || summary.wifikept === "1" ? ""
                     : radioOn && summary.wifiboot !== "on" ? "This image starts with WiFi off: it is off again after the next start."
                     : !radioOn && summary.wifiboot === "on" ? "WiFi turns on again at the next start."
                     : ""

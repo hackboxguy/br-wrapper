@@ -9,6 +9,7 @@
 #include "CanReader.h"
 #include "DemoSimulator.h"
 #include "FpgaController.h"
+#include "OnOffState.h"
 
 int main(int argc, char *argv[])
 {
@@ -43,7 +44,31 @@ int main(int argc, char *argv[])
         "protocol", "auto");
     parser.addOption(fpgaProtocolOption);
 
+    // The control row's T (the ghost of an unlit telltale) and B (the info
+    // bar): the start state, and a file each change is written to (on/off)
+    // so the launcher can start the next run the same way (cluster-launcher.sh)
+    QCommandLineOption darkLevelOption(
+        "telltale-min-dark-level", "Ghost of an unlit telltale at start: on or off (default: on)",
+        "state", "on");
+    parser.addOption(darkLevelOption);
+    QCommandLineOption darkLevelStateOption(
+        "telltale-min-dark-level-state", "Write the T button's state (on/off) to <file> on every change",
+        "file");
+    parser.addOption(darkLevelStateOption);
+    QCommandLineOption infoBarOption(
+        "info-bar", "The info bar at start: on or off (default: on)", "state", "on");
+    parser.addOption(infoBarOption);
+    QCommandLineOption infoBarStateOption(
+        "info-bar-state", "Write the B button's state (on/off) to <file> on every change", "file");
+    parser.addOption(infoBarStateOption);
+
     parser.process(app);
+    auto onOff = [](const QString &text) { return text.trimmed().toLower() != QLatin1String("off"); };
+    auto *darkLevelState = new OnOffState(QStringLiteral("Telltale ghost"),
+                                          onOff(parser.value(darkLevelOption)),
+                                          parser.value(darkLevelStateOption), &app);
+    auto *infoBarState = new OnOffState(QStringLiteral("Info bar"), onOff(parser.value(infoBarOption)),
+                                        parser.value(infoBarStateOption), &app);
 
     ClusterModel model;
     CanReader *canReader = nullptr;
@@ -121,6 +146,8 @@ int main(int argc, char *argv[])
     QQmlApplicationEngine engine;
     engine.rootContext()->setContextProperty("cluster", &model);
     engine.rootContext()->setContextProperty("fpga", &fpgaController);
+    engine.rootContext()->setContextProperty("telltaleDarkLevel", darkLevelState);
+    engine.rootContext()->setContextProperty("infoBar", infoBarState);
     engine.load(QUrl("qrc:/qml/main.qml"));
 
     if (engine.rootObjects().isEmpty())

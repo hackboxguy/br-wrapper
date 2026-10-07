@@ -13,6 +13,7 @@ add_executable(qt-cluster-demo
     ClusterModel.cpp
     DemoSimulator.cpp
     FpgaController.cpp
+    OnOffState.cpp
     qml.qrc
 )
 

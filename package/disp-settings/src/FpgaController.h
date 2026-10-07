@@ -96,8 +96,10 @@ private:
     bool pingCurrentProtocol(int fd);
     void clearProtocol();
     void initializeLegacyState();
+    static QString stateFilePath();
     bool loadLegacyState(bool *localDimming, bool *pixelCompensation) const;
     void saveLegacyState() const;
+    void applySavedState();
     void parseFirmwareInfo(const uint8_t *data);
     void parseBoardInfo(const uint8_t *data);
     void parseBuildTime(const uint8_t *data);
