@@ -9,6 +9,11 @@
 // Auto-detects new (0x1E) and legacy (0x1D) FPGA LD/PC transports. Legacy
 // registers are write-only; the last requested state is retained in
 // /tmp/fpga-ldpc-state.json for app restarts within the current system boot.
+//
+// One implementation, two copies: br-wrapper/package/qt-cluster-demo/src/
+// (the original cluster) and qt-cluster-demo/src/ (Cluster Demo V2) carry
+// this file and FpgaController.cpp byte for byte; the two apps live in
+// separate repositories and build trees. Change both or neither.
 class FpgaController : public QObject
 {
     Q_OBJECT

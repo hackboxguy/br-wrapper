@@ -80,9 +80,15 @@ bool FpgaController::writeNew(int fd, uint8_t reg, const uint8_t *data, int len)
     for (int i = 0; i < len; ++i) packet[2 + i] = data[i];
     return write(fd, packet, len + 2) == len + 2;
 }
+// The legacy slave too, in ONE repeated-start transfer: als-dimmer and the
+// serializer driver's bus check share this bus, and a pointer write followed
+// by a separate read can return what another master's pointer selected
 bool FpgaController::readLegacy(int fd, uint8_t reg, uint8_t *data, int len) {
-    const uint8_t address[4] = {0, 0, 0, reg};
-    return write(fd, address, 4) == 4 && read(fd, data, len) == len;
+    uint8_t address[4] = {0, 0, 0, reg};
+    struct i2c_msg msgs[2] = {{kLegacyAddr, 0, 4, address},
+                              {kLegacyAddr, I2C_M_RD, static_cast<__u16>(len), data}};
+    struct i2c_rdwr_ioctl_data transfer = {msgs, 2};
+    return ioctl(fd, I2C_RDWR, &transfer) == 2;
 }
 bool FpgaController::writeLegacy(int fd, uint8_t reg, const uint8_t *data, int len) {
     if (len < 1 || len > 2) return false;

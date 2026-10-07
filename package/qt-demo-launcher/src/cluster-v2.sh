@@ -33,11 +33,25 @@
 # (--dms-video-view-state=) and this script turns back into --dms-video-view=
 # - only where /data/cluster is writable (the A/B image) and the app knows the
 # option. The operator's env file is never written. A reset forgets it.
+# The MAP button (the map behind every theme, on/off) is remembered the same
+# way in /data/cluster/map-backdrop.state (--map-backdrop-state= /
+# --map-backdrop=), with or without the DMS.
+# Two displays (the Pi's two HDMI outputs both connected): the second shows
+# the same picture as the first - Qt's eglfs draws one window on one output
+# and leaves the other on the console, so the script hands Qt a KMS
+# configuration in which every further connected HDMI output clones the
+# first (/tmp/cluster-v2-kms.json). One output: nothing changes. An
+# environment that sets QT_QPA_EGLFS_KMS_CONFIG itself keeps it, and
+# KMS_MIRROR=0 in the environment files turns the mirror off.
 # Log: /tmp/cluster-v2.log (this script and the app; rewritten at each start).
+# (CLUSTER_V2_DATA_DIR, CLUSTER_V2_LOG and CLUSTER_V2_DRM move /data/cluster,
+# the log and /sys/class/drm for the tests.)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DATA_ENV=/data/cluster/qt-cluster-demo.env
-VIEW_STATE=/data/cluster/dms-video-view.state
+DATA_DIR=${CLUSTER_V2_DATA_DIR:-/data/cluster}
+DATA_ENV=$DATA_DIR/qt-cluster-demo.env
+VIEW_STATE=$DATA_DIR/dms-video-view.state
+MAP_STATE=$DATA_DIR/map-backdrop.state
 
 CHECK=0 THEME=""
 for arg in "$@"; do
@@ -68,7 +82,7 @@ HOME_DIR=${found% *} BIN_REL=${found##* }
 systemctl is-active --quiet can-proxyd.service || unavailable "CAN proxy not running"
 [ "$CHECK" = 1 ] && exit 0
 
-LOG=/tmp/cluster-v2.log
+LOG=${CLUSTER_V2_LOG:-/tmp/cluster-v2.log}
 exec >"$LOG" 2>&1
 log() { echo "cluster-v2: $*"; }
 
@@ -80,10 +94,11 @@ read_env() {
             EXTRA_ARGS=*) EXTRA_ARGS=${line#EXTRA_ARGS=} ;;
             DMS_ENABLED=*) DMS_ENABLED=${line#DMS_ENABLED=} ;;
             SOMEIP_IFACE=*) SOMEIP_IFACE=${line#SOMEIP_IFACE=} ;;
+            KMS_MIRROR=*) KMS_MIRROR=${line#KMS_MIRROR=} ;;
         esac
     done < "$1"
 }
-CLUSTER_ARGS="--source=proxy --contract-if=vcan0" EXTRA_ARGS="" DMS_ENABLED=0 SOMEIP_IFACE=eth0
+CLUSTER_ARGS="--source=proxy --contract-if=vcan0" EXTRA_ARGS="" DMS_ENABLED=0 SOMEIP_IFACE=eth0 KMS_MIRROR=1
 ENV_FILE="$HOME_DIR/systemd/qt-cluster-demo.env"
 if [ -r "$ENV_FILE" ]; then
     read_env "$ENV_FILE"
@@ -149,8 +164,40 @@ if [ "$DMS_ENABLED" = 1 ] && [ -w "${VIEW_STATE%/*}" ] \
     fi
 fi
 
+# The MAP button's last choice, likewise; the map is not part of the DMS
+if [ -w "${MAP_STATE%/*}" ] && grep -qa -- "map-backdrop-state" "$HOME_DIR/$BIN_REL"; then
+    ARGS="$ARGS --map-backdrop-state=$MAP_STATE"
+    if [ -r "$MAP_STATE" ]; then
+        case $(head -c 3 "$MAP_STATE") in
+            on*) ARGS="$ARGS --map-backdrop=on"; log "map: on (last choice)" ;;
+            off*) ARGS="$ARGS --map-backdrop=off"; log "map: off (last choice)" ;;
+        esac
+    fi
+fi
+
 export QT_QPA_PLATFORM=eglfs
 export QT_QPA_EGLFS_ALWAYS_SET_MODE=1
+
+# Mirror onto a second display: the connected HDMI outputs in DRM's order
+# (HDMI-A-1, HDMI-A-2), named as Qt names them (HDMI1, HDMI2)
+if [ "$KMS_MIRROR" != 0 ] && [ -z "${QT_QPA_EGLFS_KMS_CONFIG:-}" ]; then
+    outputs=""
+    for st in "${CLUSTER_V2_DRM:-/sys/class/drm}"/card*-HDMI-A-*/status; do
+        [ -r "$st" ] && [ "$(cat "$st")" = connected ] || continue
+        c=${st%/status}; outputs="$outputs HDMI${c##*-HDMI-A-}"
+    done
+    # shellcheck disable=SC2086 # the names, one word each
+    set -- $outputs
+    if [ $# -ge 2 ]; then
+        first=$1; shift
+        kms=/tmp/cluster-v2-kms.json
+        { printf '{ "outputs": ['; sep=""
+          for o in "$@"; do printf '%s { "name": "%s", "clones": "%s" }' "$sep" "$o" "$first"; sep=","; done
+          printf ' ] }\n'; } > "$kms"
+        export QT_QPA_EGLFS_KMS_CONFIG="$kms"
+        log "displays: $first, mirrored on $*"
+    fi
+fi
 export QSG_RENDER_LOOP=threaded
 VSOMEIP_LIB=/home/pi/.codex-deps/prefix/vsomeip-3.5.11/lib
 export LD_LIBRARY_PATH="$VSOMEIP_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"

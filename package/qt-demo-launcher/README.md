@@ -404,6 +404,17 @@ panel waits. Log: `/tmp/cluster-v2.log`.
   middle). The NCAP icons stay in every state. Where `/data/cluster` is writable (the A/B
   image), the choice is kept in `/data/cluster/dms-video-view.state` (`on`/`off`/`none`) and the
   next start begins that way; a factory reset forgets it.
+- The **MAP** button switches the map behind every theme (lit while it shows); kept the same
+  way in `/data/cluster/map-backdrop.state` (`on`/`off`), with or without the DMS.
+- Two displays (both HDMI outputs connected): the second shows the same picture as the first.
+  Qt draws its one window on the first output only, so `cluster-v2.sh` gives it a KMS
+  configuration in which every further connected HDMI output clones the first
+  (`/tmp/cluster-v2-kms.json`, `QT_QPA_EGLFS_KMS_CONFIG`; same size needed - the outputs here
+  are both 1920x720). One display: nothing changes. `KMS_MIRROR=0` in
+  `/data/cluster/qt-cluster-demo.env` turns it off; a `QT_QPA_EGLFS_KMS_CONFIG` in the
+  environment is kept. Touch and the control row are the first display's.
+- Host test: `sh tests/test-cluster-v2-state.sh` (the remembered states and the mirror, against
+  a fake install).
 
 ## Building
 
