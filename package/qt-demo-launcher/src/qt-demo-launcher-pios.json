@@ -217,15 +217,15 @@
       {
         "id": "cluster-v2",
         "enabled": true,
-        "text": "Cluster Demo V2",
+        "text": "Cluster Demo",
         "subtitle": "CAN proxy, seven themes",
         "icon": "/usr/share/qt-apps/icons/cluster-v2.svg",
         "action": "navigate",
         "target_page": "cluster-v2",
-        "page_title": "Cluster Demo V2",
+        "page_title": "Cluster Demo",
         "position": {
-          "row": 4,
-          "column": 1
+          "row": 1,
+          "column": 2
         },
         "size": {
           "width": 640,
@@ -668,7 +668,7 @@
       },
       {
         "id": "cluster-demo",
-        "enabled": true,
+        "enabled": false,
         "text": "Cluster Demo",
         "subtitle": "Animated instrument cluster",
         "icon": "/usr/share/qt-apps/icons/cluster-demo.svg",

@@ -375,13 +375,15 @@ it is pressed (0 ms with animations off), so the ripple is visible before the la
 
 ### Cluster Demo V2 (`cluster-v2.sh`)
 
-On the micropanel image, screen 2 carries **Cluster Demo V2** (`"action": "navigate"`,
-page `cluster-v2`) beside Network. Its page has one tile per theme of the modern cluster
+On the micropanel image, screen 1 carries **Cluster Demo** (id `cluster-v2`,
+`"action": "navigate"`, page `cluster-v2`; until 2.09 "Cluster Demo V2" on screen 2). Its page has one tile per theme of the modern cluster
 from the separate `qt-cluster-demo` repository — analog (needle dials), ev (EV bar gauges),
 harman (eco coach), tiles (one card per capability), fable1 (the Horizon), atelier (a
 watchmaker's chronograph), neo (a cinematic EV scene) — and **Auto** (the theme from the
-vehicle's drivetrain). Each tile runs `share/qt-apps/cluster-v2.sh --theme=<name>`; the old
-**Cluster Demo** tile (this repository's `package/qt-cluster-demo`) is unchanged.
+vehicle's drivetrain). Each tile runs `share/qt-apps/cluster-v2.sh --theme=<name>`. The old
+**Cluster Demo** tile (id `cluster-demo`, this repository's `package/qt-cluster-demo` through
+`cluster-launcher.sh`) is disabled: it is not shown and `start-app cluster-demo` answers
+`ERROR: invalid-app-name`. Its binary is still in the package.
 
 `cluster-v2.sh` does what the repository's `qt-cluster-demo.service` does around the app:
 it reads `systemd/qt-cluster-demo.env` of the install (`CLUSTER_ARGS`, `EXTRA_ARGS`,
