@@ -99,7 +99,7 @@ previous settings were restored · `4` NetworkManager not available.
 | Command | Root | Output |
 |---|---|---|
 | `available` | no | `RESULT kind=available ok=0\|1 [reason=…]` |
-| `status` | no | `RESULT kind=iface …` per wired/WiFi device (incl. `inet=yes\|no`, the configured profile `profileuuid= cfgprofile= saved= binding=name\|mac\|any cfgip= cfgprefix= cfggateway= cfgdns=`), then `RESULT kind=summary internet= via= defaultdev= wifi= country= volatile= wifiboot= wifikept=` (`wifikept=1`: the switch is kept across restarts, `/data/network` exists) |
+| `status` | no | `RESULT kind=iface …` per wired/WiFi device (incl. `inet=yes\|no`, the configured profile `profileuuid= cfgprofile= saved= binding=name\|mac\|any cfgip= cfgprefix= cfggateway= cfgdns=`), then `RESULT kind=summary internet= via= defaultdev= wifi= country= volatile= wifiboot= wifikept=`. `status --iface=IF`: that port's line only, no internet check and no summary (cheap; the Stream Deck's DMS Link key polls it) (`wifikept=1`: the switch is kept across restarts, `/data/network` exists) |
 | `monitor` | no | `NOTICE changed` on every NetworkManager event, until killed (or until its caller is gone) |
 | `leases --iface=` | yes | `RESULT kind=lease ip= mac= host= expires=` …, `RESULT kind=reservation mac= ip=` per reservation in the port's network, `RESULT kind=leases count=`; the OLED menu's server: from the system dnsmasq's lease file |
 | `dhcp-reserve --iface= --mac= --ip=` / `--iface= --mac= --forget` | yes | a change: `RESULT kind=reservation iface= mac= ip= action=added\|removed\|unchanged [reason=bad-arguments\|in-use\|not-serving\|legacy-server\|unsupported\|locked]` |

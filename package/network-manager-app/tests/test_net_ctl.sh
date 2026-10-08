@@ -228,6 +228,11 @@ rm -f "$work/legacy.conf"
 echo "options cfg80211 ieee80211_regdom=DE" > "$work/modprobe/cfg80211.conf"
 run status
 check "image with WiFi on at boot: wifiboot=on" out_has "wifiboot=on"
+run status --iface=eth0
+check "status --iface: that port's line" out_has "RESULT kind=iface name=eth0 type=ethernet"
+check "  no other port, no summary" sh -c "! printf '%s' \"\$1\" | grep -qE 'name=wlan0|kind=summary'" _ "$out"
+run status --iface=eth9
+check "status --iface: an unknown port refused" out_has "reason=bad-arguments"
 rm -f "$work/modprobe/cfg80211.conf"
 
 echo "== leases"
@@ -448,7 +453,7 @@ echo "== wired-set: static on the USB adapter (bound to its MAC)"
 reset ok
 run wired-set --iface=eth1 --mode=static --ip=192.168.20.250 --prefix=24 --gateway=192.168.20.1 --dns=1.1.1.1,9.9.9.9
 check "exit 0" [ "$rc" = 0 ]
-check "modify: manual, address, gateway, DNS, MAC bound, name binding dropped" called "connection|modify|uuid|aaaaaaaa-0000-0000-0000-000000000002|ipv4.method|manual|ipv4.addresses|192.168.20.250/24|ipv4.gateway|192.168.20.1|ipv4.dns|1.1.1.1,9.9.9.9|ipv4.never-default|no|ipv6.method|auto|802-3-ethernet.mac-address|00:E0:4C:69:B1:0E|connection.interface-name||"
+check "modify: manual, address, gateway, DNS, MAC bound, name binding dropped" called "connection|modify|uuid|aaaaaaaa-0000-0000-0000-000000000002|ipv4.method|manual|ipv4.addresses|192.168.20.250/24|ipv4.gateway|192.168.20.1|ipv4.dns|1.1.1.1,9.9.9.9|ipv4.never-default|no|ipv6.method|auto|connection.autoconnect|yes|802-3-ethernet.mac-address|00:E0:4C:69:B1:0E|connection.interface-name||"
 check "up on that port" called "--wait|60|connection|up|uuid|aaaaaaaa-0000-0000-0000-000000000002|ifname|eth1|"
 check "result: ok, address, MAC binding" out_has "RESULT kind=wired iface=eth1 mode=static ok=1 ip=192.168.20.250 profileuuid=aaaaaaaa-0000-0000-0000-000000000002 binding=mac"
 check "the profile is saved now" grep -q '^aaaaaaaa-0000-0000-0000-000000000002|.*|/etc/NetworkManager/system-connections/' "$FAKE_NM/eth"
@@ -458,7 +463,7 @@ check "status then: static, bound to the MAC, saved" out_has "cfgprofile=Wired%2
 echo "== wired-set: client, and eth0 keeps its name binding"
 reset ok
 run wired-set --iface=eth0 --mode=client
-check "client: auto, everything else cleared" called "connection|modify|uuid|aaaaaaaa-0000-0000-0000-000000000001|ipv4.method|auto|ipv4.addresses||ipv4.gateway||ipv4.dns||ipv4.never-default|no|ipv6.method|auto|"
+check "client: auto, everything else cleared, autoconnect on" called "connection|modify|uuid|aaaaaaaa-0000-0000-0000-000000000001|ipv4.method|auto|ipv4.addresses||ipv4.gateway||ipv4.dns||ipv4.never-default|no|ipv6.method|auto|connection.autoconnect|yes|"
 check "  no MAC binding for the built-in port" sh -c "! grep '^connection|modify' \"\$FAKE_NM/calls\" | grep -q mac-address"
 check "  exit 0" [ "$rc" = 0 ]
 
@@ -466,6 +471,8 @@ echo "== wired-set: server mode and its preconditions"
 reset ok
 echo yes > "$FAKE_NM/dnsmasq-active"; echo enabled > "$FAKE_NM/dnsmasq-enabled"
 run wired-set --iface=eth1 --mode=server --ip=192.168.50.1
+check "server: the device may autoconnect again (a guard's disconnect blocks it)" called "device|set|eth1|autoconnect|yes|"
+check "server: the profile autoconnects (a saved profile with autoconnect off would not serve after a power cycle)" sh -c "grep '^connection|modify' \"\$FAKE_NM/calls\" | grep 'ipv4.method|shared' | grep -q 'connection.autoconnect|yes|'"
 check "exit 0" [ "$rc" = 0 ]
 check "the system dnsmasq is stopped" called "systemctl stop dnsmasq.service"
 check "  and masked" called "systemctl mask dnsmasq.service"

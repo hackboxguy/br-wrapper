@@ -21,6 +21,8 @@
 # Commands (network-manager-app-plan.md, section 3.1):
 #   available                       exit 0 when nmcli exists and NetworkManager runs
 #   status                          RESULT kind=iface ... per interface, then kind=summary
+#   status --iface=IF               that port's RESULT kind=iface line only: no internet
+#                                   check, no summary (cheap: a Stream Deck key polls it)
 #   monitor                         NOTICE changed whenever NetworkManager reports a change
 #   leases --iface=IF               RESULT kind=lease ... (root: the lease file is root-only),
 #                                   then kind=reservation mac= ip= per reservation in the
@@ -481,6 +483,16 @@ cmd_status() {
     trap 'rm -rf "$inetdir"' EXIT
     trap 'exit 143' HUP INT TERM
     # gateway and address per port, from the kernel (cheap), for the check
+    if [ -n "$iface" ]; then
+        # One port, as it is configured and connected - without the
+        # internet check (pings) and the summary
+        printf '%s\n' "$devices" | while IFS="$us" read -r dev type; do
+            [ "$dev" = "$iface" ] || continue
+            uuid=$(printf '%s\n' "$active" | awk -F "$us" -v d="$dev" '$1 == d { print $2; exit }')
+            iface_result "$dev" "$type" "$uuid" "$defdev" "$legacy" "$profiles" "$inetdir"
+        done
+        return 0
+    fi
     printf '%s\n' "$devices" | while IFS="$us" read -r dev type; do
         [ -n "$dev" ] || continue
         gw=$(ip -4 route show default dev "$dev" 2>/dev/null | awk '{ print $3; exit }')
@@ -1129,6 +1141,11 @@ cmd_wired_set() {
         server) set -- ipv4.method shared ipv4.addresses "$opt_ip/$prefix" ipv4.gateway "" ipv4.dns "" \
                        ipv4.never-default yes ipv6.method disabled ;;
     esac
+    # The port's profile is the one NetworkManager starts by itself whenever
+    # the link comes up (a cable, a boot): a saved profile with autoconnect
+    # off (made elsewhere) would serve only until the next power cycle, and
+    # NetworkManager's own DHCP-client default would take the port instead
+    set -- "$@" connection.autoconnect yes
     # A USB adapter keeps its settings in any port, and another adapter does
     # not inherit them: bind to the MAC. The built-in port keeps its name.
     if [ "$usb" = 1 ] && [ -n "$mac" ]; then
@@ -1150,6 +1167,11 @@ cmd_wired_set() {
         rm -f "$GUARD_DIR/$iface.stopped"
         notice_remove "$iface"
     fi
+    # and the device may start its profile by itself again: the guard took it
+    # down with "nmcli device disconnect", which blocks autoconnect on the
+    # device until something activates it - without a cable nothing does, and
+    # a cable plugged in later stayed disconnected (rig 1, 2026-10-08)
+    nmcli device set "$iface" autoconnect yes >/dev/null 2>&1
 
     # From here on the change runs to its end (rule 6a: detached, and deaf
     # to the signals of a caller that goes away)
@@ -1788,9 +1810,9 @@ case $opt_security in ''|open|wpa2|wpa3) ;; *) fail 1 connect bad-arguments "--s
 # One rule for --iface= (review v3, 2.2): a device NetworkManager lists
 # (list_devices), for every command that takes one
 case $cmd in
-    leases|wired-set|dhcp-probe|dhcp-guard|dhcp-reserve|ping|internet-check)
+    status|leases|wired-set|dhcp-probe|dhcp-guard|dhcp-reserve|ping|internet-check)
         if [ -n "$iface" ]; then
-            case $cmd in leases) k=lease ;; wired-set) k=wired ;; dhcp-probe) k=probe ;; dhcp-guard) k=guard ;;
+            case $cmd in status) k=iface ;; leases) k=lease ;; wired-set) k=wired ;; dhcp-probe) k=probe ;; dhcp-guard) k=guard ;;
                          dhcp-reserve) k=reservation ;;
                          ping) k=ping ;; *) k=internet ;; esac
             need_nm
