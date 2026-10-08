@@ -667,3 +667,12 @@ XDG_RUNTIME_DIR=/tmp/runtime-root
 - **v2.0** - Added network API, async app launching, improved configuration
 - **v1.0** - Initial release with touch interface and JSON configuration
 
+## USB video for the Demo Video tile (and the Stream Deck's Default Ref Video key)
+
+`kodi-video.sh` (the Demo Video tile) plays, in this order: the first video in a USB stick's
+`Videos/` folder; else the first video at the stick's top level (e.g. `sample-video.mp4`);
+else the image's `ref-video.mp4`; else `flower.mkv`. "First" follows the extension order mkv,
+mp4, avi, mov, wmv, flv, webm, m4v, ts - keep one video per place. The rule is
+`find_usb_video` in `kodi-usb-common.sh`, which the Stream Deck's Default Ref Video key
+(streamdeck-ctrl, `launch-default-ref-video.sh`) sources too, so the two never differ.
+Host test: `sh tests/test-kodi-usb-video.sh`.

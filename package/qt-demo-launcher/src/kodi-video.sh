@@ -2,9 +2,10 @@
 # kodi-video.sh - Launch Kodi and play video with loop enabled
 # Kodi uses GBM/DRM for display on Pi OS Lite (headless, no X11/Wayland)
 #
-# USB priority: if a USB stick with a Videos/ folder containing a video
-# file is detected, plays first video from USB. Otherwise prefers the
-# rootfs reference video, then falls back to local flower.mkv.
+# USB priority: a video on a USB stick - the first in its Videos/ folder,
+# else the first at its top level - plays first. Otherwise prefers the
+# rootfs reference video, then falls back to local flower.mkv. (The Stream
+# Deck's Default Ref Video key uses the same rule, kodi-usb-common.sh.)
 #
 # This script is launched by qt-demo-launcher as m_runningProcess.
 # To avoid deadlock (launcher tracks this script as the running app),
@@ -40,10 +41,8 @@ KODI_MIRROR_LIB="$(cd "$(dirname "$0")" && pwd)/libkodi-drm-mirror.so"
         VIDEO="$FALLBACK_VIDEO"
     fi
 
-    usb_videos=$(detect_usb_media_path "Videos") && {
-        usb_video=$(find_first_video "$usb_videos")
-        [ -n "$usb_video" ] && VIDEO="$usb_video"
-    }
+    # A USB stick's video: Videos/ first, then the stick's top level
+    usb_video=$(find_usb_video) && VIDEO="$usb_video"
 
     # Wait for Kodi JSON-RPC to become available (up to 15 seconds)
     for i in $(seq 1 15); do

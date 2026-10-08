@@ -11,6 +11,10 @@
 #   detect_usb_media_path <subdir>  - Returns USB path to <subdir> if found
 #                                     e.g., detect_usb_media_path "Pictures"
 #   find_first_video <dir>          - Returns path to first video file in <dir>
+#   find_usb_video                  - The USB stick's video: the first in Videos/,
+#                                     else the first at the stick's top level
+#                                     (the launcher's Demo Video tile and the
+#                                     Stream Deck's Default Ref Video key)
 
 USB_MOUNT_POINT="/tmp/micropanel-usb"
 
@@ -126,6 +130,30 @@ detect_usb_media_path() {
         return 1
     done
 
+    return 1
+}
+
+# The USB stick's mount point (mounting it if needed), waiting up to 5 s for
+# udisks2 after boot as detect_usb_media_path does
+detect_usb_mount() {
+    local usb_device attempt mount_point
+    usb_device=$(_detect_usb_device) || return 1
+    for attempt in 1 2 3 4 5; do
+        mount_point=$(_get_usb_mount "$usb_device") && { echo "$mount_point"; return 0; }
+        sleep 1
+    done
+    return 1
+}
+
+# The video on a USB stick: Videos/ first (the folder the tile always used),
+# then the stick's top level (e.g. a sample-video.mp4 copied straight on it)
+find_usb_video() {
+    local mount_point video
+    mount_point=$(detect_usb_mount) || return 1
+    if [ -d "$mount_point/Videos" ]; then
+        video=$(find_first_video "$mount_point/Videos") && { echo "$video"; return 0; }
+    fi
+    video=$(find_first_video "$mount_point") && { echo "$video"; return 0; }
     return 1
 }
 
