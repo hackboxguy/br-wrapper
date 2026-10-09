@@ -39,6 +39,22 @@ so in the log if the FPGA reports no video.
 its test pattern until a power cycle. This is old behaviour, not the bus check's; a hand swap for a
 test needs a power cycle afterwards.
 
+## Mode 1 on DS90UH983 CS2.0: no DP sink events
+
+The mode-1 recovery after a DP source change (display-board GPIO reset, 983 digital reset, HPD
+toggle) is triggered by APB `SINK_0_INT_CAUSE` (0x194), a read-clear register on CS1.0. On the
+CS2.0 that replaces the discontinued CS1.0 (983v3, 12.3"-NQ1.1, 2026-10-09) that address reads
+`0x7FFF7FFF` on every poll and never clears, so every poll looked like a video event: the panel
+showed its BIST pattern, the Qt launcher for 2-3 s, then BIST again (a recovery every 7.7 s).
+
+The driver now reads the revision at probe as TI's script generator does (APB block 3,
+`UNIQUE_ID_3`, bit 6 set = CS1.0) and logs `983 silicon: ...` and `DP sink-event recovery on|off`.
+Only CS1.0 gets the sink-event recovery; on later silicon the poll keeps the FPD-Link, bus and DTG
+checks and never touches 0x190/0x194. Measured: CS1.0 (17" OLED-OTS rig) `UNIQUE_ID_3=0x40`,
+`MASK_ID_REV=0x10`; CS2.0 `UNIQUE_ID_3=0x00`, `MASK_ID_REV=0x30`. A failed read keeps CS1.0
+behaviour. A CS2.0 board therefore has no automatic recovery after an HDMI switch until a CS2.0
+video-event source is found.
+
 ## Parameters
 
 `/sys/module/hh983_serializer/parameters/`; 0644 ones can be changed at runtime.
@@ -50,6 +66,8 @@ test needs a power cycle afterwards.
 | `dp_guard`, `dtg_check`, `dtg_tolerance`, `wedge_holdoff_s`, `dtg_recover`, `wedge_recovery` | | 0/2 | the DP video guard and the DTG-wedge check (`docs/hh983-984-black-screen/`) |
 | `dtg_wedge_count`, `dtg_boot_wedge_count` | | 0 | read-only counters |
 | `tddi_port`, `fpga_addr` | -1, 0x1D | 1 | where the touch controller and the panel FPGA are routed |
+| **`dp_events`** | **-1** | 1 | the DP sink-event recovery (HDMI-switch case): -1 = only on CS1.0 silicon, 0 = off, 1 = on; see below |
+| **`ser_unique_id3`**, **`ser_mask_id_rev`** | | 1 | read-only: the 983's revision bytes read at probe (UNIQUE_ID_3 bit 6 = CS1.0) |
 | `link_retrain_after`, `link_retrain_max`, `link_retrain_reset`, `link_retrain_hpd_ms`, `force_retrain` | 0, 10, 2, 200, 0 | 1 | FPD-Link re-train, off by default (it recovered none of the natural losses) |
 | `link_lost_count`, `link_retrain_count`, `link_retrain_ok_count` | | 1 | read-only: 988 losses (fault A), re-trains |
 | **`link_lost_poll_s`** | **30** | 1 | poll interval while the 988 is unreachable (fault A); 0 = keep `poll_interval_ms` |

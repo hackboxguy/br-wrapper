@@ -274,6 +274,37 @@ static int fpga_addr = 0x1D;
 module_param(fpga_addr, int, 0444);
 MODULE_PARM_DESC(fpga_addr, "Mode 1 only: 7-bit address of the panel's local-dimming FPGA to expose to the host, routed via target slot 2 only if plain pass-through cannot already reach it (default: 0x1D; 0 = route nothing)");
 
+/* DP sink events (mode 1) and the 983 silicon revision, 2026-10-09.
+ *
+ * The mode-1 HDMI-switch recovery watches APB SINK_0_INT_CAUSE (0x194), a
+ * read-clear register on DS90UH983 CS1.0.  CS1.0 is discontinued; on the
+ * CS2.0 that replaces it (983v3 board, 12.3"-NQ1.1) the same address reads
+ * 0x7FFF7FFF on every poll, never clears, and SINK_0_INT_MASK (0x190) reads
+ * 0xFFFFFF07.  The low byte decodes as NO_VIDEO | VIDEO_DETECT | MODE_CHANGE,
+ * so every poll ran hh983_recover_link(): display-board GPIO reset (the panel
+ * shows its BIST pattern), 983 digital reset, HPD toggle -- 73 recoveries in
+ * 9.5 min, a picture for 2-3 s in between.
+ *
+ * So the driver reads the revision at probe the way TI's script generator
+ * does (98x Script Gen v6p1, "Verify Silicon Revision"): APB block 3, byte
+ * UNIQUE_ID_3, bit 6 set = CS1.0.  MASK_ID_REV (reg 0x30) is logged beside
+ * it; TI tells ES1.0 (0x10) and CS1.5 (bit 5) apart with it, the CS2.0 here
+ * reads 0x30.  Only CS1.0 gets the sink-event monitor; on later silicon the
+ * mode-1 poll keeps the FPD-Link, bus and DTG checks and never touches
+ * 0x190/0x194.  A failed read keeps the CS1.0 behaviour.
+ */
+static int dp_events = -1;
+module_param(dp_events, int, 0444);
+MODULE_PARM_DESC(dp_events, "Mode 1: watch the 983's DP sink events and recover the link on them (-1 = auto: only on CS1.0 silicon, 0 = off, 1 = on; default -1)");
+
+static int ser_unique_id3 = -1;
+module_param(ser_unique_id3, int, 0444);
+MODULE_PARM_DESC(ser_unique_id3, "Mode 1: the 983's UNIQUE_ID_3 fuse byte read at probe, bit 6 = CS1.0 (read-only; -1 = not read)");
+
+static int ser_mask_id_rev = -1;
+module_param(ser_mask_id_rev, int, 0444);
+MODULE_PARM_DESC(ser_mask_id_rev, "Mode 1: the 983's MASK_ID_REV (reg 0x30) read at probe (read-only; -1 = not read)");
+
 /* FPD-Link re-train (mode 1), 2026-09-28.
  *
  * During long I2C-heavy transfers to the panel (the FPGA OTA flash) the
@@ -431,6 +462,7 @@ MODULE_PARM_DESC(bus_reset_ok_count, "Mode 1: 988 digital resets after which the
 #define SER_IND_ACC_DATA         0x42
 #define SER_IND_PAGE_VP          0x0C  /* Video processor 0..3 registers (script byte 0x32) */
 #define SER_VP0_STS              0x30  /* VP_STS_VP0: [0]=TIMING_GEN_STS synced to input video */
+#define SER_MASK_ID_REV          0x30  /* MASK_ID_REV, main page (the line above is the VP page) */
 
 /* Serializer configuration values */
 #define SER_ENABLE_PASSTHROUGH   0xD8
@@ -444,6 +476,11 @@ MODULE_PARM_DESC(bus_reset_ok_count, "Mode 1: 988 digital resets after which the
 /* APB_CTL field values */
 #define APB_ENABLE               0x01  /* bit 0: enable APB access */
 #define APB_READ                 0x02  /* bit 1: start APB read (W1S, self-clears when done) */
+#define APB_SELECT_EFUSE         0x18  /* bits 4:3 = 3: the fuse block holding UNIQUE_ID_0..3 */
+
+/* APB fuse block (APB_SELECT=3), byte-wide: only APB_DATA0 is updated */
+#define APB_EFUSE_UNIQUE_ID_3    0x003
+#define UNIQUE_ID_3_CS10         0x40  /* set on DS90UH983 CS1.0 (TI script generator v6p1) */
 
 /* APB register addresses (DP RX block, APB_SELECT=0) */
 #define APB_LINK_ENABLE          0x000 /* bit 0: 1=HPD HIGH + RX enabled, 0=HPD LOW */
@@ -545,6 +582,7 @@ struct hh983_data {
 	int recovery_count;
 	int recovery_cooldown;  /* poll cycles to skip after recovery */
 	int down_count;         /* consecutive polls with link down */
+	bool dp_events;         /* mode 1: watch SINK_0_INT_CAUSE (CS1.0 only, see dp_events) */
 	/* Mode 0 DP video guard */
 	bool guard_video_up;    /* last known 983 VP0 sync state */
 	int guard_up_count;     /* consecutive synced polls while down */
@@ -699,6 +737,48 @@ static int hh983_apb_read(struct i2c_client *client, u16 apb_addr)
 	usleep_range(100, 200);
 
 	return hh983_read_reg(client, SER_APB_DATA0);
+}
+
+/* Read the 983's revision and decide whether the mode-1 poll watches DP sink
+ * events -- see dp_events.  The same register sequence as TI's script
+ * generator, and APB_CTL is put back to APB_ENABLE (block 0) afterwards so
+ * the next hh983_apb_write() lands in the DP RX block. */
+static void hh983_detect_silicon(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int id3 = -EIO, rev;
+	int ret;
+
+	ret = hh983_write_reg(client, SER_APB_ADR0, APB_EFUSE_UNIQUE_ID_3 & 0xFF);
+	if (ret == 0)
+		ret = hh983_write_reg(client, SER_APB_ADR1, (APB_EFUSE_UNIQUE_ID_3 >> 8) & 0xFF);
+	if (ret == 0)
+		ret = hh983_write_reg(client, SER_APB_CTL,
+				      APB_SELECT_EFUSE | APB_ENABLE | APB_READ);
+	if (ret == 0) {
+		usleep_range(100, 200);
+		id3 = hh983_read_reg(client, SER_APB_DATA0);
+	}
+	hh983_write_reg(client, SER_APB_CTL, APB_ENABLE);
+	rev = hh983_read_reg(client, SER_MASK_ID_REV);
+
+	ser_unique_id3 = id3 < 0 ? -1 : id3;
+	ser_mask_id_rev = rev < 0 ? -1 : rev;
+
+	if (dp_events >= 0)
+		data->dp_events = dp_events != 0;
+	else
+		data->dp_events = id3 < 0 || (id3 & UNIQUE_ID_3_CS10);
+
+	if (id3 < 0)
+		dev_warn(&client->dev, "983 silicon revision unreadable (%d); assuming CS1.0\n", id3);
+	else
+		dev_info(&client->dev, "983 silicon: %s (UNIQUE_ID_3=0x%02X, MASK_ID_REV=0x%02X)\n",
+			 (id3 & UNIQUE_ID_3_CS10) ? "CS1.0" : "CS1.5 or later (not CS1.0)",
+			 id3, rev < 0 ? 0 : rev);
+	dev_info(&client->dev, "DP sink-event recovery %s%s\n",
+		 data->dp_events ? "on" : "off",
+		 dp_events >= 0 ? " (forced by dp_events)" : "");
 }
 
 /* Log link status from both serializer and deserializer */
@@ -1740,6 +1820,8 @@ static void hh983_recover_link(struct hh983_data *data)
 /* Clear pending DP RX events by reading the read-clear cause register. */
 static void hh983_clear_dp_events(struct hh983_data *data)
 {
+	if (!data->dp_events)
+		return;
 	hh983_apb_read(data->client, APB_SINK_0_INT_CAUSE);
 }
 
@@ -2129,6 +2211,11 @@ static void hh983_link_work_fn(struct work_struct *work)
 		goto resched;
 	}
 
+	/* Not CS1.0: 0x194 is not the sink cause register there (dp_events);
+	 * link_up stays true, so the blind recovery below never fires either. */
+	if (!data->dp_events)
+		goto checks;
+
 	/* Read SINK_0_INTERRUPT_CAUSE — read-clear register.
 	 * Any non-zero value means a video event occurred.
 	 */
@@ -2197,6 +2284,7 @@ static void hh983_link_work_fn(struct work_struct *work)
 		}
 	}
 
+checks:
 	/* Video is up and no recovery is settling: the failure left to look for
 	 * is the 988 DTG wedging under us, which this monitor is blind to
 	 * because it watches SINK video events and a wedge produces none. */
@@ -2758,11 +2846,14 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 	 * front -- see plan 4.3.
 	 */
 	if (data->mode == 1) {
+		hh983_detect_silicon(data);
+
 		/* Unmask SINK_0 video interrupts so SINK_0_INT_CAUSE fires on
 		 * NO_VIDEO / VIDEO_DETECT / VIDEO_MODE_CHANGE events.
-		 * Default mask is 0x79 (most events masked).
+		 * Default mask is 0x79 (most events masked).  CS1.0 only.
 		 */
-		hh983_apb_write(client, APB_SINK_0_INT_MASK, 0x00);
+		if (data->dp_events)
+			hh983_apb_write(client, APB_SINK_0_INT_MASK, 0x00);
 
 		/* Clear any DP events from boot training before starting monitor */
 		hh983_clear_dp_events(data);
