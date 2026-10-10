@@ -52,8 +52,28 @@ The driver now reads the revision at probe as TI's script generator does (APB bl
 Only CS1.0 gets the sink-event recovery; on later silicon the poll keeps the FPD-Link, bus and DTG
 checks and never touches 0x190/0x194. Measured: CS1.0 (17" OLED-OTS rig) `UNIQUE_ID_3=0x40`,
 `MASK_ID_REV=0x10`; CS2.0 `UNIQUE_ID_3=0x00`, `MASK_ID_REV=0x30`. A failed read keeps CS1.0
-behaviour. A CS2.0 board therefore has no automatic recovery after an HDMI switch until a CS2.0
-video-event source is found.
+behaviour.
+
+### DP RX kick (2026-10-10)
+
+Without the sink-event recovery, image 2.10 came up black on the CS2.0 + 12.3"-NQ1.1 rig: after
+the RH850's init the CS2.0 DP RX never trains (APB PHY_STATUS 0x208 = 0, VP0 not synced), and
+neither an HPD pulse nor restarting the Pi's HDMI output changes that. What does: a 983 digital
+reset, then HPD low for about 1 s. 200 ms is too short for the HDMI-to-DP converter (1 of 5); 1 s
+worked 5 of 5, and an HPD pulse without the reset worked 0 of 3 after the RH850 init.
+
+So on non-CS1.0 silicon, when VP0 has not synced for 3 polls the poll does that "kick", at most
+`dp_kick_max` times until video arrives (video re-arms it). It leaves the display board alone, so
+no BIST flash. VP0 and not 0x208 because about one kick in three locks the PHY with no stream
+behind it. Bench: 7 of 7 recoveries with one kick each (reload + 6 RH850 re-inits), video about
+5.6 s after the kick; cold boot: kick at 9.3 s, video at 14.9 s.
+
+`hh983_apb_write()` also changed. It wrote address, DATA0 and then APB_CTL; on the CS2.0 the APB
+write starts on the DATA3 (0x4E) write, TI's order (enable, address, DATA0..DATA3), and the old
+order never landed (LINK_ENABLE read back unchanged). Every HPD toggle the driver did on CS2.0,
+including the 2.09 recoveries, did nothing; only their digital reset had an effect. On CS1.0
+mode 1 the HPD toggles and the SINK_0_INT_MASK write now take effect as intended; mode 0 does not
+use this path.
 
 ## Parameters
 
@@ -68,6 +88,8 @@ video-event source is found.
 | `tddi_port`, `fpga_addr` | -1, 0x1D | 1 | where the touch controller and the panel FPGA are routed |
 | **`dp_events`** | **-1** | 1 | the DP sink-event recovery (HDMI-switch case): -1 = only on CS1.0 silicon, 0 = off, 1 = on; see below |
 | **`ser_unique_id3`**, **`ser_mask_id_rev`** | | 1 | read-only: the 983's revision bytes read at probe (UNIQUE_ID_3 bit 6 = CS1.0) |
+| **`dp_kick_max`**, **`dp_kick_hpd_ms`** | **3**, **1000** | 1 | not CS1.0: DP RX kicks (983 digital reset + HPD low) while no DP video arrives, re-armed by video; 0 = never; see above |
+| **`dp_kick_count`** | | 1 | read-only: DP RX kicks since load |
 | `link_retrain_after`, `link_retrain_max`, `link_retrain_reset`, `link_retrain_hpd_ms`, `force_retrain` | 0, 10, 2, 200, 0 | 1 | FPD-Link re-train, off by default (it recovered none of the natural losses) |
 | `link_lost_count`, `link_retrain_count`, `link_retrain_ok_count` | | 1 | read-only: 988 losses (fault A), re-trains |
 | **`link_lost_poll_s`** | **30** | 1 | poll interval while the 988 is unreachable (fault A); 0 = keep `poll_interval_ms` |

@@ -280,7 +280,7 @@ MODULE_PARM_DESC(fpga_addr, "Mode 1 only: 7-bit address of the panel's local-dim
  * read-clear register on DS90UH983 CS1.0.  CS1.0 is discontinued; on the
  * CS2.0 that replaces it (983v3 board, 12.3"-NQ1.1) the same address reads
  * 0x7FFF7FFF on every poll, never clears, and SINK_0_INT_MASK (0x190) reads
- * 0xFFFFFF07.  The low byte decodes as NO_VIDEO | VIDEO_DETECT | MODE_CHANGE,
+ * 0x07FFFFFF.  The low byte decodes as NO_VIDEO | VIDEO_DETECT | MODE_CHANGE,
  * so every poll ran hh983_recover_link(): display-board GPIO reset (the panel
  * shows its BIST pattern), 983 digital reset, HPD toggle -- 73 recoveries in
  * 9.5 min, a picture for 2-3 s in between.
@@ -296,6 +296,42 @@ MODULE_PARM_DESC(fpga_addr, "Mode 1 only: 7-bit address of the panel's local-dim
 static int dp_events = -1;
 module_param(dp_events, int, 0444);
 MODULE_PARM_DESC(dp_events, "Mode 1: watch the 983's DP sink events and recover the link on them (-1 = auto: only on CS1.0 silicon, 0 = off, 1 = on; default -1)");
+
+/* DP RX kick (mode 1, not CS1.0), 2026-10-10.
+ *
+ * On the CS2.0 983 the DP RX does not train after the RH850's CS1.0 init
+ * sequence (12.3"-NQ1.1, dip3_oldi profile): APB PHY_STATUS (0x208) stays 0,
+ * and neither an HPD pulse nor a restart of the Pi's HDMI output changes
+ * that.  A 983 digital reset followed by HPD low for 1 s, and the HDMI-to-DP
+ * converter trains within 2.5 s (3 of 3 after the RH850 init, 5 of 5 after
+ * a reset of a trained link).  The 200 ms HPD pulse of hh983_recover_link()
+ * is too short for that converter (1 of 5), and an HPD pulse without the
+ * reset never works after the RH850 init (0 of 3).  With the sink-event
+ * monitor off on that silicon (dp_events) nothing ran either, so image 2.10
+ * came up black; 2.09 showed a picture between its looping recoveries.
+ *
+ * So when the 983 sees no DP video (VP0 not synced) for DP_KICK_POLLS polls
+ * in a row, the poll kicks the DP RX, at most dp_kick_max times until video
+ * arrives; video re-arms it.  VP0 and not 0x208: about one kick in three
+ * locks the PHY but no stream follows (bench, 5 re-init cycles), and only a
+ * further kick brings the video.
+ * The count is bounded so a source that is simply absent costs a few
+ * resets, not a loop.  The kick leaves the display board alone (no 988 GPIO
+ * reset, so no BIST pattern): it was never needed on the bench.
+ */
+static int dp_kick_max = 3;
+module_param(dp_kick_max, int, 0644);
+MODULE_PARM_DESC(dp_kick_max, "Mode 1, not CS1.0: maximum 983 digital reset + HPD toggles while no DP video arrives, re-armed by video (default 3; 0 = never)");
+
+static int dp_kick_count;
+module_param(dp_kick_count, int, 0444);
+MODULE_PARM_DESC(dp_kick_count, "Mode 1: DP RX kicks since load (read-only)");
+
+#define DP_KICK_POLLS  3        /* consecutive unlocked polls before a kick */
+
+static int dp_kick_hpd_ms = 1000;
+module_param(dp_kick_hpd_ms, int, 0644);
+MODULE_PARM_DESC(dp_kick_hpd_ms, "Mode 1, not CS1.0: HPD low time of a DP RX kick in ms (default 1000; 200 is too short for the HDMI-to-DP converter)");
 
 static int ser_unique_id3 = -1;
 module_param(ser_unique_id3, int, 0444);
@@ -446,6 +482,9 @@ MODULE_PARM_DESC(bus_reset_ok_count, "Mode 1: 988 digital resets after which the
 #define SER_APB_ADR0             0x49  /* APB address low byte */
 #define SER_APB_ADR1             0x4A  /* APB address high byte */
 #define SER_APB_DATA0            0x4B  /* APB data byte 0 */
+#define SER_APB_DATA1            0x4C
+#define SER_APB_DATA2            0x4D
+#define SER_APB_DATA3            0x4E  /* writing it starts an APB write */
 #define SER_INTERRUPT_CTL        0x51  /* Interrupt enable: [7]=INTB_PIN_EN [4]=IE_DP_RX0 */
 #define SER_TARGET_ID0           0x70
 #define SER_TARGET_ID1           0x71
@@ -484,6 +523,7 @@ MODULE_PARM_DESC(bus_reset_ok_count, "Mode 1: 988 digital resets after which the
 
 /* APB register addresses (DP RX block, APB_SELECT=0) */
 #define APB_LINK_ENABLE          0x000 /* bit 0: 1=HPD HIGH + RX enabled, 0=HPD LOW */
+#define APB_PHY_STATUS           0x208 /* DP RX PHY lock, low byte 0xF0 = 4 lanes; 0 = not trained */
 #define APB_SINK_0_INT_MASK      0x190 /* Sink 0 interrupt mask (default 0x79 = most masked) */
 #define APB_SINK_0_INT_CAUSE     0x194 /* Sink 0 interrupt cause (read-clear):
                                         *   [2]=NO_VIDEO  [1]=VIDEO_DETECT  [0]=VIDEO_MODE_CHANGE */
@@ -583,6 +623,8 @@ struct hh983_data {
 	int recovery_cooldown;  /* poll cycles to skip after recovery */
 	int down_count;         /* consecutive polls with link down */
 	bool dp_events;         /* mode 1: watch SINK_0_INT_CAUSE (CS1.0 only, see dp_events) */
+	int dp_nolock;          /* not CS1.0: consecutive polls without DP video */
+	int dp_kicks;           /* not CS1.0: kicks since video was last seen */
 	/* Mode 0 DP video guard */
 	bool guard_video_up;    /* last known 983 VP0 sync state */
 	int guard_up_count;     /* consecutive synced polls while down */
@@ -692,20 +734,25 @@ static int hh983_read_deser_reg(struct i2c_client *client, u8 deser_addr, u8 reg
 /* Write to 983 APB register (indirect access to DP RX block) */
 static int hh983_apb_write(struct i2c_client *client, u16 apb_addr, u8 data)
 {
-	int ret;
+	/* TI's order: enable, address, then all four data bytes -- the write
+	 * to DATA3 starts the APB write.  The old order (address, DATA0, then
+	 * APB_CTL) never reached the APB on the CS2.0 983 (2026-10-10:
+	 * LINK_ENABLE read back unchanged), so its HPD toggles did nothing. */
+	static const u8 seq_reg[] = {
+		SER_APB_CTL, SER_APB_ADR0, SER_APB_ADR1,
+		SER_APB_DATA0, SER_APB_DATA1, SER_APB_DATA2, SER_APB_DATA3,
+	};
+	u8 seq_val[] = {
+		APB_ENABLE, apb_addr & 0xFF, (apb_addr >> 8) & 0xFF,
+		data, 0x00, 0x00, 0x00,
+	};
+	int i, ret;
 
-	ret = hh983_write_reg(client, SER_APB_ADR0, apb_addr & 0xFF);
-	if (ret < 0)
-		return ret;
-	ret = hh983_write_reg(client, SER_APB_ADR1, (apb_addr >> 8) & 0xFF);
-	if (ret < 0)
-		return ret;
-	ret = hh983_write_reg(client, SER_APB_DATA0, data);
-	if (ret < 0)
-		return ret;
-	ret = hh983_write_reg(client, SER_APB_CTL, APB_ENABLE);
-	if (ret < 0)
-		return ret;
+	for (i = 0; i < ARRAY_SIZE(seq_reg); i++) {
+		ret = hh983_write_reg(client, seq_reg[i], seq_val[i]);
+		if (ret < 0)
+			return ret;
+	}
 
 	dev_dbg(&client->dev, "APB 0x%03X <- 0x%02X\n", apb_addr, data);
 	return 0;
@@ -2198,6 +2245,51 @@ static void hh983_bus_check(struct hh983_data *data)
  *
  * Fallback: blind recovery after 10+ poll cycles with no events.
  */
+/* Not CS1.0: kick a DP RX that brings no video -- see dp_kick_max.
+ * Returns true when it kicked. */
+static bool hh983_dp_kick(struct hh983_data *data)
+{
+	struct i2c_client *client = data->client;
+	int vp_sts, phy;
+
+	vp_sts = hh983_ind_read(client, SER_IND_PAGE_VP, SER_VP0_STS);
+	if (vp_sts < 0)
+		return false;
+
+	if (vp_sts & 0x01) {
+		if (data->dp_kicks)
+			dev_info(&client->dev, "DP video up (VP_STS=0x%02X) after %d kick(s)\n",
+				 vp_sts, data->dp_kicks);
+		data->dp_nolock = 0;
+		data->dp_kicks = 0;
+		return false;
+	}
+
+	if (++data->dp_nolock < DP_KICK_POLLS || data->dp_kicks >= dp_kick_max)
+		return false;
+
+	phy = hh983_apb_read(client, APB_PHY_STATUS);
+	data->dp_nolock = 0;
+	data->dp_kicks++;
+	dp_kick_count++;
+	dev_notice(&client->dev,
+		   "No DP video for %d polls (VP_STS=0x%02X, PHY=0x%02X), kicking the DP RX (%d of %d)\n",
+		   DP_KICK_POLLS, vp_sts, phy < 0 ? 0 : phy, data->dp_kicks, dp_kick_max);
+
+	/* Digital reset (self-clearing, registers preserved), then a long HPD
+	 * low so the source sees an unplug and trains again. */
+	hh983_write_reg(client, SER_RESET_CTL, SER_DIGITAL_RESET_0);
+	msleep(500);
+	hh983_write_reg(client, SER_I2C_CONTROL, SER_ENABLE_PASSTHROUGH);
+	usleep_range(1000, 2000);
+	hh983_apb_write(client, APB_LINK_ENABLE, 0x00);
+	msleep(clamp(dp_kick_hpd_ms, 0, 10000));
+	hh983_apb_write(client, APB_LINK_ENABLE, 0x01);
+
+	data->recovery_cooldown = 3;
+	return true;
+}
+
 static void hh983_link_work_fn(struct work_struct *work)
 {
 	struct hh983_data *data = container_of(work, struct hh983_data,
@@ -2212,9 +2304,13 @@ static void hh983_link_work_fn(struct work_struct *work)
 	}
 
 	/* Not CS1.0: 0x194 is not the sink cause register there (dp_events);
-	 * link_up stays true, so the blind recovery below never fires either. */
-	if (!data->dp_events)
+	 * link_up stays true, so the blind recovery below never fires either.
+	 * What that silicon does need is a kick when the DP RX never trains. */
+	if (!data->dp_events) {
+		if (hh983_dp_kick(data))
+			goto resched;
 		goto checks;
+	}
 
 	/* Read SINK_0_INTERRUPT_CAUSE — read-clear register.
 	 * Any non-zero value means a video event occurred.
