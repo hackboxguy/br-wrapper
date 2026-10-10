@@ -316,12 +316,14 @@ MODULE_PARM_DESC(dp_events, "Mode 1: watch the 983's DP sink events and recover 
  * locks the PHY but no stream follows (bench, 5 re-init cycles), and only a
  * further kick brings the video.
  * The count is bounded so a source that is simply absent costs a few
- * resets, not a loop.  The kick leaves the display board alone (no 988 GPIO
+ * resets, not a loop.  It was 3 until a cold boot of the CS2.0 12.3" NQ5
+ * needed all three (2026-10-10, two kicks locking the PHY with no stream);
+ * 6 leaves the same margin again, about 45 s of kicks for an absent source.  The kick leaves the display board alone (no 988 GPIO
  * reset, so no BIST pattern): it was never needed on the bench.
  */
-static int dp_kick_max = 3;
+static int dp_kick_max = 6;
 module_param(dp_kick_max, int, 0644);
-MODULE_PARM_DESC(dp_kick_max, "Mode 1, not CS1.0: maximum 983 digital reset + HPD toggles while no DP video arrives, re-armed by video (default 3; 0 = never)");
+MODULE_PARM_DESC(dp_kick_max, "Mode 1, not CS1.0: maximum 983 digital reset + HPD toggles while no DP video arrives, re-armed by video (default 6; 0 = never)");
 
 static int dp_kick_count;
 module_param(dp_kick_count, int, 0444);

@@ -66,7 +66,8 @@ So on non-CS1.0 silicon, when VP0 has not synced for 3 polls the poll does that 
 `dp_kick_max` times until video arrives (video re-arms it). It leaves the display board alone, so
 no BIST flash. VP0 and not 0x208 because about one kick in three locks the PHY with no stream
 behind it. Bench: 7 of 7 recoveries with one kick each (reload + 6 RH850 re-inits), video about
-5.6 s after the kick; cold boot: kick at 9.3 s, video at 14.9 s.
+5.6 s after the kick; cold boot: kick at 9.3 s, video at 14.9 s. The limit was 3 until a CS2.0
+12.3" NQ5 cold boot needed all three (two locked the PHY with no stream); it is 6 now.
 
 `hh983_apb_write()` also changed. It wrote address, DATA0 and then APB_CTL; on the CS2.0 the APB
 write starts on the DATA3 (0x4E) write, TI's order (enable, address, DATA0..DATA3), and the old
@@ -88,7 +89,7 @@ use this path.
 | `tddi_port`, `fpga_addr` | -1, 0x1D | 1 | where the touch controller and the panel FPGA are routed |
 | **`dp_events`** | **-1** | 1 | the DP sink-event recovery (HDMI-switch case): -1 = only on CS1.0 silicon, 0 = off, 1 = on; see below |
 | **`ser_unique_id3`**, **`ser_mask_id_rev`** | | 1 | read-only: the 983's revision bytes read at probe (UNIQUE_ID_3 bit 6 = CS1.0) |
-| **`dp_kick_max`**, **`dp_kick_hpd_ms`** | **3**, **1000** | 1 | not CS1.0: DP RX kicks (983 digital reset + HPD low) while no DP video arrives, re-armed by video; 0 = never; see above |
+| **`dp_kick_max`**, **`dp_kick_hpd_ms`** | **6**, **1000** | 1 | not CS1.0: DP RX kicks (983 digital reset + HPD low) while no DP video arrives, re-armed by video; 0 = never; see above |
 | **`dp_kick_count`** | | 1 | read-only: DP RX kicks since load |
 | `link_retrain_after`, `link_retrain_max`, `link_retrain_reset`, `link_retrain_hpd_ms`, `force_retrain` | 0, 10, 2, 200, 0 | 1 | FPD-Link re-train, off by default (it recovered none of the natural losses) |
 | `link_lost_count`, `link_retrain_count`, `link_retrain_ok_count` | | 1 | read-only: 988 losses (fault A), re-trains |
