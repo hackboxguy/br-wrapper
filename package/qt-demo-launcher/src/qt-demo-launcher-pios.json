@@ -969,35 +969,38 @@
       },
       {
         "id": "d65-calibration",
-        "enabled": false,
+        "enabled": true,
         "page": "calibration-tools",
         "text": "D65 Calibration",
-        "subtitle": "Calibrate to D65",
+        "subtitle": "Adjust white point to D65",
         "icon": "/usr/share/qt-apps/icons/white-point.svg",
         "program": "/usr/bin/disp-tester",
         "arguments": [
           "--child-action-button",
-          "--child-action-start-text", "Start D65-Cal",
-          "--child-action-stop-text", "Stop D65-Cal",
+          "--disable-exit-while-child-active",
+          "--child-action-start-text", "Adjust White to D65",
+          "--child-action-stop-text", "Adjusting...",
           "--child-action-start-color", "green",
           "--child-action-stop-color", "red",
           "--disable-pattern-navigation",
           "--disable-ui-autohide",
           "--hide-navigation-help",
           "--script", "/home/pi/micropanel/bin/d65-calibration-child.py",
-          "--script-arg=--panel-id",
-          "--script-arg=14-6-fhd-new",
-          "--script-arg=--panel-serial",
-          "--script-arg=14612345",
           "--script-arg=--backend",
           "--script-arg=i2cdev",
+          "--script-arg=--panel-id",
+          "--script-arg=auto",
+          "--script-arg=--panel-serial",
+          "--script-arg=auto",
+          "--script-arg=--brightness-percent",
+          "--script-arg=100",
           "--script-arg=--calibration-output",
           "--script-arg=/home/pi/system-settings/wp-cal.json"
         ],
         "working_directory": "/tmp",
         "position": {
-          "row": 1,
-          "column": 2
+          "row": 2,
+          "column": 0
         },
         "size": {
           "width": 640,
@@ -1012,6 +1015,52 @@
         "accent_color": "#FDE68A",
         "background_color": "#8E6C00",
         "hover_color": "#785A00",
+        "border_radius": 20
+      },
+      {
+        "id": "reset-white-point",
+        "enabled": true,
+        "page": "calibration-tools",
+        "text": "Reset White Point",
+        "subtitle": "Remove D65 calibration",
+        "icon": "/usr/share/qt-apps/icons/white-point.svg",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--disable-exit-while-child-active",
+          "--child-action-start-text", "Reset to Default",
+          "--child-action-stop-text", "Resetting...",
+          "--child-action-start-color", "red",
+          "--child-action-stop-color", "gray",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--script", "/home/pi/micropanel/bin/d65-calibration-child.py",
+          "--script-arg=--backend",
+          "--script-arg=i2cdev",
+          "--script-arg=--mode",
+          "--script-arg=reset",
+          "--script-arg=--calibration-output",
+          "--script-arg=/home/pi/system-settings/wp-cal.json"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 2,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "accent_color": "#E2E8F0",
+        "background_color": "#4A5563",
+        "hover_color": "#3B4452",
         "border_radius": 20
       },
       {

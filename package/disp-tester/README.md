@@ -433,10 +433,25 @@ carries the measured primaries, every iteration, and raw samples for
 analysis. Target, panel identity, gamma, and tolerance are all CLI-settable
 (`--target-x/--target-y/--panel-id/--panel-serial/--gamma/--tolerance-xy`).
 
-Suggested validation order: run `White Point Profiling New` and review the
-profile data; then `D65 Calibration` on one display; then
-`White Point Matching New` against the reference display. All three buttons
-currently launch with `--backend simulate` until the new RTL is integrated.
+Launcher buttons (Calibration Tools page, `--backend i2cdev`):
+
+- **D65 Calibration** - prompts to place the sensor; *Adjust White to D65*
+  resets wp_adjust to pass-through, holds the panel at 100 % through
+  als-dimmer (`--brightness-percent`, restored afterwards), then measures and
+  corrects. The previous gains are put back if the run is aborted, and
+  nothing changes until the button is pressed. `--panel-id auto` /
+  `--panel-serial auto` record the display type pi-config-txt.sh configured
+  and the IOC's short chip-ID serial.
+- **Reset White Point** (`--mode reset`) - *Reset to Default* returns the
+  gains to unity and removes `wp-cal.json` and the session log, so the next
+  boot leaves the white uncorrected too.
+
+als-dimmer replays `wp-cal.json` into wp_adjust at startup. A display without
+the wp_adjust block (no FPGA, e.g. the OTS-OLED) shows "not supported" instead
+of running.
+
+`White Point Profiling New` and `White Point Matching New` still launch with
+`--backend simulate`.
 
 ### Touch Navigation
 - **Left edge tap** (25%): Previous pattern
