@@ -5,6 +5,8 @@
 # IOC's (RH850) unique chip ID, as disp-settings shows it - so reports from
 # several displays can share one archive: <serial>_run-<date>-<time>, plus
 # -b<brightness %> for the color-gamut suite (BRIGHTNESS_VALUE, default 100).
+# Displays with no chip ID (e.g. FPGA-only, no IOC) keep the plain
+# run-<date>-<time> name.
 
 set -u
 
@@ -64,7 +66,7 @@ RENDERING_APP_ID="${DISPLAY_ANALYSIS_RENDERING_APP_ID:-$DEFAULT_RENDERING_APP_ID
 GALLERY_APP_ID="${GALLERY_APP_ID:-$DEFAULT_GALLERY_APP_ID}"
 
 # Short chip serial of the display IOC (e.g. 0HD5-B2WV-JE6HH) via disptool;
-# "unknown-serial" when the IOC or its firmware does not provide one.
+# empty when the display has no IOC or its firmware does not provide one.
 read_display_serial() {
     tool=""
     for t in "${DISPTOOL:-}" "$MICROPANEL_HOME/bin/disptool" /usr/bin/disptool /usr/local/bin/disptool; do
@@ -77,14 +79,14 @@ read_display_serial() {
     fi
     case "$serial" in
         ????-????-?????) echo "$serial" ;;
-        *) echo "unknown-serial" ;;
+        *) echo "" ;;
     esac
 }
 
 SUITE_DIR="$OUTPUT_ROOT/$SUITE_DIR_NAME"
 LOCK_DIR="$SUITE_DIR/.analysis.lock"
 DISPLAY_SERIAL="${DISPLAY_SERIAL:-$(read_display_serial)}"
-RUN_ID="${DISPLAY_SERIAL}_run-$(date +%Y%m%d-%H%M%S)"
+RUN_ID="${DISPLAY_SERIAL:+${DISPLAY_SERIAL}_}run-$(date +%Y%m%d-%H%M%S)"
 if [ "$RUN_SUITE" = "color-gamut" ]; then
     RUN_ID="$RUN_ID-b${BRIGHTNESS_VALUE:-100}"
 fi
@@ -412,7 +414,7 @@ if [ "$RUN_SUITE" = "local_dimming_apl" ]; then
     log "Local dimming sweep mode: ${LOCAL_DIMMING_SWEEP_MODE:-percent_apl}"
 fi
 log "Display model: $DISPLAY_MODEL"
-log "Display serial: $DISPLAY_SERIAL"
+log "Display serial: ${DISPLAY_SERIAL:-not available}"
 if [ "$RUN_SUITE" = "color-gamut" ]; then
     if [ -n "${BRIGHTNESS_VALUE:-}" ]; then
         log "Brightness: $BRIGHTNESS_VALUE% (current brightness, chosen at start)"
@@ -455,10 +457,12 @@ fi
 show_rendering_screen || true
 
 if command -v python3 >/dev/null 2>&1; then
-    run_logged python3 "$REPORT_CARD" --input "$RESULTS_DIR" --output "$PNG_PATH" --panels "$REPORT_PANELS"
+    run_logged python3 "$REPORT_CARD" --input "$RESULTS_DIR" --output "$PNG_PATH" --panels "$REPORT_PANELS" \
+        ${DISPLAY_SERIAL:+--serial-number="$DISPLAY_SERIAL"}
     report_rc=$?
 else
-    run_logged "$REPORT_CARD" --input "$RESULTS_DIR" --output "$PNG_PATH" --panels "$REPORT_PANELS"
+    run_logged "$REPORT_CARD" --input "$RESULTS_DIR" --output "$PNG_PATH" --panels "$REPORT_PANELS" \
+        ${DISPLAY_SERIAL:+--serial-number="$DISPLAY_SERIAL"}
     report_rc=$?
 fi
 
