@@ -187,6 +187,18 @@ detect_display_resolution() {
     return 1
 }
 
+# Display type pi-config-txt.sh recorded in config.txt; tells apart panels that
+# share a resolution (14.6-fhd direct-drive vs 14.6-fhd-ej scan-mode EJ).
+configured_display_type() {
+    for q in /usr/bin/pi-config-txt.sh "$MICROPANEL_HOME/usr/bin/pi-config-txt.sh"; do
+        if [ -x "$q" ]; then
+            "$q" --input=/boot/firmware/config.txt --query-config 2>/dev/null
+            return 0
+        fi
+    done
+    return 1
+}
+
 resolve_display_model() {
     if [ -n "${DISPLAY_MODEL:-}" ]; then
         echo "$DISPLAY_MODEL"
@@ -208,7 +220,10 @@ resolve_display_model() {
             echo "rtk-hg560t34"
             ;;
         1920x1080)
-            echo "$DEFAULT_1080P_MODEL"
+            case "$(configured_display_type || true)" in
+                14.6-fhd-ej) echo "14.6-fhd-spartan7-ej" ;;
+                *)           echo "$DEFAULT_1080P_MODEL" ;;
+            esac
             ;;
         *)
             echo "$DEFAULT_DISPLAY_MODEL"
