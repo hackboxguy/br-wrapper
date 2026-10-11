@@ -201,6 +201,9 @@ resolve_display_model() {
         2560x1440)
             echo "15.6-0od-lattice-ecp5"
             ;;
+        2880x1620)
+            echo "17-oled-ots"
+            ;;
         3840x2400)
             echo "rtk-hg560t34"
             ;;
