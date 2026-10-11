@@ -994,6 +994,8 @@
           "--script-arg=auto",
           "--script-arg=--brightness-percent",
           "--script-arg=100",
+          "--script-arg=--tolerance-xy",
+          "--script-arg=0.002",
           "--script-arg=--calibration-output",
           "--script-arg=/home/pi/system-settings/wp-cal.json"
         ],
