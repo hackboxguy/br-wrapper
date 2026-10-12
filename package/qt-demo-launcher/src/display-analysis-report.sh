@@ -188,7 +188,8 @@ detect_display_resolution() {
 }
 
 # Display type pi-config-txt.sh recorded in config.txt; tells apart panels that
-# share a resolution (14.6-fhd direct-drive vs 14.6-fhd-ej scan-mode EJ).
+# share a resolution (14.6-fhd direct-drive vs 14.6-fhd-ej scan-mode EJ, 12.3-nq1
+# vs 12.3-nq1v1.1).
 configured_display_type() {
     for q in /usr/bin/pi-config-txt.sh "$MICROPANEL_HOME/usr/bin/pi-config-txt.sh"; do
         if [ -x "$q" ]; then
@@ -208,7 +209,10 @@ resolve_display_model() {
     resolution="$(detect_display_resolution || true)"
     case "$resolution" in
         1920x720)
-            echo "12.3-nq1-lattice-ecp5"
+            case "$(configured_display_type || true)" in
+                12.3-nq1v1.1) echo "12.3-nq1v1.1-lattice-lae3u25f" ;;
+                *)            echo "12.3-nq1-lattice-ecp5" ;;
+            esac
             ;;
         2560x1440)
             echo "15.6-0od-lattice-ecp5"
