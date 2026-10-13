@@ -312,7 +312,7 @@ static int dp_events = -1;
 module_param(dp_events, int, 0444);
 MODULE_PARM_DESC(dp_events, "Mode 1: watch the 983's DP sink events and recover the link on them (-1 = auto: only on CS1.0 silicon, 0 = off, 1 = on; default -1)");
 
-/* DP RX kick (mode 1, not CS1.0), 2026-10-10.
+/* DP RX kick (modes 0 and 1, not CS1.0), 2026-10-10.
  *
  * On the CS2.0 983 the DP RX does not train after the RH850's CS1.0 init
  * sequence (12.3"-NQ1.1, dip3_oldi profile): APB PHY_STATUS (0x208) stays 0,
@@ -335,20 +335,25 @@ MODULE_PARM_DESC(dp_events, "Mode 1: watch the 983's DP sink events and recover 
  * needed all three (2026-10-10, two kicks locking the PHY with no stream);
  * 6 leaves the same margin again, about 45 s of kicks for an absent source.  The kick leaves the display board alone (no 988 GPIO
  * reset, so no BIST pattern): it was never needed on the bench.
+ *
+ * Mode 0 too since 2026-10-13: the CS2.0 983 with the 15.6" 2.5K (984,
+ * profile 0x00) came up with no DP video at every boot -- VP0 never synced,
+ * the boot HPD toggle did not help -- and one manual kick brought 2560x1440.
+ * The mode-0 DP guard calls it while the video is down.
  */
 static int dp_kick_max = 6;
 module_param(dp_kick_max, int, 0644);
-MODULE_PARM_DESC(dp_kick_max, "Mode 1, not CS1.0: maximum 983 digital reset + HPD toggles while no DP video arrives, re-armed by video (default 6; 0 = never)");
+MODULE_PARM_DESC(dp_kick_max, "Modes 0 and 1, not CS1.0: maximum 983 digital reset + HPD toggles while no DP video arrives, re-armed by video (default 6; 0 = never)");
 
 static int dp_kick_count;
 module_param(dp_kick_count, int, 0444);
-MODULE_PARM_DESC(dp_kick_count, "Mode 1: DP RX kicks since load (read-only)");
+MODULE_PARM_DESC(dp_kick_count, "Modes 0 and 1: DP RX kicks since load (read-only)");
 
 #define DP_KICK_POLLS  3        /* consecutive unlocked polls before a kick */
 
 static int dp_kick_hpd_ms = 1000;
 module_param(dp_kick_hpd_ms, int, 0644);
-MODULE_PARM_DESC(dp_kick_hpd_ms, "Mode 1, not CS1.0: HPD low time of a DP RX kick in ms (default 1000; 200 is too short for the HDMI-to-DP converter)");
+MODULE_PARM_DESC(dp_kick_hpd_ms, "Modes 0 and 1, not CS1.0: HPD low time of a DP RX kick in ms (default 1000; 200 is too short for the HDMI-to-DP converter)");
 
 static int ser_unique_id3 = -1;
 module_param(ser_unique_id3, int, 0444);
@@ -1722,10 +1727,14 @@ static int hh983_set_poll_interval(const char *val, const struct kernel_param *k
 	return 0;
 }
 
+static bool hh983_dp_kick(struct hh983_data *data);
+
 /* Mode 0 DP guard poll.  Tracks the 983 VP0 timing-generator sync bit:
  * lost for DP_GUARD_LOSS_POLLS -> cut the 984 stream (must happen within a
  * few seconds; the OTS-OLED panel tolerates ~5 s of distorted timing but
  * latches black at ~10 s), back for DP_GUARD_RESYNC_POLLS -> restore.
+ * While the video is down on silicon that is not CS1.0, it also kicks the DP
+ * RX (see dp_kick_max).
  */
 static void hh983_dp_guard_work_fn(struct work_struct *work)
 {
@@ -1760,6 +1769,12 @@ static void hh983_dp_guard_work_fn(struct work_struct *work)
 			hh983_guard_check_dtg(data);
 		}
 	} else {
+		/* Also re-arms the kicks once the video is back (it is called
+		 * on the synced polls before the restore). */
+		if (!data->dp_events && hh983_dp_kick(data)) {
+			data->guard_up_count = 0;
+			goto resched;
+		}
 		if (synced) {
 			data->guard_up_count++;
 			if (data->guard_up_count >= DP_GUARD_RESYNC_POLLS) {
@@ -3015,6 +3030,9 @@ static int hh983_probe(struct i2c_client *client, const struct i2c_device_id *id
 		data->guard_dtg_count = 0;
 		data->guard_wedged = false;
 		data->guard_wedge_armed = false;
+		/* Sets dp_events, which is "CS1.0" here: the guard kicks the DP
+		 * RX only on later silicon. */
+		hh983_detect_silicon(data);
 		INIT_DELAYED_WORK(&data->link_work, hh983_dp_guard_work_fn);
 		hh983_poll_owner = data;
 		if (poll_interval_ms > 0)
