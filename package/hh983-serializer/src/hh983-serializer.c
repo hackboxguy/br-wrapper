@@ -274,6 +274,21 @@ static int fpga_addr = 0x1D;
 module_param(fpga_addr, int, 0444);
 MODULE_PARM_DESC(fpga_addr, "Mode 1 only: 7-bit address of the panel's local-dimming FPGA to expose to the host, routed via target slot 2 only if plain pass-through cannot already reach it (default: 0x1D; 0 = route nothing)");
 
+/* The same FPGA's second slave (pixelpipe bitstreams): the page/register
+ * protocol at 0x1E, beside the legacy 0x1D one.  It sits on the same
+ * deserializer port as 0x1d, so on NQ1.1 it is just as unreachable without a
+ * route -- and the host tools then fall back to the legacy protocol, whose
+ * local-dimming register 0x29 is the OTA work-mode bit on these bitstreams:
+ * setting it locks every FPGA register write until a power cycle (seen
+ * 2026-10-13 with disp-settings on a 12.3" NQ1.1).  Routed via target slot 3
+ * (unused by every 983_manager profile, like slot 2) only when pass-through
+ * cannot reach it, and only when something answers there once routed, so a
+ * vendor bitstream without the slave leaves slot 3 disarmed.
+ */
+static int fpga_new_addr = 0x1E;
+module_param(fpga_new_addr, int, 0444);
+MODULE_PARM_DESC(fpga_new_addr, "Mode 1 only: 7-bit address of the FPGA's page/register slave, routed via target slot 3 the same way as fpga_addr via slot 2 (default: 0x1E; 0 = route nothing)");
+
 /* DP sink events (mode 1) and the 983 silicon revision, 2026-10-09.
  *
  * The mode-1 HDMI-switch recovery watches APB SINK_0_INT_CAUSE (0x194), a
@@ -491,12 +506,15 @@ MODULE_PARM_DESC(bus_reset_ok_count, "Mode 1: 988 digital resets after which the
 #define SER_TARGET_ID0           0x70
 #define SER_TARGET_ID1           0x71
 #define SER_TARGET_ID2           0x72
+#define SER_TARGET_ID3           0x73
 #define SER_TARGET_ALIAS0        0x78
 #define SER_TARGET_ALIAS1        0x79
 #define SER_TARGET_ALIAS2        0x7A
+#define SER_TARGET_ALIAS3        0x7B
 #define SER_TARGET_DEST0         0x88
 #define SER_TARGET_DEST1         0x89
 #define SER_TARGET_DEST2         0x8A
+#define SER_TARGET_DEST3         0x8B
 #define SER_INTERRUPT_CTRL       0xC6
 #define SER_IND_ACC_CTL          0x40  /* [5:2]=page, [1]=auto-inc, [0]=read strobe */
 #define SER_IND_ACC_ADDR         0x41
@@ -2527,47 +2545,48 @@ static int hh983_route_tddi(struct hh983_data *data)
 }
 
 /* Expose the panel's local-dimming FPGA to the host if it is not already
- * reachable.  See the fpga_addr parameter for why this is needed and why it
- * uses target slot 2.
+ * reachable: its legacy slave (fpga_addr) via target slot 2, its page/register
+ * slave (fpga_new_addr) via slot 3.  See those parameters for why this is
+ * needed and why these slots.
  *
  * Costs nothing on a board whose FPGA is on the deserializer's I2C Port 0:
- * plain pass-through already reaches it, the probe says so, and slot 2 is left
- * disarmed exactly as this driver has always left it.
+ * plain pass-through already reaches it, the probe says so, and the slot is
+ * left disarmed exactly as this driver has always left it.
  */
-static void hh983_route_fpga(struct hh983_data *data)
+static void hh983_route_one(struct hh983_data *data, int addr, int slot,
+			    u8 id_reg, u8 alias_reg, u8 dest_reg)
 {
 	struct i2c_client *client = data->client;
 
-	if (fpga_addr <= 0 || fpga_addr > 0x7F)
+	if (addr <= 0 || addr > 0x7F)
 		return;
 
-	/* Clear slot 2 before probing, so a stale alias from a previous boot
+	/* Clear the slot before probing, so a stale alias from a previous boot
 	 * cannot make an unreachable FPGA look reachable.  A host reboot resets
 	 * neither the 983 nor the deserializer.
 	 */
-	hh983_write_reg(client, SER_TARGET_ALIAS2, 0x00);
+	hh983_write_reg(client, alias_reg, 0x00);
 	usleep_range(2000, 4000);
 
-	if (hh983_addr_acks(client, fpga_addr)) {
+	if (hh983_addr_acks(client, addr)) {
 		dev_info(&client->dev,
 			 "FPGA 0x%02x reachable by pass-through (deserializer I2C Port 0); no target slot used\n",
-			 fpga_addr);
+			 addr);
 		return;
 	}
 
-	if (hh983_set_target(client, SER_TARGET_ID2, SER_TARGET_ALIAS2,
-			     SER_TARGET_DEST2, fpga_addr, fpga_addr,
+	if (hh983_set_target(client, id_reg, alias_reg, dest_reg, addr, addr,
 			     TARGET_DEST_PORT1) < 0) {
-		dev_warn(&client->dev, "Failed to program target slot 2 for FPGA 0x%02x\n",
-			 fpga_addr);
+		dev_warn(&client->dev, "Failed to program target slot %d for FPGA 0x%02x\n",
+			 slot, addr);
 		return;
 	}
 	usleep_range(2000, 4000);
 
-	if (hh983_addr_acks(client, fpga_addr)) {
+	if (hh983_addr_acks(client, addr)) {
 		dev_info(&client->dev,
-			 "FPGA 0x%02x routed via target slot 2 to deserializer I2C Port 1\n",
-			 fpga_addr);
+			 "FPGA 0x%02x routed via target slot %d to deserializer I2C Port 1\n",
+			 addr, slot);
 		return;
 	}
 
@@ -2576,10 +2595,18 @@ static void hh983_route_fpga(struct hh983_data *data)
 	 * address, which is what made the TDDI's wrong port worse than no
 	 * routing at all.
 	 */
-	hh983_write_reg(client, SER_TARGET_ALIAS2, 0x00);
+	hh983_write_reg(client, alias_reg, 0x00);
 	dev_info(&client->dev,
-		 "No FPGA at 0x%02x on either deserializer I2C port; slot 2 left disarmed\n",
-		 fpga_addr);
+		 "No FPGA at 0x%02x on either deserializer I2C port; slot %d left disarmed\n",
+		 addr, slot);
+}
+
+static void hh983_route_fpga(struct hh983_data *data)
+{
+	hh983_route_one(data, fpga_addr, 2,
+			SER_TARGET_ID2, SER_TARGET_ALIAS2, SER_TARGET_DEST2);
+	hh983_route_one(data, fpga_new_addr, 3,
+			SER_TARGET_ID3, SER_TARGET_ALIAS3, SER_TARGET_DEST3);
 }
 
 /* Configure REM_INTB on serializer (common to both modes) */

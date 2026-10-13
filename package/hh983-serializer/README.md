@@ -86,7 +86,7 @@ use this path.
 | `poll_interval_ms` | 1000 | all | the poll; 0 stops it (the update tools do, around a write) |
 | `dp_guard`, `dtg_check`, `dtg_tolerance`, `wedge_holdoff_s`, `dtg_recover`, `wedge_recovery` | | 0/2 | the DP video guard and the DTG-wedge check (`docs/hh983-984-black-screen/`) |
 | `dtg_wedge_count`, `dtg_boot_wedge_count` | | 0 | read-only counters |
-| `tddi_port`, `fpga_addr` | -1, 0x1D | 1 | where the touch controller and the panel FPGA are routed |
+| `tddi_port`, `fpga_addr`, `fpga_new_addr` | -1, 0x1D, 0x1E | 1 | where the touch controller and the panel FPGA's two slaves (legacy, page/register) are routed (target slots 2 and 3) |
 | **`dp_events`** | **-1** | 1 | the DP sink-event recovery (HDMI-switch case): -1 = only on CS1.0 silicon, 0 = off, 1 = on; see below |
 | **`ser_unique_id3`**, **`ser_mask_id_rev`** | | 1 | read-only: the 983's revision bytes read at probe (UNIQUE_ID_3 bit 6 = CS1.0) |
 | **`dp_kick_max`**, **`dp_kick_hpd_ms`** | **6**, **1000** | 1 | not CS1.0: DP RX kicks (983 digital reset + HPD low) while no DP video arrives, re-armed by video; 0 = never; see above |
