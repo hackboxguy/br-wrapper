@@ -1066,8 +1066,10 @@ Window {
                         lit: true
                     }
                     Chip { label: "PC " + alsDimmer.ldPcGain.toFixed(2) + "×"; tint: t.info; lit: true }
+                    // FPGA LED multiplier relative to 100 % brightness at gain 1.0 (above 1 =
+                    // gain/boost headroom in use; lower = brightness or the power cap)
                     Chip {
-                        label: "Backlight " + alsDimmer.ldMultiplierPercent.toFixed(0) + " %"
+                        label: "Drive ×" + (alsDimmer.ldMultiplierPercent / 100).toFixed(2)
                         tint: t.ok
                         lit: true
                     }
