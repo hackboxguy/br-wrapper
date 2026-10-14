@@ -164,12 +164,26 @@ void AlsDimmerController::parseResponse(const QByteArray &data)
 
     if (status != "success") {
         QString message = response["message"].toString();
+        // An als-dimmer without dynamic local dimming: stop asking (get_ld_status is the only
+        // command this controller sends that an older daemon does not know).
+        if (message == "Unknown command type" && m_ldStatusSupported) {
+            m_ldStatusSupported = false;
+            if (m_ldAvailable) { m_ldAvailable = false; emit ldStatusChanged(); }
+            qDebug() << "AlsDimmerController: als-dimmer has no get_ld_status; LD status off";
+            return;
+        }
         qWarning() << "AlsDimmerController: Command failed:" << message;
         emit errorOccurred(message);
         return;
     }
 
     QJsonObject responseData = response["data"].toObject();
+
+    // Dynamic local dimming status (get_ld_status and the set_ld_dynamic reply)
+    if (responseData.contains("ld")) {
+        handleLdStatus(responseData);
+        return;
+    }
 
     // Check what kind of response this is
     if (responseData.contains("lux")) {
@@ -277,6 +291,52 @@ void AlsDimmerController::pollStatus()
     cmd["command"] = "get_status";
 
     sendCommand(cmd);
+
+    // LD status once a second (it reads three FPGA registers)
+    if (m_ldStatusSupported && (m_pollCount++ % 2) == 0) {
+        QJsonObject ld;
+        ld["version"] = "1.0";
+        ld["command"] = "get_ld_status";
+        sendCommand(ld);
+    }
+}
+
+void AlsDimmerController::setLdDynamic(bool enabled)
+{
+    if (!m_connected) return;
+    QJsonObject cmd;
+    cmd["version"] = "1.0";
+    cmd["command"] = "set_ld_dynamic";
+    QJsonObject params;
+    params["enabled"] = enabled;
+    cmd["params"] = params;
+    sendCommand(cmd);
+}
+
+void AlsDimmerController::handleLdStatus(const QJsonObject &data)
+{
+    const QJsonObject ld = data["ld"].toObject();
+    const QJsonObject tgt = ld["target"].toObject();
+    m_ldAvailable = ld["available"].toBool(false);
+    m_ldDynamicEnabled = ld["dynamic_enabled"].toBool(false);
+    m_ldProfile = ld["profile"].toString();
+    m_ldSettled = ld["settled"].toBool(true);
+    m_ldAlpha = tgt["ld_alpha"].toInt(16);
+    m_ldBoost = tgt.contains("bl_boost") ? tgt["bl_boost"].toInt(64) / 64.0 : 1.0;
+    m_ldPcGain = tgt.contains("pc_tune") ? (tgt["pc_tune"].toInt(64) & 0x7F) / 64.0 : 1.0;
+    m_ldBoostSuppressed = ld["boost_suppressed"].toBool(false);
+    m_ldMultiplierPercent = ld["fpga_multiplier_percent"].toDouble(0.0);
+    m_ldAplPercent = ld["fpga_apl_percent"].toDouble(0.0);
+    if (data.contains("thermal_limit")) {
+        const QJsonObject tl = data["thermal_limit"].toObject();
+        m_thermalLimitEnabled = tl["enabled"].toBool(false);
+        m_thermalLimiting = tl["limiting"].toBool(false);
+        m_thermalLimitPercent = tl["brightness_limit_percent"].toInt(100);
+        m_thermalStartC = tl["start_c"].toDouble(0.0);
+        m_backlightTempValid = tl["backlight_temp_c"].isDouble();
+        m_backlightTempC = m_backlightTempValid ? tl["backlight_temp_c"].toDouble() : 0.0;
+    }
+    emit ldStatusChanged();
 }
 
 void AlsDimmerController::sendCommand(const QJsonObject &command)

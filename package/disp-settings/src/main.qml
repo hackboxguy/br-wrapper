@@ -144,6 +144,12 @@ Window {
         }
     }
 
+    function ldProfileName(p) {
+        if (p === "static") return "Fixed"
+        if (!p) return "—"
+        return p.charAt(0).toUpperCase() + p.slice(1)
+    }
+
     // Sync user preference when we first receive the actual mode from als-dimmer
     Connections {
         target: alsDimmer
@@ -183,7 +189,10 @@ Window {
             // Sync slider when brightness changes in manual/manual_temporary mode
             // This catches external brightness changes (e.g., als-dimmer-client)
             // Skip during cooldown period (right after user released slider)
-            if ((alsDimmer.mode === "manual" || alsDimmer.mode === "manual_temporary") && !userDraggingBrightness && !brightnessSetCooldown && initialSyncDone) {
+            // Not while the thermal limiter holds the output below the user's setting: the slider
+            // keeps the setting, the "Thermal" chip in Panel features shows the limit.
+            if ((alsDimmer.mode === "manual" || alsDimmer.mode === "manual_temporary") && !userDraggingBrightness && !brightnessSetCooldown && initialSyncDone
+                    && !(alsDimmer.thermalLimiting && alsDimmer.thermalLimitPercent < 100)) {
                 brightnessSlider.value = alsDimmer.brightness;
                 console.log("Manual mode sync (brightness): slider =", alsDimmer.brightness);
             }
@@ -1019,6 +1028,58 @@ Window {
                         on: false
                         available: false
                         note: "Disabled"
+                    }
+                    // Dynamic local dimming: the ambient light selects the LD profile (als-dimmer
+                    // local_dimming_profiles). Off = one fixed neutral profile.
+                    FeatureTile {
+                        visible: alsDimmer.ldAvailable
+                        Layout.columnSpan: 2
+                        title: "Dynamic dimming"
+                        icon: "dimming"
+                        tint: "#38BDF8"
+                        on: alsDimmer.ldDynamicEnabled
+                        available: alsDimmer.connected && fpga.localDimmingEnabled
+                        note: !alsDimmer.connected ? "Dimming service offline"
+                              : !fpga.localDimmingEnabled ? "Needs local dimming"
+                              : alsDimmer.ldDynamicEnabled
+                                ? "Follows ambient light · " + ldProfileName(alsDimmer.ldProfile)
+                                : "Off · fixed profile"
+                        onToggled: alsDimmer.setLdDynamic(checked)
+                    }
+                }
+
+                // Live state of dynamic local dimming and the thermal limiter
+                Flow {
+                    visible: alsDimmer.ldAvailable && alsDimmer.connected
+                    width: parent.width
+                    spacing: 6 * s
+                    Chip {
+                        label: ldProfileName(alsDimmer.ldProfile) + (alsDimmer.ldSettled ? "" : " …")
+                        tint: alsDimmer.ldDynamicEnabled ? "#38BDF8" : t.sub
+                        lit: true
+                    }
+                    Chip { label: "α " + alsDimmer.ldAlpha; tint: t.info; lit: true }
+                    Chip {
+                        label: "Boost " + (alsDimmer.ldBoost > 1.0 ? alsDimmer.ldBoost.toFixed(2) + "×" : "off")
+                               + (alsDimmer.ldBoostSuppressed ? " (hot)" : "")
+                        tint: alsDimmer.ldBoostSuppressed ? t.warn : t.info
+                        lit: true
+                    }
+                    Chip { label: "PC " + alsDimmer.ldPcGain.toFixed(2) + "×"; tint: t.info; lit: true }
+                    Chip {
+                        label: "Backlight " + alsDimmer.ldMultiplierPercent.toFixed(0) + " %"
+                        tint: t.ok
+                        lit: true
+                    }
+                    Chip { label: "APL " + alsDimmer.ldAplPercent.toFixed(0) + " %"; tint: t.ok; lit: true }
+                    Chip {
+                        visible: alsDimmer.thermalLimitEnabled
+                        label: (alsDimmer.backlightTempValid ? alsDimmer.backlightTempC.toFixed(1) + " °C" : "— °C")
+                               + (alsDimmer.thermalLimiting
+                                  ? " · limit " + alsDimmer.thermalLimitPercent + " %"
+                                  : " · < " + alsDimmer.thermalStartC.toFixed(0) + " °C ok")
+                        tint: alsDimmer.thermalLimiting ? t.warn : t.ok
+                        lit: true
                     }
                 }
             }
