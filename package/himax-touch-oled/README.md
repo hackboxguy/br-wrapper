@@ -47,6 +47,25 @@ options hh983-serializer config_mode=0 ots_touch=1
 Do **not** also enable `dtoverlay=himax-touch` or force-load `himax_mmi` on this
 board; the two touch drivers are mutually exclusive per board.
 
+## 17" OLED-IB board
+
+The OLED-IB carries the same HX8530 at the same physical 0x49 on the
+deserializer's I2C Port 1, but behind a **988** that the 983HH's RH850 aliases
+from its strapped 0x38 to 0x2C in 983 target slot 0. Mode 1 would overwrite
+that slot, so the board runs mode 2 with `ib_touch=1`, which routes the touch
+through slot 2 instead:
+
+```
+dtoverlay=himax-touch-oled
+options hh983-serializer config_mode=2 ib_touch=1
+```
+
+(`pi-config-txt.sh --type=oled-ib-17` writes both.) On the first OLED-IB unit
+(2026-10-20) the route and the chip ID (`HX8530C`) were fine but the
+controller's config block held power-up SRAM noise -- its touch firmware/config
+had not loaded -- so probe now refuses implausible touch information instead of
+sizing its buffers from it.
+
 ## Files
 
 - `src/` – HX8530-only build (`obj-m := himax_oled.o`, `CONFIG_TOUCHSCREEN_HIMAX_IC_HX8530`).

@@ -3279,6 +3279,23 @@ int himax_chip_common_init(void)
 	}
 
 	g_core_fp.fp_touch_information();
+
+	/* The CRC above cannot tell a bad config from a good one, so check what
+	 * the config said.  A controller whose config block never loaded (the
+	 * 17" OLED-IB on 2026-10-20: power-up SRAM noise, X/Y 16704/61022,
+	 * MAX_PT 179..187) otherwise sizes the report buffers from garbage,
+	 * hx_rawdata_size goes negative and probe dies in a huge kzalloc.
+	 * Fail the probe instead, with the values that were read.
+	 */
+	if ((ic_data->HX_MAX_PT == 0U) || (ic_data->HX_MAX_PT > 10U) ||
+	    (ic_data->HX_X_RES == 0U) || (ic_data->HX_X_RES > 4096U) ||
+	    (ic_data->HX_Y_RES == 0U) || (ic_data->HX_Y_RES > 4096U)) {
+		E("%s: implausible touch information (MAX_PT=%u X_RES=%u Y_RES=%u RX=%u TX=%u): touch firmware/config not loaded?\n",
+		  __func__, ic_data->HX_MAX_PT, ic_data->HX_X_RES,
+		  ic_data->HX_Y_RES, ic_data->HX_RX_NUM, ic_data->HX_TX_NUM);
+		err = -ENODEV;
+		goto error_ic_detect_failed;
+	}
 #else
 	if (!g_core_fp.fp_calculateChecksum(ic_data->HX_FW_SIZE)) {
 		E("%s: check flash fail, please upgrade FW\n", __func__);
