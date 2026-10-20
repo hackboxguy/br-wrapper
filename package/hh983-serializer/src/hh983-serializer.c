@@ -8,7 +8,9 @@
  *           Which of the deserializer's two local I2C ports the TDDI is on
  *           differs per panel board and is probed, not assumed -- see the
  *           tddi_port parameter and hh983_route_tddi().
- *   Mode 2: DS90UH983 + DS90Ux988, video only (no touch, no interrupts)
+ *   Mode 2: DS90UH983 + DS90Ux988, video only (no touch, no interrupts),
+ *           or with ib_touch=1 the 17" OLED-IB's HX8530 touch through target
+ *           slot 2, leaving slot 0 to the RH850's 988 alias.
  *
  * All three modes guard against the same deserializer DTG wedge: the DTG's
  * measured input line length wanders away from the line length the 983 is
@@ -181,6 +183,20 @@ static int ots_touch;
 module_param(ots_touch, int, 0444);
 MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984 I2C Port 1, phys 0x49) to host 0x48 (default: 0)");
 
+/* 17" OLED-IB (983HH -> dual FPD-Link -> 988 -> OLED TCON): the same HX8530
+ * as the OTS-OLED, at the same physical 0x49 on the deserializer's I2C Port 1
+ * (measured 2026-10-20 by routing a free target slot across both ports and
+ * both addresses), but behind a 988 that the RH850 aliases from its strapped
+ * 0x38 to 0x2C in target slot 0, as on the 3x QVue.  Mode 1 would overwrite
+ * that slot with its TDDI route and lose the 988, so the OLED-IB runs mode 2
+ * and ib_touch adds touch on top of it: the route goes into slot 2, and the
+ * interrupt chain is the one mode 1 arms.  Off by default, so the 3x QVue
+ * (mode 2, no touch) is unchanged.
+ */
+static int ib_touch;
+module_param(ib_touch, int, 0444);
+MODULE_PARM_DESC(ib_touch, "Mode 2 only: 1=route the OLED-IB HX8530 touch (988 I2C Port 1, phys 0x49) to host 0x48 via target slot 2, and arm REM_INTB (default: 0)");
+
 /* SCL timing for the 984's I2C controller, applied with ots_touch only.
  *
  * DS90HH984-Q1 7.6.1.41/42: the high and low pulse widths are
@@ -203,11 +219,11 @@ MODULE_PARM_DESC(ots_touch, "Mode 0 only: 1=route the OLED-OTS HX8530 touch (984
 
 static int ots_scl_high = 0x1A;
 module_param(ots_scl_high, int, 0444);
-MODULE_PARM_DESC(ots_scl_high, "ots_touch only: 984 SCL_HIGH_TIME, 38.1ns*(N+5) (default: 0x1A, ~398 kHz with ots_scl_low)");
+MODULE_PARM_DESC(ots_scl_high, "ots_touch/ib_touch only: 984/988 SCL_HIGH_TIME, 38.1ns*(N+5) (default: 0x1A, ~398 kHz with ots_scl_low)");
 
 static int ots_scl_low = 0x1E;
 module_param(ots_scl_low, int, 0444);
-MODULE_PARM_DESC(ots_scl_low, "ots_touch only: 984 SCL_LOW_TIME, 38.1ns*(N+5) (default: 0x1E)");
+MODULE_PARM_DESC(ots_scl_low, "ots_touch/ib_touch only: 984/988 SCL_LOW_TIME, 38.1ns*(N+5) (default: 0x1E)");
 
 /* Mode 1 (983+988): which of the deserializer's two local I2C ports the TDDI
  * touch controller hangs off.  The two 12.3" boards do not agree, and both are
@@ -2919,6 +2935,54 @@ static int hh983_init_mode_988_video(struct hh983_data *data)
 			 (ret & 0x40) ? "FPD_PLL_LOCK " : "",
 			 (ret & 0x01) ? "LOCK" : "NO_LOCK");
 
+	if (ib_touch) {
+		/* Slot 2, not slot 0: slot 0 holds the RH850's 988 alias. */
+		ret = hh983_set_target(client, SER_TARGET_ID2, SER_TARGET_ALIAS2,
+				       SER_TARGET_DEST2, OTS_TOUCH_PHYS_ADDR,
+				       OTS_TOUCH_HOST_ADDR, TARGET_DEST_PORT1);
+		if (ret < 0)
+			return ret;
+		dev_info(&client->dev,
+			 "OLED-IB touch routed: host 0x%02x -> 988 Port 1 phys 0x%02x (slot 2)\n",
+			 OTS_TOUCH_HOST_ADDR, OTS_TOUCH_PHYS_ADDR);
+
+		/* Touch-only INTB, as mode 0: no DP RX interrupt on the line the
+		 * touch driver waits on. */
+		/* The same 400 kHz the HX8530 needs behind the 984 (ots_scl_high):
+		 * the 988 has the same SCL_HIGH_TIME/SCL_LOW_TIME pair at 0x2B/0x2C,
+		 * both reading the 984's 0x7F reset value.  At that reset value the
+		 * himax probe read its touch information as garbage (X/Y resolution
+		 * 16704/61022) over a 400 kHz host bus, the failure the OTS-OLED had
+		 * before the same change.
+		 */
+		ret = hh983_write_deser_reg(client, data->deser_addr,
+					    DES984_SCL_HIGH_TIME, ots_scl_high);
+		if (ret < 0)
+			return ret;
+		ret = hh983_write_deser_reg(client, data->deser_addr,
+					    DES984_SCL_LOW_TIME, ots_scl_low);
+		if (ret < 0)
+			return ret;
+
+		ret = hh983_configure_rem_intb(client, 0, 0);
+		if (ret < 0)
+			return ret;
+
+		/* Same as mode 1 step 7: clear a latched INTB_IN first. */
+		hh983_write_deser_reg(client, data->deser_addr, DES988_RX_INTN_CTL, 0x00);
+		usleep_range(2000, 3000);
+		ret = hh983_write_deser_reg(client, data->deser_addr, DES988_RX_INTN_CTL,
+					    DES988_INTB_IN_ENABLE);
+		if (ret < 0)
+			dev_warn(&client->dev, "Failed to configure 988 INTB_IN forwarding\n");
+
+		dev_info(&client->dev,
+			 "Mode 2 (983+988 video, OLED-IB touch) initialization complete (TDDI %s)\n",
+			 hh983_addr_acks(client, OTS_TOUCH_HOST_ADDR) ? "answering" : "SILENT");
+		msleep(100);	/* as mode 1: let pass-through settle for the himax probe */
+		return 0;
+	}
+
 	dev_info(&client->dev, "Mode 2 (983+988 video only) initialization complete\n");
 	return 0;
 }
@@ -3099,6 +3163,21 @@ static void hh983_remove(struct i2c_client *client)
 		 * here.
 		 */
 		if (data->mode == 2) {
+			if (ib_touch) {
+				/* Disarm what ib_touch armed, source end first, as
+				 * mode 1 does -- but no digital reset: the video
+				 * link stays up across a module reload. */
+				hh983_write_deser_reg(client, data->deser_addr,
+						      DES988_RX_INTN_CTL, 0x00);
+				usleep_range(2000, 3000);
+				hh983_write_reg(client, SER_INTERRUPT_CTL, 0x00);
+				hh983_write_reg(client, SER_INTERRUPT_CTRL, 0x00);
+				hh983_write_reg(client, SER_GPIO4_CONFIG, 0x00);
+				hh983_write_reg(client, SER_TARGET_ALIAS2, 0x00);
+				dev_info(&client->dev,
+					 "Mode 2: OLED-IB touch route and interrupts disarmed, link left running\n");
+				return;
+			}
 			dev_info(&client->dev,
 				 "Mode 2: nothing to tear down, link left running\n");
 			return;

@@ -101,6 +101,7 @@ use this path.
 | **`force_bus_reset`** | 0 | 1 | test hook: 1 = one 988 reset at the next poll (reads back 0) |
 | **`bus_probe_count`**, **`bus_probe_timeout_count`**, **`bus_wedge_count`**, **`bus_reset_count`**, **`bus_reset_ok_count`** | | 1 | read-only counters (resets include forced ones) |
 | `ots_touch`, `ots_scl_high`, `ots_scl_low` | | 0 | the OTS board's HX8530 touch route and its I²C speed |
+| `ib_touch` | | 0 | mode 2 only: the 17" OLED-IB's HX8530 touch (988 I²C Port 1, phys 0x49 -> host 0x48) through target slot 2, leaving slot 0 to the RH850's 988 alias; also sets the 988 port to the `ots_scl_*` speed and arms REM_INTB |
 
 The update tools (`update-iocs.sh`, `update-fpga.sh`) set `poll_interval_ms=0`, `dtg_recover=0`,
 `wedge_recovery=0` around a write and restore them; the bus check lives inside the poll, so it stops
