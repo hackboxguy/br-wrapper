@@ -45,6 +45,7 @@ fi
 # adding a display here cannot change what an existing one does.
 case "$DISPLAY_TYPE" in
     ots-oled-17) CONFIG="$ALS_ETC/config_ioc_opt5001_tcon_ots17.json" ;;
+    oled-ib-17)  CONFIG="$ALS_ETC/config_ioc_opt5001_tcon_oledib17.json" ;;
     *)           CONFIG="$DEFAULT_CONFIG" ;;
 esac
 
