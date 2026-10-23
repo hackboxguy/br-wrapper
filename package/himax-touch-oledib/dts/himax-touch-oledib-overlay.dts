@@ -1,0 +1,61 @@
+/*
+ * Device Tree Overlay for the Himax HX8530 touch controller on the 17"
+ * OLED-IB (2560x1440), behind a TI DS90UH983 serializer + DS90UH988
+ * deserializer on Raspberry Pi 4.
+ *
+ * The HX8530 sits on the 988's second local I2C bus (Port 1), physically at
+ * 0x49; hh983-serializer (config_mode=2 ib_touch=1) routes it to the host at
+ * 0x48 through 983 target slot 2. This overlay binds himax_oledib (Himax
+ * A09.23, compatible "himax,hxoledib") to 0x48.
+ *
+ * The board routes no reset line to the controller, so there is no
+ * himax,RESX: the driver then starts sensing itself after its flash check.
+ *
+ * micropanel's pi-config-txt.sh selects this overlay for oled-ib-17 only;
+ * do not enable it together with himax-touch or himax-touch-oled.
+ */
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2711";
+
+	fragment@0 {
+		target = <&i2c1>;
+		__overlay__ {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/* TI HH983 serializer */
+			serializer@18 {
+				compatible = "ti,hh983-serializer";
+				reg = <0x18>;
+				status = "okay";
+			};
+
+			/* Himax HX8530 touch (routed to host 0x48 via the 988 Port 1) */
+			hxoledib_ts@48 {
+				compatible = "himax,hxoledib";
+				reg = <0x48>;
+				status = "okay";
+				report_type = <1>;
+				himax,TSIX = <&gpio 17 0>; /* GPIO17 = touch interrupt (983 REM_INTB) */
+				himax,panel-coords = <0 2560 0 1440>;
+				himax,display-coords = <0 2560 0 1440>;
+			};
+		};
+	};
+
+	/* GPIO17 as input with pull-up */
+	fragment@1 {
+		target = <&gpio>;
+		__overlay__ {
+			hxoledib_pins: hxoledib_pins {
+				brcm,pins = <17>;
+				brcm,function = <0>;
+				brcm,pull = <2>;
+			};
+		};
+	};
+};

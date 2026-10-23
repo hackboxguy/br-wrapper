@@ -1,0 +1,13 @@
+config BR2_PACKAGE_HIMAX_TOUCH_OLEDIB
+	bool "himax-touch-oledib"
+	depends on BR2_LINUX_KERNEL
+	select BR2_PACKAGE_HH983_SERIALIZER
+	help
+	  Himax HX8530 touchscreen driver for the 17" OLED-IB panel
+	  (2560x1440), behind a DS90UH983/988 FPD-Link IV pair. Himax's
+	  sample code A09.23, which matches the panel's touch firmware;
+	  module himax_oledib, DT compatible "himax,hxoledib". Installs a
+	  DT overlay for RPi4.
+
+	  Enable on the OLED-IB only; it excludes himax-touch and
+	  himax-touch-oled on the same board.
