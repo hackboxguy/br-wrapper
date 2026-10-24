@@ -1026,10 +1026,23 @@ int himax_vendor_show(struct seq_file *s, void *v)
 
 	UNUSED(v);
 
+#if defined(CONFIG_TOUCHSCREEN_HIMAX_IC_HX8530)
+	/* br-wrapper, as himax_oled (53edb4c): no hardware access, this is a
+	 * read-only diagnostic file. The sequence below resets the controller,
+	 * and disp-settings read this file every 10 s while Display Settings was
+	 * open: on the 17" OLED-IB that re-initialised the HX8530 every 10 s and
+	 * broke a firmware flash running beside it ("Check WEL Fail").
+	 *
+	 * The fields printed below are the ones the probe read
+	 * (himax_mcu_read_FW_ver(), himax_chip_common_init()); a flash through
+	 * the debug node re-reads them itself.
+	 */
+#else
 	himax_mcu_config_reload_enable();
 	himax_mcu_power_on_init();
 	himax_mcu_read_FW_ver();
 	g_core_fp.fp_touch_information();
+#endif
 
 	seq_printf(s, "IC = %s\n", private_ts->chip_name);
 

@@ -47,6 +47,12 @@ and the same `/proc/android_touch`: exactly one may be loaded. micropanel's
   contact size). `0` reports the chip's own size, clamped to
   200. Changeable at run time:
   `echo 0 | sudo tee /sys/module/himax_oledib/parameters/fixed_touch_size`.
+- `himax_debug.c`: **reading `/proc/android_touch/vendor` no longer resets the
+  chip**, as in `himax_oled` (53edb4c). The read ran config_reload_enable,
+  power_on_init, read_FW_ver and touch_information; with Display Settings open
+  (it polled the file every 10 s) the HX8530 was re-initialised every 10 s and
+  a touch firmware flash beside it failed. The file now prints what the probe
+  read.
 
 ## Known
 
