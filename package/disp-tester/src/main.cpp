@@ -4,6 +4,9 @@
 #include <QCommandLineParser>
 #include <QDebug>
 #include <QScreen>
+#include <QOpenGLContext>
+#include <QQuickWindow>
+#include <QSurfaceFormat>
 #include <QSocketNotifier>
 #include <errno.h>
 #include <fcntl.h>
@@ -67,8 +70,67 @@ static bool setupUnixSignalHandlers()
     return true;
 }
 
+/*
+ * Patterns must reach the display with 8 bits per channel. qt-demo-launcher runs on linuxfb, and
+ * the vc4 fbdev it starts us on is RGB565: grey 128 would go out as 132/130/132, 135 as
+ * 132/134/132, so every grey ramp and colour patch read through the meter is off (only 0 and 255
+ * survive). Unless a platform is chosen explicitly (-platform, or DISP_TESTER_PLATFORM, e.g.
+ * "linuxfb" to keep the old behaviour), draw through eglfs/KMS with an 8-8-8 surface instead.
+ */
+static void selectPlatform(int argc, char *argv[])
+{
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "-platform") || !strcmp(argv[i], "--platform")) {
+            return;
+        }
+    }
+    const QByteArray chosen = qgetenv("DISP_TESTER_PLATFORM");
+    if (!chosen.isEmpty()) {
+        qputenv("QT_QPA_PLATFORM", chosen);
+        return;
+    }
+    const QByteArray inherited = qgetenv("QT_QPA_PLATFORM");
+    if (!inherited.isEmpty() && inherited != "linuxfb") {
+        return;
+    }
+    if (access("/dev/dri/card0", F_OK) != 0 && access("/dev/dri/card1", F_OK) != 0) {
+        return;   // no KMS device: stay on linuxfb
+    }
+    qputenv("QT_QPA_PLATFORM", "eglfs");
+    if (qEnvironmentVariableIsEmpty("QT_QPA_EGLFS_INTEGRATION")) {
+        qputenv("QT_QPA_EGLFS_INTEGRATION", "eglfs_kms");
+    }
+    qputenv("QT_QPA_EGLFS_FORCE888", "1");
+}
+
+/* "platform=eglfs depth=32 rgb=8,8,8" - what the patterns are drawn with (get-colour-depth) */
+static QString describeSurface(QQuickWindow *window)
+{
+    QString info = QString("platform=%1").arg(QGuiApplication::platformName());
+    QScreen *screen = QGuiApplication::primaryScreen();
+    if (screen) {
+        info += QString(" depth=%1").arg(screen->depth());
+    }
+    QOpenGLContext *context = window ? window->openglContext() : nullptr;
+    if (context) {
+        QSurfaceFormat f = context->format();
+        info += QString(" rgb=%1,%2,%3").arg(f.redBufferSize()).arg(f.greenBufferSize()).arg(f.blueBufferSize());
+    }
+    return info;
+}
+
+static bool surfaceIsExact(const QString &info)
+{
+    if (info.contains("rgb=")) {
+        return info.contains("rgb=8,8,8") || info.contains("rgb=10,10,10");
+    }
+    QScreen *screen = QGuiApplication::primaryScreen();
+    return screen && screen->depth() >= 24;
+}
+
 int main(int argc, char *argv[])
 {
+    selectPlatform(argc, argv);
     QGuiApplication app(argc, argv);
     app.setApplicationName("disp-tester");
     app.setApplicationVersion("1.0");
@@ -326,6 +388,23 @@ int main(int argc, char *argv[])
 
     if (engine.rootObjects().isEmpty()) {
         return -1;
+    }
+
+    QQuickWindow *window = qobject_cast<QQuickWindow *>(engine.rootObjects().first());
+    auto reportSurface = [&patternController, window]() {
+        QString info = describeSurface(window);
+        patternController.setSurfaceInfo(info);
+        if (surfaceIsExact(info)) {
+            qDebug() << "Pattern surface:" << info;
+        } else {
+            qWarning() << "Pattern surface is not 8 bits per channel:" << info
+                       << "- grey and colour patches are not exact";
+        }
+    };
+    patternController.setSurfaceInfo(describeSurface(window));
+    if (window) {
+        // the GL context exists once the scene graph is up (render thread: hand over to the GUI thread)
+        QObject::connect(window, &QQuickWindow::sceneGraphInitialized, &app, reportSurface, Qt::QueuedConnection);
     }
 
     QString childScript = parser.value(scriptOption);

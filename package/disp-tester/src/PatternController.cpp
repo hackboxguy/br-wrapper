@@ -792,6 +792,8 @@ void PatternController::handleNetworkCommand(const QString &command)
         }
     } else if (cmd == "get-resolution") {
         m_networkInterface->sendResponse(getResolution());
+    } else if (cmd == "get-colour-depth" || cmd == "get-color-depth") {
+        m_networkInterface->sendResponse(m_surfaceInfo.isEmpty() ? QString("unknown") : m_surfaceInfo);
     } else if (cmd == "get-pattern") {
         m_networkInterface->sendResponse(m_currentPattern);
     } else if (cmd == "list-patterns") {

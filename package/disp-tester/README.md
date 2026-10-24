@@ -48,7 +48,7 @@ A Qt5-based display pattern generator application designed for testing displays 
 
 ### Dependencies
 - **Qt5**: qt5base, qt5declarative, qt5quickcontrols2
-- **Platform**: Linux with framebuffer support (linuxfb)
+- **Platform**: Linux with KMS (eglfs, the default) or a framebuffer (linuxfb) - see *Colour depth*
 - **Touch**: Standard Linux input events (`/dev/input/eventX`)
 
 ### Build Methods
@@ -67,6 +67,18 @@ make
 For cross-compilation, ensure Qt5 development tools and target toolchain are configured.
 
 ## Usage
+
+### Colour depth (eglfs by default)
+Patterns must reach the display with 8 bits per channel. qt-demo-launcher runs on `linuxfb`, and
+the vc4 framebuffer it would start disp-tester on is **RGB565**: grey 128 went out as 132/130/132 and
+135 as 132/134/132, so grey ramps read through a meter were up to 8 % off and tinted (only 0 and 255
+were exact). disp-tester therefore switches itself to `eglfs` / `eglfs_kms` with
+`QT_QPA_EGLFS_FORCE888=1` (an XRGB8888 plane) when it inherits `linuxfb` or no platform and a
+`/dev/dri/card*` exists. Keep a platform explicitly with `-platform <name>` or
+`DISP_TESTER_PLATFORM=<name>` (e.g. `linuxfb`). At start-up it logs the surface (`Pattern surface:
+platform=eglfs depth=32 rgb=8,8,8`, a warning if a channel has fewer than 8 bits) and reports it on
+`get-colour-depth`. The plane in use is also visible in `/sys/kernel/debug/dri/*/state`
+(`plane-0 ... format=XR24`; `RG16` = RGB565).
 
 ### Command Line Options
 ```bash
@@ -526,6 +538,7 @@ set-child-action-active <enable|disable>
 ```bash
 get-resolution              # Returns display resolution
 get-pattern                 # Returns current pattern name  
+get-colour-depth            # Returns the pattern surface, e.g. platform=eglfs depth=32 rgb=8,8,8
 list-patterns              # Returns all available patterns
 quit                       # Exit application
 ```

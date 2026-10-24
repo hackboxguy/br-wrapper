@@ -88,6 +88,8 @@ public:
                                   const QString &align, int fontSize,
                                   const QColor &color);
     void requestQuit(const QString &reason);
+    // what the patterns are drawn with, e.g. "platform=eglfs depth=32 rgb=8,8,8" (get-colour-depth)
+    void setSurfaceInfo(const QString &info) { m_surfaceInfo = info; }
 
 public slots:
     void nextPattern();
@@ -143,6 +145,7 @@ private:
     int m_networkPort;
     bool m_shutdownRequested;
     PatternParameters m_parameters;
+    QString m_surfaceInfo;
 
     // Metadata management
     QString m_metadataStatus;  // "autohide", "enable", "disable"
