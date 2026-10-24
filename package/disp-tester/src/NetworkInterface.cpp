@@ -1,6 +1,5 @@
 #include "NetworkInterface.h"
 #include <QDebug>
-#include <QTimer>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -11,20 +10,17 @@
 NetworkInterface::NetworkInterface(int port, QObject *parent)
     : QObject(parent)
     , m_serverSocket(-1)
-    , m_clientSocket(-1)
     , m_port(port)
     , m_socketNotifier(nullptr)
-    , m_clientNotifier(nullptr)
-    , m_dataTimer(nullptr)
+    , m_currentClient(-1)
 {
-    m_dataTimer = new QTimer(this);
-    connect(m_dataTimer, &QTimer::timeout, this, &NetworkInterface::checkForData);
-    m_dataTimer->setInterval(100); // Check for data every 100ms
 }
 
 NetworkInterface::~NetworkInterface()
 {
-    closeClient();
+    for (int fd : m_clients.keys()) {
+        closeClient(fd);
+    }
     if (m_serverSocket >= 0) {
         close(m_serverSocket);
     }
@@ -63,7 +59,7 @@ bool NetworkInterface::startServer()
     }
 
     // Listen for connections
-    if (listen(m_serverSocket, 1) < 0) {
+    if (listen(m_serverSocket, 8) < 0) {
         qWarning() << "Failed to listen on socket:" << strerror(errno);
         close(m_serverSocket);
         m_serverSocket = -1;
@@ -84,93 +80,99 @@ bool NetworkInterface::startServer()
 
 void NetworkInterface::sendResponse(const QString &response)
 {
-    if (m_clientSocket >= 0) {
-        QString message = response + "\n";
-        QByteArray data = message.toUtf8();
-        ssize_t sent = write(m_clientSocket, data.constData(), data.size());
-        if (sent < 0) {
-            qWarning() << "Failed to send response:" << strerror(errno);
-            closeClient();
-        } else {
-            qDebug() << "Sent response:" << response;
-        }
+    int fd = m_currentClient;
+    if (fd < 0 || !m_clients.contains(fd)) {
+        return;
+    }
+    QByteArray data = (response + "\n").toUtf8();
+    ssize_t sent = write(fd, data.constData(), data.size());
+    if (sent < 0) {
+        qWarning() << "Failed to send response:" << strerror(errno);
+        closeClient(fd);
+    } else {
+        qDebug() << "Sent response:" << response;
     }
 }
 
+/*
+ * Every client is served: launcher-client opens a new connection per command, and the old
+ * one-client server (disconnects noticed by a 100 ms poll) closed a connection that arrived
+ * before the previous client's close was seen - the client got "Connection reset by peer".
+ */
 void NetworkInterface::handleSocketActivity()
 {
-    if (m_clientSocket >= 0) {
-        // Already have a client, reject new connections
-        int newSocket = accept(m_serverSocket, nullptr, nullptr);
-        if (newSocket >= 0) {
-            qDebug() << "Rejecting connection - client already connected";
-            close(newSocket);
-        }
-        return;
-    }
-
-    // Accept new connection
-    struct sockaddr_in clientAddr;
-    socklen_t clientLen = sizeof(clientAddr);
-    m_clientSocket = accept(m_serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
-    
-    if (m_clientSocket < 0) {
-        if (errno != EWOULDBLOCK && errno != EAGAIN) {
-            qWarning() << "Failed to accept connection:" << strerror(errno);
-        }
-        return;
-    }
-
-    // Set client socket non-blocking
-    int flags = fcntl(m_clientSocket, F_GETFL, 0);
-    fcntl(m_clientSocket, F_SETFL, flags | O_NONBLOCK);
-
-    qDebug() << "Client connected";
-    
-    // Start checking for data
-    m_dataTimer->start();
-}
-
-void NetworkInterface::checkForData()
-{
-    if (m_clientSocket < 0) {
-        m_dataTimer->stop();
-        return;
-    }
-
-    char buffer[1024];
-    ssize_t bytesRead = read(m_clientSocket, buffer, sizeof(buffer) - 1);
-    
-    if (bytesRead > 0) {
-        buffer[bytesRead] = '\0';
-        m_inputBuffer += QString::fromUtf8(buffer);
-        
-        // Process complete lines
-        while (m_inputBuffer.contains('\n')) {
-            int newlinePos = m_inputBuffer.indexOf('\n');
-            QString command = m_inputBuffer.left(newlinePos).trimmed();
-            m_inputBuffer = m_inputBuffer.mid(newlinePos + 1);
-            
-            if (!command.isEmpty()) {
-                emit commandReceived(command);
+    while (true) {
+        int fd = accept(m_serverSocket, nullptr, nullptr);
+        if (fd < 0) {
+            if (errno != EWOULDBLOCK && errno != EAGAIN) {
+                qWarning() << "Failed to accept connection:" << strerror(errno);
             }
+            return;
         }
-    } else if (bytesRead == 0) {
-        // Client disconnected
-        qDebug() << "Client disconnected";
-        closeClient();
-    } else if (errno != EWOULDBLOCK && errno != EAGAIN) {
-        qWarning() << "Read error:" << strerror(errno);
-        closeClient();
+        int flags = fcntl(fd, F_GETFL, 0);
+        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+        QSocketNotifier *notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
+        connect(notifier, &QSocketNotifier::activated, this, &NetworkInterface::handleClientData);
+        m_clients.insert(fd, Client{notifier, QByteArray()});
+        qDebug() << "Client connected" << fd << "(" << m_clients.size() << "open)";
     }
 }
 
-void NetworkInterface::closeClient()
+void NetworkInterface::handleClientData(int fd)
 {
-    if (m_clientSocket >= 0) {
-        close(m_clientSocket);
-        m_clientSocket = -1;
-        m_inputBuffer.clear();
-        m_dataTimer->stop();
+    if (!m_clients.contains(fd)) {
+        return;
     }
+    char buffer[1024];
+    while (true) {
+        ssize_t bytesRead = read(fd, buffer, sizeof(buffer));
+        if (bytesRead > 0) {
+            m_clients[fd].input.append(buffer, int(bytesRead));
+            continue;
+        }
+        if (bytesRead == 0 || (errno != EWOULDBLOCK && errno != EAGAIN)) {
+            if (bytesRead < 0) {
+                qWarning() << "Read error:" << strerror(errno);
+            }
+            // a client may send its command and close at once: handle what arrived first
+            QByteArray rest = m_clients[fd].input.trimmed();
+            m_clients[fd].input.clear();
+            if (!rest.isEmpty()) {
+                m_currentClient = fd;
+                emit commandReceived(QString::fromUtf8(rest));
+                m_currentClient = -1;
+            }
+            qDebug() << "Client disconnected" << fd;
+            closeClient(fd);
+            return;
+        }
+        break;   // nothing more to read now
+    }
+    // process complete lines (the handler may close this client)
+    while (m_clients.contains(fd)) {
+        QByteArray &input = m_clients[fd].input;
+        int newlinePos = input.indexOf('\n');
+        if (newlinePos < 0) {
+            break;
+        }
+        QString command = QString::fromUtf8(input.left(newlinePos)).trimmed();
+        input.remove(0, newlinePos + 1);
+        if (!command.isEmpty()) {
+            m_currentClient = fd;
+            emit commandReceived(command);
+            m_currentClient = -1;
+        }
+    }
+}
+
+void NetworkInterface::closeClient(int fd)
+{
+    auto it = m_clients.find(fd);
+    if (it == m_clients.end()) {
+        return;
+    }
+    it->notifier->setEnabled(false);
+    it->notifier->deleteLater();
+    m_clients.erase(it);
+    close(fd);
 }

@@ -2,8 +2,8 @@
 #define NETWORKINTERFACE_H
 
 #include <QObject>
+#include <QMap>
 #include <QSocketNotifier>
-#include <QTimer>
 
 class NetworkInterface : public QObject
 {
@@ -14,6 +14,7 @@ public:
     ~NetworkInterface();
 
     bool startServer();
+    // reply to the client whose command is being handled (commandReceived is emitted per command)
     void sendResponse(const QString &response);
 
 signals:
@@ -21,18 +22,21 @@ signals:
 
 private slots:
     void handleSocketActivity();
-    void checkForData();
+    void handleClientData(int fd);
 
 private:
+    struct Client {
+        QSocketNotifier *notifier;
+        QByteArray input;
+    };
+
     int m_serverSocket;
-    int m_clientSocket;
     int m_port;
     QSocketNotifier *m_socketNotifier;
-    QSocketNotifier *m_clientNotifier;
-    QTimer *m_dataTimer;
-    QString m_inputBuffer;
+    QMap<int, Client> m_clients;
+    int m_currentClient;   // fd the current command came from, -1 outside a command
 
-    void closeClient();
+    void closeClient(int fd);
 };
 
 #endif // NETWORKINTERFACE_H

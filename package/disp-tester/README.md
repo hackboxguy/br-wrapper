@@ -537,42 +537,18 @@ ERROR: <description>       # Command failed
 <data>                     # Information response
 ```
 
-### Connection Model & Pitfalls
+### Connection Model
 
-These are easy to miss and have bitten clients in the past. Read them
-before writing automation against this daemon.
+disp-tester serves any number of TCP clients at once; each reply goes to the client that sent the
+command, and commands are handled one at a time in arrival order. A client may send its command
+and close straight away (`echo pattern white | nc -q 1 ...`): what arrived before the close is
+still handled. Data and disconnects are event-driven (no polling).
 
-**1. Single client at a time.** disp-tester accepts exactly one TCP
-client. While that client is connected, additional `connect()` attempts
-are accepted-and-immediately-closed (no error code, no response) until
-the existing client disconnects. Symptom from the client side: connect
-succeeds, send may succeed, recv returns 0 immediately. From disp-tester's
-debug log: `Rejecting connection - client already connected`.
-
-**2. ~100ms close-detection latency.** disp-tester polls its client
-socket every 100ms. After a client closes its end, disp-tester takes up
-to ~100ms to notice and free the slot for the next connect. **A new
-connect that arrives inside that window gets silently rejected** by
-mechanism #1 above.
-
-What this means for clients:
-
-- **Use one connection for many commands** when possible. The protocol
-  is line-based, so one TCP session can carry an arbitrary number of
-  newline-terminated commands and read each `OK` / `ERROR: ...` /
-  data-line reply in turn. This avoids the rate-limit entirely.
-- **If you must use one connect-per-command**, leave at least **150ms
-  between successive connections**. Tools that fire commands in tight
-  loops (e.g. shell `for ... done` with `nc`, or rapid Python
-  `subprocess.run`) WILL hit silent drops if you don't.
-- **Treat overlay updates as best-effort**. When a drop happens, the
-  command is lost without notification. Don't rely on every per-step
-  text update landing — use the message content for "current state",
-  not "history of state transitions".
-
-If you've already taken the one-connection-per-command path and your
-calls are landing back-to-back, a quick `time.sleep(0.15)` between
-connections is the simplest fix.
+Before 2026-10 it accepted exactly one client and noticed a closed client only on a 100 ms poll;
+a connection that arrived inside that window was accepted and closed at once, which the client saw
+as `Connection reset by peer` (launcher-client opens one connection per command, so back-to-back
+commands failed - 193 of 200 in a test loop - and measurement scripts needed retries or a 150 ms
+gap between connections). Neither is needed any more; one connection for many commands still works.
 
 ## Text Overlay Feature
 
