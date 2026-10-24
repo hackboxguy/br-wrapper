@@ -30,9 +30,10 @@
  * contact's real size, 56 for one finger up to 225 with five (median 129),
  * past the 0..200 range the driver declares. It goes out as touch major,
  * width major and pressure, and Qt draws a touch as a circle that many
- * pixels wide, so lines were thick and uneven. The OTS-OLED's firmware sends
- * a fixed 64 for every contact. Do the same by default; 0 reports the
- * chip's own size, clamped to the declared range. Writable at run time:
+ * pixels wide, so lines were thick and uneven. himax_oled reports a fixed 64
+ * on the OTS-OLED (its firmware sends no real contact size; br-wrapper
+ * 59a82dc). Do the same by default; 0 reports the chip's own size, clamped
+ * to the declared range. Writable at run time:
  * /sys/module/himax_oledib/parameters/fixed_touch_size
  */
 static uint fixed_touch_size = 64;

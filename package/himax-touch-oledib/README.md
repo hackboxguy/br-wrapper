@@ -43,7 +43,8 @@ and the same `/proc/android_touch`: exactly one may be loaded. micropanel's
   fingers median 129, up to 225, past the declared 0..200). The driver sends it
   as touch major, width major and pressure, and Qt draws a touch that many
   pixels wide, so lines were thick and uneven. Every contact now reports 64,
-  as the OTS-OLED's firmware does. `0` reports the chip's own size, clamped to
+  as `himax_oled` does on the OTS-OLED (59a82dc; that firmware sends no real
+  contact size). `0` reports the chip's own size, clamped to
   200. Changeable at run time:
   `echo 0 | sudo tee /sys/module/himax_oledib/parameters/fixed_touch_size`.
 
