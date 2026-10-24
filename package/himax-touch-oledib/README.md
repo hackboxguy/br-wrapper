@@ -38,6 +38,14 @@ and the same `/proc/android_touch`: exactly one may be loaded. micropanel's
   so it never senses. With no `himax,RESX` in the DT the driver now calls
   `fp_sense_on()` (what `echo senseonoff,1 > /proc/android_touch/debug` does):
   `0x0C` -> `0x05`, touches reported.
+- `himax_common.c`: **`fixed_touch_size` module parameter, default 64.** The
+  20261022 firmware reports each contact's real size (one finger ~56, five
+  fingers median 129, up to 225, past the declared 0..200). The driver sends it
+  as touch major, width major and pressure, and Qt draws a touch that many
+  pixels wide, so lines were thick and uneven. Every contact now reports 64,
+  as the OTS-OLED's firmware does. `0` reports the chip's own size, clamped to
+  200. Changeable at run time:
+  `echo 0 | sudo tee /sys/module/himax_oledib/parameters/fixed_touch_size`.
 
 ## Known
 

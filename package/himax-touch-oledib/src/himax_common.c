@@ -25,6 +25,21 @@
 	static bool HX_PROC_SEND_FLAG;
 #endif
 
+/*
+ * br-wrapper, 17" OLED-IB: the HX8530 firmware (20261022) reports each
+ * contact's real size, 56 for one finger up to 225 with five (median 129),
+ * past the 0..200 range the driver declares. It goes out as touch major,
+ * width major and pressure, and Qt draws a touch as a circle that many
+ * pixels wide, so lines were thick and uneven. The OTS-OLED's firmware sends
+ * a fixed 64 for every contact. Do the same by default; 0 reports the
+ * chip's own size, clamped to the declared range. Writable at run time:
+ * /sys/module/himax_oledib/parameters/fixed_touch_size
+ */
+static uint fixed_touch_size = 64;
+module_param(fixed_touch_size, uint, 0644);
+MODULE_PARM_DESC(fixed_touch_size,
+		 "Size reported for every contact (touch/width major, pressure); 0 = the chip's own, clamped (default: 64, as the OTS-OLED)");
+
 static uint8_t HX_TOUCH_INFO_POINT_CNT;
 static uint8_t AA_press;
 static int probe_fail_flag;
@@ -2681,24 +2696,29 @@ static void himax_finger_report(struct himax_ts_data *ts)
 			I("valid=%d\n", valid);
 		}
 		if (valid) {
+			uint32_t w = g_target_report_data->w[i];
+
 			if (g_ts_dbg != 0) {
 				I("report_data->x[i]=%d,y[i]=%d,w[i]=%d",
 				  g_target_report_data->x[i],
 				  g_target_report_data->y[i],
 				  g_target_report_data->w[i]);
 			}
+			if (fixed_touch_size != 0U) {
+				w = fixed_touch_size;
+			}
+			if (w > ts->pdata->abs_pressure_max) {
+				w = ts->pdata->abs_pressure_max;
+			}
 #if (HX_PROTOCOL_A == 0x00)
 			input_mt_slot(ts->input_dev, i);
 #else
 			input_report_key(ts->input_dev, BTN_TOUCH, 1);
 #endif
-			input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR,
-					 g_target_report_data->w[i]);
+			input_report_abs(ts->input_dev, ABS_MT_TOUCH_MAJOR, w);
 #if (HX_PROTOCOL_A == 0x00)
-			input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR,
-					 g_target_report_data->w[i]);
-			input_report_abs(ts->input_dev, ABS_MT_PRESSURE,
-					 g_target_report_data->w[i]);
+			input_report_abs(ts->input_dev, ABS_MT_WIDTH_MAJOR, w);
+			input_report_abs(ts->input_dev, ABS_MT_PRESSURE, w);
 #else
 			input_report_abs(ts->input_dev, ABS_MT_TRACKING_ID, i);
 #endif
