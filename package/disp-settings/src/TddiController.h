@@ -2,13 +2,13 @@
 #define TDDICONTROLLER_H
 
 #include <QObject>
-#include <QTimer>
 #include <QString>
 
 /**
  * TddiController - TDDI touch controller information reader
  *
- * Reads information from /proc/android_touch/ filesystem
+ * Reads information from /proc/android_touch/ filesystem, once at start and
+ * on refresh() only: reading "vendor" resets a Himax chip, so never poll it.
  */
 class TddiController : public QObject
 {
@@ -61,7 +61,6 @@ private:
 
 private:
     QString m_basePath;
-    QTimer *m_refreshTimer;
 
     QString m_icType;
     QString m_fwVersion;

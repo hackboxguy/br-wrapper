@@ -9,17 +9,12 @@
 TddiController::TddiController(QObject *parent)
     : QObject(parent)
     , m_basePath(DEFAULT_TDDI_PATH)
-    , m_refreshTimer(new QTimer(this))
     , m_available(false)
 {
-    // Refresh TDDI info every 10 seconds (it rarely changes)
-    connect(m_refreshTimer, &QTimer::timeout, this, &TddiController::refresh);
-    m_refreshTimer->setInterval(10000);
 }
 
 TddiController::~TddiController()
 {
-    m_refreshTimer->stop();
 }
 
 void TddiController::setBasePath(const QString &path)
@@ -30,8 +25,12 @@ void TddiController::setBasePath(const QString &path)
 void TddiController::start()
 {
     qDebug() << "TddiController: Starting with base path" << m_basePath;
+    // Read once, on open, and again only when asked (refresh()). Never poll:
+    // in the Himax drivers, reading "vendor" re-initialises the chip
+    // (power_on_init, a reset), so a 10 s poll reset the OLED-IB's HX8530
+    // every 10 s -- touches dropped, and a firmware flash running beside it
+    // failed ("Check WEL Fail").
     refresh();
-    m_refreshTimer->start();
 }
 
 QString TddiController::readFile(const QString &filename)
