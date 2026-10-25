@@ -10,6 +10,7 @@
         <file>patterns/CrossDimming.qml</file>
         <file>patterns/WhiteBox.qml</file>
         <file>patterns/WhiteBoxMM.qml</file>
+        <file>patterns/Box.qml</file>
         <file>patterns/EdgeRuler.qml</file>
     </qresource>
 </RCC>

@@ -42,6 +42,12 @@ struct PatternParameters {
     float whiteboxmmPhysHeightMM = 0.0f; // Active-area physical height in mm (from datasheet)
     bool whiteboxmmVerbose = false;     // Show the top-left size readout (set via "verbose" arg)
 
+    // Measurement box ("pattern box <area-pct> <r> <g> <b> [bg <r> <g> <b>]"): a centred square of
+    // one colour covering area-pct of the screen area, on a background colour (sets the APL)
+    double boxAreaPct = 10.0;
+    int boxR = 255, boxG = 255, boxB = 255;
+    int boxBgR = 0, boxBgG = 0, boxBgB = 0;
+
     QVariantMap toVariantMap() const {
         QVariantMap map;
         map["ballSize"] = ballSize;
@@ -66,6 +72,13 @@ struct PatternParameters {
         map["whiteboxmmPhysWidthMM"] = whiteboxmmPhysWidthMM;
         map["whiteboxmmPhysHeightMM"] = whiteboxmmPhysHeightMM;
         map["whiteboxmmVerbose"] = whiteboxmmVerbose;
+        map["boxAreaPct"] = boxAreaPct;
+        map["boxR"] = boxR;
+        map["boxG"] = boxG;
+        map["boxB"] = boxB;
+        map["boxBgR"] = boxBgR;
+        map["boxBgG"] = boxBgG;
+        map["boxBgB"] = boxBgB;
         return map;
     }
 };

@@ -96,6 +96,7 @@ public slots:
     void previousPattern();
     void setPattern(const QString &pattern);
     void setCustomColor(int r, int g, int b);
+    void setBox(double areaPct, const QColor &box, const QColor &bg);
     QString getResolution();
     QString listPatterns();
     QString getNetworkInfo();

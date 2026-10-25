@@ -76,6 +76,8 @@ Window {
                     return "qrc:/patterns/WhiteBox.qml"
                 case "whiteboxmm":
                     return "qrc:/patterns/WhiteBoxMM.qml"
+                case "box":
+                    return "qrc:/patterns/Box.qml"
                 case "edge-ruler":
                     return "qrc:/patterns/EdgeRuler.qml"
                 default:

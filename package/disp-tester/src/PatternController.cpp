@@ -456,6 +456,25 @@ void PatternController::setCustomColor(int r, int g, int b)
     emit currentPatternChanged();
 }
 
+void PatternController::setBox(double areaPct, const QColor &box, const QColor &bg)
+{
+    m_parameters.boxAreaPct = areaPct;
+    m_parameters.boxR = box.red();
+    m_parameters.boxG = box.green();
+    m_parameters.boxB = box.blue();
+    m_parameters.boxBgR = bg.red();
+    m_parameters.boxBgG = bg.green();
+    m_parameters.boxBgB = bg.blue();
+    m_showCustomColor = false;
+    m_currentPattern = "box";
+
+    qDebug() << "Box set:" << areaPct << "% of the area," << box << "on" << bg;
+
+    emit patternParamsChanged();
+    emit showCustomColorChanged();
+    emit currentPatternChanged();
+}
+
 QString PatternController::getResolution()
 {
     QScreen *screen = QGuiApplication::primaryScreen();
@@ -660,6 +679,25 @@ void PatternController::handleNetworkCommand(const QString &command)
                 m_networkInterface->sendResponse("OK");
             } else {
                 m_networkInterface->sendResponse("ERROR: Invalid RGB values");
+            }
+        } else if (pattern == "box" && parts.size() >= 6) {
+            // box <area-pct> <r> <g> <b> [bg <r> <g> <b>]
+            bool ok = true;
+            auto num = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 255; return v; };
+            bool pctOk;
+            double pct = parts[2].toDouble(&pctOk);
+            QColor box(num(3), num(4), num(5));
+            QColor bg(0, 0, 0);
+            if (parts.size() >= 10 && parts[6].toLower() == "bg") {
+                bg = QColor(num(7), num(8), num(9));
+            } else if (parts.size() > 6) {
+                ok = false;
+            }
+            if (ok && pctOk && pct > 0 && pct <= 100) {
+                setBox(pct, box, bg);
+                m_networkInterface->sendResponse("OK");
+            } else {
+                m_networkInterface->sendResponse("ERROR: usage: pattern box <area-pct 0-100> <r> <g> <b> [bg <r> <g> <b>]");
             }
         } else if (m_patterns.contains(pattern)) {
             // Check for pattern parameters

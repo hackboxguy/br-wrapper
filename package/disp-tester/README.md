@@ -43,6 +43,7 @@ A Qt5-based display pattern generator application designed for testing displays 
 
 ### **Custom Patterns**
 - **RGB patches**: Custom colors with `pattern rgb R G B` (values 0-255)
+- **Measurement box**: `pattern box AREA R G B [bg R G B]` — a centred square of one colour covering AREA % of the screen area (0-100) on a background colour; for window-referenced measurements (OLED ABL, local dimming) where the surround sets the frame's APL
 
 ## Installation
 
@@ -516,6 +517,8 @@ pattern edge-ruler          # Cropped/shifted edge pixel check
 
 # Custom RGB
 pattern rgb 255 128 64      # Custom color (R G B values 0-255)
+pattern box 10 128 128 128  # 10 % area grey square on black
+pattern box 10 255 255 255 bg 64 64 64   # white square on a grey surround
 
 # Bottom-right metadata text overlay
 set-metadata-text <message>            # Set the overlay text (literal \n becomes newline)
