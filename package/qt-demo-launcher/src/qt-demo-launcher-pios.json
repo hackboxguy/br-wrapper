@@ -1143,6 +1143,111 @@
         "border_radius": 20
       },
       {
+        "id": "hdr-display-profile",
+        "enabled": true,
+        "page": "calibration-tools",
+        "text": "HDR Display Profile",
+        "subtitle": "Measure a display profile for HDR clips",
+        "icon": "/usr/share/qt-apps/icons/hdr-profile.svg",
+        "action": "navigate",
+        "target_page": "hdr-display-profile",
+        "page_title": "HDR Display Profile",
+        "position": {
+          "row": 2,
+          "column": 2
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#34D399",
+        "background_color": "#2F6B5E",
+        "hover_color": "#245548"
+      },
+      {
+        "id": "measure-display-profile",
+        "enabled": true,
+        "page": "hdr-display-profile",
+        "text": "Measure Display Profile",
+        "subtitle": "Sensor on the centre, then Start",
+        "icon": "/usr/share/qt-apps/icons/hdr-profile.svg",
+        "program": "/usr/bin/disp-tester",
+        "arguments": [
+          "--child-action-button",
+          "--disable-exit-while-child-active",
+          "--child-action-start-text", "Start Measurement",
+          "--child-action-stop-text", "Measuring... (cancel)",
+          "--child-action-start-color", "green",
+          "--child-action-stop-color", "red",
+          "--disable-pattern-navigation",
+          "--disable-ui-autohide",
+          "--hide-navigation-help",
+          "--child-option-name", "use-current-brightness",
+          "--child-option-text", "Full-Brightness",
+          "--child-option-on-text", "Current-Brightness",
+          "--script", "/usr/share/qt-apps/hdr-profile-start-child.sh"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 0,
+          "column": 0
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#34D399",
+        "background_color": "#2F6B5E",
+        "hover_color": "#245548"
+      },
+      {
+        "id": "view-display-profiles",
+        "enabled": true,
+        "page": "hdr-display-profile",
+        "text": "View Profiles",
+        "subtitle": "Browse & copy profiles to USB",
+        "icon": "/usr/share/qt-apps/icons/display-profiles.svg",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": [
+          "--enable-usb-copy",
+          "--usb-copy-script", "/home/pi/micropanel/bin/copy-image-to-usb.sh",
+          "/home/pi/display-profiles"
+        ],
+        "working_directory": "/tmp",
+        "position": {
+          "row": 0,
+          "column": 1
+        },
+        "size": {
+          "width": 640,
+          "height": 200
+        },
+        "icon_size": {
+          "width": 100,
+          "height": 100
+        },
+        "icon_layout": "icon_top",
+        "font_size": 30,
+        "border_radius": 20,
+        "accent_color": "#A78BFA",
+        "background_color": "#6C5D8E",
+        "hover_color": "#574878"
+      },
+      {
         "id": "usb-media-autostart",
         "enabled": true,
         "visible": false,
@@ -1189,6 +1294,20 @@
           "--disable-user-interaction",
           "--disable-pattern-navigation",
           "--hide-navigation-help"
+        ],
+        "working_directory": "/tmp"
+      },
+      {
+        "id": "hdr-profile-gallery",
+        "enabled": true,
+        "visible": false,
+        "page": "_internal",
+        "text": "HDR Display Profile Gallery",
+        "program": "/usr/bin/touch-gallery",
+        "arguments": [
+          "--enable-usb-copy",
+          "--usb-copy-script", "/home/pi/micropanel/bin/copy-image-to-usb.sh",
+          "/home/pi/display-profiles"
         ],
         "working_directory": "/tmp"
       },

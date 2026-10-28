@@ -456,9 +456,12 @@ void PatternController::setCustomColor(int r, int g, int b)
     emit currentPatternChanged();
 }
 
-void PatternController::setBox(double areaPct, const QColor &box, const QColor &bg)
+void PatternController::setBox(double areaPct, int sidePx, int cx, int cy, const QColor &box, const QColor &bg)
 {
     m_parameters.boxAreaPct = areaPct;
+    m_parameters.boxSidePx = sidePx;
+    m_parameters.boxCx = cx;
+    m_parameters.boxCy = cy;
     m_parameters.boxR = box.red();
     m_parameters.boxG = box.green();
     m_parameters.boxB = box.blue();
@@ -468,7 +471,28 @@ void PatternController::setBox(double areaPct, const QColor &box, const QColor &
     m_showCustomColor = false;
     m_currentPattern = "box";
 
-    qDebug() << "Box set:" << areaPct << "% of the area," << box << "on" << bg;
+    qDebug() << "Box set:" << (sidePx > 0 ? QString("%1 px").arg(sidePx) : QString("%1 % of the area").arg(areaPct))
+             << "at" << cx << cy << box << "on" << bg;
+
+    emit patternParamsChanged();
+    emit showCustomColorChanged();
+    emit currentPatternChanged();
+}
+
+void PatternController::setChecker(int cols, int rows, const QColor &a, const QColor &b)
+{
+    m_parameters.checkerCols = cols;
+    m_parameters.checkerRows = rows;
+    m_parameters.checkerAR = a.red();
+    m_parameters.checkerAG = a.green();
+    m_parameters.checkerAB = a.blue();
+    m_parameters.checkerBR = b.red();
+    m_parameters.checkerBG = b.green();
+    m_parameters.checkerBB = b.blue();
+    m_showCustomColor = false;
+    m_currentPattern = "checker";
+
+    qDebug() << "Checker set:" << cols << "x" << rows << a << b;
 
     emit patternParamsChanged();
     emit showCustomColorChanged();
@@ -620,7 +644,7 @@ void PatternController::setMetadataColor(int r, int g, int b)
     }
 }
 
-void PatternController::setMetadataColorByName(const QString &colorName)
+bool PatternController::setMetadataColorByName(const QString &colorName)
 {
     QString name = colorName.toLower();
     QColor color;
@@ -637,10 +661,11 @@ void PatternController::setMetadataColorByName(const QString &colorName)
     else if (name == "purple") color = QColor(128, 0, 128);
     else if (name == "gray" || name == "grey") color = QColor(128, 128, 128);
     else {
-        return; // Invalid color name
+        return false; // Invalid color name
     }
 
     setMetadataColor(color);
+    return true;
 }
 
 void PatternController::setUserInteractionEnabled(bool enabled)
@@ -681,23 +706,60 @@ void PatternController::handleNetworkCommand(const QString &command)
                 m_networkInterface->sendResponse("ERROR: Invalid RGB values");
             }
         } else if (pattern == "box" && parts.size() >= 6) {
-            // box <area-pct> <r> <g> <b> [bg <r> <g> <b>]
+            // box <area-pct>|<N>px <r> <g> <b> [bg <r> <g> <b>] [at <x> <y>]
             bool ok = true;
             auto num = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 255; return v; };
-            bool pctOk;
-            double pct = parts[2].toDouble(&pctOk);
+            auto pix = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 16384; return v; };
+            double pct = 0;
+            int sidePx = 0;
+            if (parts[2].toLower().endsWith("px")) {
+                bool k;
+                sidePx = parts[2].left(parts[2].size() - 2).toInt(&k);
+                ok = ok && k && sidePx > 0 && sidePx <= 16384;
+            } else {
+                bool k;
+                pct = parts[2].toDouble(&k);
+                ok = ok && k && pct > 0 && pct <= 100;
+            }
             QColor box(num(3), num(4), num(5));
             QColor bg(0, 0, 0);
-            if (parts.size() >= 10 && parts[6].toLower() == "bg") {
-                bg = QColor(num(7), num(8), num(9));
-            } else if (parts.size() > 6) {
+            int cx = -1, cy = -1;
+            int i = 6;
+            if (parts.size() >= i + 4 && parts[i].toLower() == "bg") {
+                bg = QColor(num(i + 1), num(i + 2), num(i + 3));
+                i += 4;
+            }
+            if (parts.size() >= i + 3 && parts[i].toLower() == "at") {
+                cx = pix(i + 1);
+                cy = pix(i + 2);
+                i += 3;
+            }
+            if (parts.size() != i) {
                 ok = false;
             }
-            if (ok && pctOk && pct > 0 && pct <= 100) {
-                setBox(pct, box, bg);
+            if (ok) {
+                setBox(pct, sidePx, cx, cy, box, bg);
                 m_networkInterface->sendResponse("OK");
             } else {
-                m_networkInterface->sendResponse("ERROR: usage: pattern box <area-pct 0-100> <r> <g> <b> [bg <r> <g> <b>]");
+                m_networkInterface->sendResponse("ERROR: usage: pattern box <area-pct 0-100>|<N>px <r> <g> <b> [bg <r> <g> <b>] [at <x> <y>]");
+            }
+        } else if (pattern == "checker" && (parts.size() == 4 || parts.size() == 10)) {
+            // checker <cols> <rows> [<r> <g> <b> <r> <g> <b>]
+            bool ok = true;
+            auto num = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 255; return v; };
+            bool cOk, rOk;
+            int cols = parts[2].toInt(&cOk);
+            int rows = parts[3].toInt(&rOk);
+            QColor a(0, 0, 0), b(255, 255, 255);
+            if (parts.size() == 10) {
+                a = QColor(num(4), num(5), num(6));
+                b = QColor(num(7), num(8), num(9));
+            }
+            if (ok && cOk && rOk && cols >= 1 && cols <= 64 && rows >= 1 && rows <= 64) {
+                setChecker(cols, rows, a, b);
+                m_networkInterface->sendResponse("OK");
+            } else {
+                m_networkInterface->sendResponse("ERROR: usage: pattern checker <cols 1-64> <rows 1-64> [<r> <g> <b> <r> <g> <b>]");
             }
         } else if (m_patterns.contains(pattern)) {
             // Check for pattern parameters
@@ -790,11 +852,8 @@ void PatternController::handleNetworkCommand(const QString &command)
             }
         } else if (parts.size() >= 2) {
             // Named color format: set-metadata-color red
-            QString colorName = parts[1].toLower();
-            QColor originalColor = m_metadataColor;
-            setMetadataColorByName(colorName);
-
-            if (m_metadataColor != originalColor) {
+            // a known name is OK even when the text already has that colour
+            if (setMetadataColorByName(parts[1].toLower())) {
                 m_networkInterface->sendResponse("OK");
             } else {
                 m_networkInterface->sendResponse("ERROR: Invalid color name (use: white, red, green, blue, cyan, magenta, yellow, orange, purple, gray, black)");
@@ -827,6 +886,22 @@ void PatternController::handleNetworkCommand(const QString &command)
             m_networkInterface->sendResponse("OK");
         } else {
             m_networkInterface->sendResponse("ERROR: Invalid child action state (use: enable, disable)");
+        }
+    } else if (cmd == "press-child-action") {
+        // the child-action button pressed remotely (the same as a tap: Start / Stop to the child)
+        if (!m_childActionButtonVisible) {
+            m_networkInterface->sendResponse("ERROR: no child-action button (--child-action-button)");
+        } else {
+            toggleChildAction();
+            m_networkInterface->sendResponse(m_childActionActive ? "OK active" : "OK inactive");
+        }
+    } else if (cmd == "toggle-child-option") {
+        // the option toggle beside the child-action button tapped remotely
+        if (m_childOptionName.isEmpty() || m_childActionActive) {
+            m_networkInterface->sendResponse("ERROR: no child option, or the child action is running");
+        } else {
+            toggleChildOption();
+            m_networkInterface->sendResponse(m_childOptionEnabled ? "OK on" : "OK off");
         }
     } else if (cmd == "get-resolution") {
         m_networkInterface->sendResponse(getResolution());

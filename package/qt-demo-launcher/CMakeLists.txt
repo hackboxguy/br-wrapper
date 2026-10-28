@@ -86,6 +86,10 @@ install(PROGRAMS
     src/kodi-video.sh
     src/display-analysis-report.sh
     src/display-analysis-start-child.sh
+    src/display-analysis-common.sh
+    src/hdr-profile-common.sh
+    src/hdr-profile-start-child.sh
+    src/hdr-profile-worker.sh
     src/kodi-usb-common.sh
     src/dual-video.sh
     src/usb-media.sh

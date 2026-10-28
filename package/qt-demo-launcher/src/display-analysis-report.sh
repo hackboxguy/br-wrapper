@@ -11,6 +11,7 @@
 set -u
 
 MICROPANEL_HOME="${MICROPANEL_HOME:-/home/pi/micropanel}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT_ROOT="${DISPLAY_ANALYSIS_OUTPUT_ROOT:-/tmp/display-analysis}"
 ARCHIVE_ROOT="${DISPLAY_ANALYSIS_REPORT_ARCHIVE_ROOT:-/home/pi/test-reports}"
 LAUNCHER_ADDR="${LAUNCHER_ADDR:-127.0.0.1:8081}"
@@ -22,6 +23,10 @@ CONTROL_CMD_GAP="${DISPLAY_ANALYSIS_CMD_GAP:-0.15}"
 CONTROL_CMD_RETRIES="${DISPLAY_ANALYSIS_RENDER_CMD_RETRIES:-2}"
 DEFAULT_1080P_MODEL="${DEFAULT_1080P_MODEL:-14.6-fhd-spartan7}"
 DEFAULT_DISPLAY_MODEL="${DEFAULT_DISPLAY_MODEL:-$DEFAULT_1080P_MODEL}"
+
+# shared helpers (model, serial, launcher-client, disp_cmd)
+. "$SCRIPT_DIR/display-analysis-common.sh"
+DA_DISP_ADDR="$PATTERN_GEN_ADDR" DA_CMD_TIMEOUT="$CONTROL_TIMEOUT" DA_CMD_RETRIES="$CONTROL_CMD_RETRIES" DA_CMD_GAP="$CONTROL_CMD_GAP"
 
 RUNNER="${DISPLAY_TEST_RUNNER:-$MICROPANEL_HOME/share/disptool/display-test-framework/runners/run-tests.sh}"
 REPORT_CARD="${DISPLAY_REPORT_CARD:-$MICROPANEL_HOME/lib/disp-report-card/display_report_card.py}"
@@ -64,24 +69,6 @@ esac
 
 RENDERING_APP_ID="${DISPLAY_ANALYSIS_RENDERING_APP_ID:-$DEFAULT_RENDERING_APP_ID}"
 GALLERY_APP_ID="${GALLERY_APP_ID:-$DEFAULT_GALLERY_APP_ID}"
-
-# Short chip serial of the display IOC (e.g. 0HD5-B2WV-JE6HH) via disptool;
-# empty when the display has no IOC or its firmware does not provide one.
-read_display_serial() {
-    tool=""
-    for t in "${DISPTOOL:-}" "$MICROPANEL_HOME/bin/disptool" /usr/bin/disptool /usr/local/bin/disptool; do
-        [ -n "$t" ] && [ -x "$t" ] && tool="$t" && break
-    done
-    serial=""
-    if [ -n "$tool" ]; then
-        serial="$("$tool" --i2cdev="${I2C_DEVICE:-/dev/i2c-1}" --autotestformat --command chipid --device=ioc 2>/dev/null |
-                  sed -n 's/^Short[[:space:]]*:[[:space:]]*\([0-9A-Z-]*\).*/\1/p' | head -n 1)"
-    fi
-    case "$serial" in
-        ????-????-?????) echo "$serial" ;;
-        *) echo "" ;;
-    esac
-}
 
 SUITE_DIR="$OUTPUT_ROOT/$SUITE_DIR_NAME"
 LOCK_DIR="$SUITE_DIR/.analysis.lock"
@@ -151,90 +138,6 @@ run_logged() {
     "$@" >> "$LOG_FILE" 2>&1
 }
 
-detect_launcher_client() {
-    if [ -n "${LAUNCHER_CLIENT:-}" ] && [ -x "$LAUNCHER_CLIENT" ]; then
-        echo "$LAUNCHER_CLIENT"
-    elif [ -x "/usr/bin/launcher-client" ]; then
-        echo "/usr/bin/launcher-client"
-    elif [ -x "$MICROPANEL_HOME/usr/bin/launcher-client" ]; then
-        echo "$MICROPANEL_HOME/usr/bin/launcher-client"
-    elif [ -x "$MICROPANEL_HOME/build/launcher-client" ]; then
-        echo "$MICROPANEL_HOME/build/launcher-client"
-    else
-        echo "launcher-client"
-    fi
-}
-
-detect_display_resolution() {
-    if [ -r /sys/class/graphics/fb0/virtual_size ]; then
-        value="$(cat /sys/class/graphics/fb0/virtual_size 2>/dev/null | tr ',' 'x' | tr -d '[:space:]')"
-        case "$value" in
-            [0-9]*x[0-9]*)
-                echo "$value"
-                return 0
-                ;;
-        esac
-    fi
-
-    if [ -r /sys/class/graphics/fb0/modes ]; then
-        value="$(sed -n 's/.*:\([0-9][0-9]*x[0-9][0-9]*\).*/\1/p' /sys/class/graphics/fb0/modes 2>/dev/null | head -n 1)"
-        if [ -n "$value" ]; then
-            echo "$value"
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
-# Display type pi-config-txt.sh recorded in config.txt; tells apart panels that
-# share a resolution (14.6-fhd direct-drive vs 14.6-fhd-ej scan-mode EJ, 12.3-nq1
-# vs 12.3-nq1v1.1).
-configured_display_type() {
-    for q in /usr/bin/pi-config-txt.sh "$MICROPANEL_HOME/usr/bin/pi-config-txt.sh"; do
-        if [ -x "$q" ]; then
-            "$q" --input=/boot/firmware/config.txt --query-config 2>/dev/null
-            return 0
-        fi
-    done
-    return 1
-}
-
-resolve_display_model() {
-    if [ -n "${DISPLAY_MODEL:-}" ]; then
-        echo "$DISPLAY_MODEL"
-        return 0
-    fi
-
-    resolution="$(detect_display_resolution || true)"
-    case "$resolution" in
-        1920x720)
-            case "$(configured_display_type || true)" in
-                12.3-nq1v1.1) echo "12.3-nq1v1.1-lattice-lae3u25f" ;;
-                *)            echo "12.3-nq1-lattice-ecp5" ;;
-            esac
-            ;;
-        2560x1440)
-            echo "15.6-0od-lattice-ecp5"
-            ;;
-        2880x1620)
-            echo "17-oled-ots"
-            ;;
-        3840x2400)
-            echo "rtk-hg560t34"
-            ;;
-        1920x1080)
-            case "$(configured_display_type || true)" in
-                14.6-fhd-ej) echo "14.6-fhd-spartan7-ej" ;;
-                *)           echo "$DEFAULT_1080P_MODEL" ;;
-            esac
-            ;;
-        *)
-            echo "$DEFAULT_DISPLAY_MODEL"
-            ;;
-    esac
-}
-
 gallery_running() {
     "$LAUNCHER_CLIENT_BIN" --srv="$GALLERY_ADDR" --command=get-count \
         --timeoutsec="$TIMEOUT" >/dev/null 2>&1
@@ -249,39 +152,6 @@ wait_for_gallery() {
         i=$((i + 1))
         sleep 1
     done
-    return 1
-}
-
-disp_cmd() {
-    command="$1"
-    arg="${2:-}"
-    attempt=1
-    response=""
-    rc=1
-
-    while [ "$attempt" -le "$CONTROL_CMD_RETRIES" ]; do
-        if [ "$attempt" -gt 1 ]; then
-            sleep "$CONTROL_CMD_GAP"
-        fi
-
-        if [ -n "$arg" ]; then
-            response="$("$LAUNCHER_CLIENT_BIN" --srv="$PATTERN_GEN_ADDR" \
-                --command="$command" --command-arg="$arg" \
-                --timeoutsec="$CONTROL_TIMEOUT" 2>&1)"
-        else
-            response="$("$LAUNCHER_CLIENT_BIN" --srv="$PATTERN_GEN_ADDR" \
-                --command="$command" --timeoutsec="$CONTROL_TIMEOUT" 2>&1)"
-        fi
-        rc=$?
-        if [ "$rc" -eq 0 ] && echo "$response" | grep -q "OK"; then
-            sleep "$CONTROL_CMD_GAP"
-            return 0
-        fi
-
-        attempt=$((attempt + 1))
-    done
-
-    log "WARNING: disp-tester command failed: $command $arg attempts=$CONTROL_CMD_RETRIES rc=$rc response=$response"
     return 1
 }
 

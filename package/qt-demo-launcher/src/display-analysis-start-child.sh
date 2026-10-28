@@ -35,42 +35,13 @@ PLACEMENT_TEXT="${DISPLAY_ANALYSIS_PLACEMENT_TEXT:-Place the USB sensor on the w
 STARTING_TEXT="${DISPLAY_ANALYSIS_STARTING_TEXT:-$ANALYSIS_TITLE\\nMeasurement running...}"
 DISP_CMD_GAP="${DISPLAY_ANALYSIS_CMD_GAP:-0.20}"
 DISP_CMD_RETRIES="${DISPLAY_ANALYSIS_CMD_RETRIES:-5}"
+# shared helpers (launcher-client, als-dimmer brightness, disp_cmd)
+. "$SCRIPT_DIR/display-analysis-common.sh"
+DA_DISP_ADDR="$DISP_ADDR" DA_CMD_TIMEOUT="$TIMEOUT" DA_CMD_RETRIES="$DISP_CMD_RETRIES" DA_CMD_GAP="$DISP_CMD_GAP"
 USE_CURRENT_BRIGHTNESS=0
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$GATE_LOG"
-}
-
-detect_launcher_client() {
-    if [ -n "${LAUNCHER_CLIENT:-}" ] && [ -x "$LAUNCHER_CLIENT" ]; then
-        echo "$LAUNCHER_CLIENT"
-    elif [ -x "/usr/bin/launcher-client" ]; then
-        echo "/usr/bin/launcher-client"
-    elif [ -n "${MICROPANEL_HOME:-}" ] && [ -x "$MICROPANEL_HOME/usr/bin/launcher-client" ]; then
-        echo "$MICROPANEL_HOME/usr/bin/launcher-client"
-    elif [ -n "${MICROPANEL_HOME:-}" ] && [ -x "$MICROPANEL_HOME/build/launcher-client" ]; then
-        echo "$MICROPANEL_HOME/build/launcher-client"
-    else
-        echo "launcher-client"
-    fi
-}
-
-detect_als_dimmer_client() {
-    for c in "${ALS_DIMMER_CLIENT:-}" /usr/bin/als-dimmer-client /home/pi/als-dimmer/bin/als-dimmer-client; do
-        [ -n "$c" ] && [ -x "$c" ] && echo "$c" && return 0
-    done
-    return 1
-}
-
-# Current brightness in percent (0-100) as als-dimmer reports it; empty if unknown.
-current_brightness() {
-    client="$(detect_als_dimmer_client)" || return 1
-    value="$("$client" --brightness 2>/dev/null | tr -dc '0-9')"
-    case "$value" in
-        ''|*[!0-9]*) return 1 ;;
-    esac
-    [ "$value" -le 100 ] || return 1
-    echo "$value"
 }
 
 # The placement prompt; the gamut suite also says which brightness it will use.
@@ -97,39 +68,6 @@ is_apl_suite() {
             ;;
     esac
 
-    return 1
-}
-
-disp_cmd() {
-    command="$1"
-    arg="${2:-}"
-    attempt=1
-    response=""
-    rc=1
-
-    while [ "$attempt" -le "$DISP_CMD_RETRIES" ]; do
-        if [ "$attempt" -gt 1 ]; then
-            sleep "$DISP_CMD_GAP"
-        fi
-
-        if [ -n "$arg" ]; then
-            response="$("$LAUNCHER_CLIENT_BIN" --srv="$DISP_ADDR" --command="$command" \
-                --command-arg="$arg" --timeoutsec="$TIMEOUT" 2>&1)"
-        else
-            response="$("$LAUNCHER_CLIENT_BIN" --srv="$DISP_ADDR" --command="$command" \
-                --timeoutsec="$TIMEOUT" 2>&1)"
-        fi
-        rc=$?
-        if [ "$rc" -eq 0 ] && echo "$response" | grep -q "OK"; then
-            sleep "$DISP_CMD_GAP"
-            return 0
-        fi
-
-        attempt=$((attempt + 1))
-    done
-
-    log "warning: disp-tester command failed: $command $arg attempts=$DISP_CMD_RETRIES rc=$rc response=$response"
-    sleep "$DISP_CMD_GAP"
     return 1
 }
 

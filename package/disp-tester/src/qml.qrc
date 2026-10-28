@@ -11,6 +11,7 @@
         <file>patterns/WhiteBox.qml</file>
         <file>patterns/WhiteBoxMM.qml</file>
         <file>patterns/Box.qml</file>
+        <file>patterns/Checker.qml</file>
         <file>patterns/EdgeRuler.qml</file>
     </qresource>
 </RCC>

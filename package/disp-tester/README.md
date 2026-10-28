@@ -43,7 +43,8 @@ A Qt5-based display pattern generator application designed for testing displays 
 
 ### **Custom Patterns**
 - **RGB patches**: Custom colors with `pattern rgb R G B` (values 0-255)
-- **Measurement box**: `pattern box AREA R G B [bg R G B]` — a centred square of one colour covering AREA % of the screen area (0-100) on a background colour; for window-referenced measurements (OLED ABL, local dimming) where the surround sets the frame's APL
+- **Measurement box**: `pattern box AREA|Npx R G B [bg R G B] [at X Y]` — a square of one colour covering AREA % of the screen area (0-100), or N px a side, on a background colour, centred on the screen or on pixel X,Y; for window-referenced measurements (OLED ABL, local dimming) where the surround sets the frame's APL, and for the sensor locator (a small box stepped across the screen)
+- **Checkerboard**: `pattern checker COLS ROWS [R G B R G B]` — COLS x ROWS tiles over the whole screen, the top-left (and on an odd board the centre) tile in the first colour (default black, the other white); `checker 3 3` is the in-scene black of a local-dimming profile (640x360 tiles on 1080p, the meter on the centre)
 
 ## Installation
 
@@ -519,6 +520,8 @@ pattern edge-ruler          # Cropped/shifted edge pixel check
 pattern rgb 255 128 64      # Custom color (R G B values 0-255)
 pattern box 10 128 128 128  # 10 % area grey square on black
 pattern box 10 255 255 255 bg 64 64 64   # white square on a grey surround
+pattern box 120px 255 255 255 at 760 540   # 120-px white square centred 200 px left of the centre
+pattern checker 3 3                       # 3x3 board, centre tile black
 
 # Bottom-right metadata text overlay
 set-metadata-text <message>            # Set the overlay text (literal \n becomes newline)
@@ -535,6 +538,8 @@ get-metadata-color
 
 # Child action button state (used by supervised child scripts)
 set-child-action-active <enable|disable>
+press-child-action                     # tap the child-action button remotely (Start / Stop to the child)
+toggle-child-option                    # tap the option toggle beside it (not while the child action runs)
 ```
 
 ### Information Commands

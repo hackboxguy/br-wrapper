@@ -42,11 +42,21 @@ struct PatternParameters {
     float whiteboxmmPhysHeightMM = 0.0f; // Active-area physical height in mm (from datasheet)
     bool whiteboxmmVerbose = false;     // Show the top-left size readout (set via "verbose" arg)
 
-    // Measurement box ("pattern box <area-pct> <r> <g> <b> [bg <r> <g> <b>]"): a centred square of
-    // one colour covering area-pct of the screen area, on a background colour (sets the APL)
+    // Measurement box ("pattern box <area-pct>|<N>px <r> <g> <b> [bg <r> <g> <b>] [at <x> <y>]"): a
+    // square of one colour covering area-pct of the screen area (or N px a side), on a background
+    // colour (sets the APL), centred on the screen or on pixel x,y (the sensor locator's sweep)
     double boxAreaPct = 10.0;
+    int boxSidePx = 0;              // > 0: the side in pixels instead of boxAreaPct
+    int boxCx = -1, boxCy = -1;     // centre in pixels (-1 = screen centre)
     int boxR = 255, boxG = 255, boxB = 255;
     int boxBgR = 0, boxBgG = 0, boxBgB = 0;
+
+    // Checkerboard ("pattern checker <cols> <rows> [<r> <g> <b> <r> <g> <b>]"): cols x rows tiles over
+    // the whole screen, the top-left tile in the first colour (default black, the other white); an odd
+    // board has its centre tile in the first colour (3x3 on 1920x1080: 640x360 tiles, the in-scene black)
+    int checkerCols = 3, checkerRows = 3;
+    int checkerAR = 0, checkerAG = 0, checkerAB = 0;
+    int checkerBR = 255, checkerBG = 255, checkerBB = 255;
 
     QVariantMap toVariantMap() const {
         QVariantMap map;
@@ -73,12 +83,23 @@ struct PatternParameters {
         map["whiteboxmmPhysHeightMM"] = whiteboxmmPhysHeightMM;
         map["whiteboxmmVerbose"] = whiteboxmmVerbose;
         map["boxAreaPct"] = boxAreaPct;
+        map["boxSidePx"] = boxSidePx;
+        map["boxCx"] = boxCx;
+        map["boxCy"] = boxCy;
         map["boxR"] = boxR;
         map["boxG"] = boxG;
         map["boxB"] = boxB;
         map["boxBgR"] = boxBgR;
         map["boxBgG"] = boxBgG;
         map["boxBgB"] = boxBgB;
+        map["checkerCols"] = checkerCols;
+        map["checkerRows"] = checkerRows;
+        map["checkerAR"] = checkerAR;
+        map["checkerAG"] = checkerAG;
+        map["checkerAB"] = checkerAB;
+        map["checkerBR"] = checkerBR;
+        map["checkerBG"] = checkerBG;
+        map["checkerBB"] = checkerBB;
         return map;
     }
 };

@@ -424,6 +424,58 @@ panel waits. Log: `/tmp/cluster-v2.log`.
 - Host test: `sh tests/test-cluster-v2-state.sh` (the remembered states - DMS, MAP, T, B -
   and the mirror, against a fake install).
 
+### HDR Display Profile (`hdr-profile-start-child.sh`, `hdr-profile-worker.sh`)
+
+Calibration Tools → **HDR Display Profile** measures a display profile for the HDR processor (the
+sdr-hdr-shootout-demo generator's `display-profile/1`) with one button, the colorimeter on the screen
+centre. The page has two buttons:
+
+- **Measure Display Profile** — disp-tester with the gate `hdr-profile-start-child.sh`. On a 10 % white
+  box it shows what will be measured: the display model and serial, the type and local-dimming state
+  (detected, not chosen), the brightness (Full-Brightness = 100 %, or the Current-Brightness option as
+  Analyze Color Gamut has it) and the expected time. **Start** first runs the sensor locator
+  (display-test-framework `tests/02-validation/test-sensor-locate.sh`, 2-4 min): when the meter is more
+  than 25 px off the centre the screen says which way and how far ("move the sensor 7 mm up") and waits
+  for Start again; after three rounds it refuses. On target it starts `hdr-profile-worker.sh` and the
+  button turns into **Measuring... (cancel)**: a tap cancels (the runner restores the display state).
+- **View Profiles** — touch-gallery over `/home/pi/display-profiles` with USB copy, as View Reports:
+  the card's PNG and its `-data` folder (the profile JSON) go to the stick, for the HDR processor's
+  profile upload.
+
+**Detection** (`hdr-profile-common.sh`, shared by gate and worker): the display-test-framework model
+from the resolution and pi-config-txt.sh's display type (`display-analysis-common.sh`, shared with the
+gamut and APL flows; 2560x1440 + `oled-ib-17` is the 17" OLED-IB). Its config decides the type:
+`display_type: hdmi-ddc` → edge-lit HDMI, **not yet** (the worker exits cleanly; the hooks are in the
+header); a `17-oled-*` model → `oled` (subpixel layout from the config's `panel.subpixel`); an FPGA →
+`localdimming`, profiled in the local-dimming state read back through `disptool --device=fpganew`
+(dimming off is a localdimming profile with state off, rendered as edge-lit by the generator).
+
+**The worker** runs `run-display-profile.sh` as root (`systemd-run --unit=display-profile`) with the
+options of the two real profiles: OLED `--display-type=oled --backlight=100 --warmup-min=20`; dimming
+on `--backlight=100 --local-dimming=on --warmup-min=20 --warmup-pattern=grey:124` (tests gamut,
+gamma-window, gamma-window-small, abl, gamma, apl and the in-scene black, a 3x3 checkerboard read
+last at the session's temperature); dimming off `--local-dimming=off`. Progress (warm-up minute,
+test i of n) goes to the overlay. Then `make-display-profile.py` (found in
+`$MICROPANEL_HOME/share/display-profile/`, `/data/display-profile-tools/` or `HDR_PROFILE_CREATOR`)
+with the image's **player code offset**, and the card through `disp-report-card --display-profile`.
+
+**Constants of the image** (`hdr-profile-common.sh`): the signal path `pi4-dvp-8bit-bt709-limited`
+(dual-video-player, 8-bit BT.709 limited) and its code offset per model, measured with
+sdr-hdr-shootout-demo `tools/player-offset.py` (22 grey windows played in dual-video-player against
+disp-tester's ramp): `14.6-fhd-spartan7` −0.5, `17-oled-ib` −0.68. A model without a value is refused.
+A new dual-video-player build or decode path needs new values.
+
+**Files** (serial first, as the reports): `/home/pi/display-profiles/<serial>_profile-<date>-<time>.png`
+and `…-data/` with `<model>-<serial>-b<backlight>[-ld<on|off>]-<date>.json`, `session/` (the runner's
+folder, with the sensor location in `session.json`), `make-display-profile.txt`, `validate.txt` and
+`hdr-profile.log`. `/home/pi/display-profiles` is bound from `/data/display-profiles` (misc-tools
+micropanel image). Gate log `/tmp/hdr-profile-start-child.log`, state and lock in `/tmp/hdr-profile/`.
+Site overrides go in `/home/pi/system-settings/hdr-profile.conf` (sourced by both scripts), e.g.
+`export SENSOR_LOCATE_TOLERANCE_PX=40` where the meter's holder cannot sit closer to the centre.
+
+Times measured on the rigs (2026-10-28): see sdr-hdr-shootout-demo plan section "Measuring a profile
+from the launcher".
+
 ## Building
 
 ### Prerequisites

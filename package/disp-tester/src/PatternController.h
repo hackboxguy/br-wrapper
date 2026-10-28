@@ -96,7 +96,8 @@ public slots:
     void previousPattern();
     void setPattern(const QString &pattern);
     void setCustomColor(int r, int g, int b);
-    void setBox(double areaPct, const QColor &box, const QColor &bg);
+    void setBox(double areaPct, int sidePx, int cx, int cy, const QColor &box, const QColor &bg);
+    void setChecker(int cols, int rows, const QColor &a, const QColor &b);
     QString getResolution();
     QString listPatterns();
     QString getNetworkInfo();
@@ -184,7 +185,7 @@ private:
     void setMetadataFontSize(int size);
     void setMetadataColor(const QColor &color);
     void setMetadataColor(int r, int g, int b);
-    void setMetadataColorByName(const QString &colorName);
+    bool setMetadataColorByName(const QString &colorName);
     bool isChildScriptRunning() const;
     void stopChildScript();
     void finishApplicationQuit();

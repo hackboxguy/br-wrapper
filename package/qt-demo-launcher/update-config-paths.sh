@@ -57,6 +57,7 @@ sed -i "s|/usr/share/qt-apps/cluster-launcher.sh|$BASE_PATH/share/qt-apps/cluste
 sed -i "s|/usr/share/qt-apps/cluster-v2.sh|$BASE_PATH/share/qt-apps/cluster-v2.sh|g" "$CONFIG_FILE"
 sed -i "s|/usr/share/qt-apps/display-analysis-report.sh|$BASE_PATH/share/qt-apps/display-analysis-report.sh|g" "$CONFIG_FILE"
 sed -i "s|/usr/share/qt-apps/display-analysis-start-child.sh|$BASE_PATH/share/qt-apps/display-analysis-start-child.sh|g" "$CONFIG_FILE"
+sed -i "s|/usr/share/qt-apps/hdr-profile-start-child.sh|$BASE_PATH/share/qt-apps/hdr-profile-start-child.sh|g" "$CONFIG_FILE"
 
 # Launcher icons/logo are installed with the scripts in ${BASE_PATH}/share/qt-apps/icons/
 sed -i "s|/usr/share/qt-apps/icons/|$BASE_PATH/share/qt-apps/icons/|g" "$CONFIG_FILE"
