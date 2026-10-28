@@ -38,7 +38,8 @@ DA_DISP_ADDR="${PATTERN_GEN_ADDR:-127.0.0.1:8082}" DA_CMD_TIMEOUT=2 DA_CMD_RETRI
 UNIT="${HDR_PROFILE_UNIT:-display-profile}"
 REPORT_CARD="${DISPLAY_REPORT_CARD:-$MICROPANEL_HOME/lib/disp-report-card/display_report_card.py}"
 TITLE="HDR Display Profile"
-# make-display-profile.py (sdr-hdr-shootout-demo tools/): the image does not ship it yet; first found wins
+# make-display-profile.py (sdr-hdr-shootout-demo tools/; the image installs it to share/display-profile via
+# misc-tools' display-profile-tools hook, older images and hand deploys use /data): first found wins
 find_creator() {
     for c in "${HDR_PROFILE_CREATOR:-}" "$MICROPANEL_HOME/share/display-profile/make-display-profile.py" \
              /data/display-profile-tools/make-display-profile.py /home/pi/sdr-hdr-demo/tools/make-display-profile.py; do
