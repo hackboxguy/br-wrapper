@@ -430,8 +430,8 @@ Calibration Tools → **HDR Display Profile** measures a display profile for the
 sdr-hdr-shootout-demo generator's `display-profile/1`) with one button, the colorimeter on the screen
 centre. The page has two buttons:
 
-- **Measure Display Profile** — disp-tester with the gate `hdr-profile-start-child.sh`. On a 10 % white
-  box it shows what will be measured: the display model and serial, the type and local-dimming state
+- **Measure Display Profile** — disp-tester with the gate `hdr-profile-start-child.sh`. Under the i1
+  Display Pro's outline drawn at true size (see *Placement* below) it shows what will be measured: the display model and serial, the type and local-dimming state
   (detected, not chosen), the brightness (Full-Brightness = 100 %, or the Current-Brightness option as
   Analyze Color Gamut has it) and the expected time. **Start** first runs the sensor locator
   (display-test-framework `tests/02-validation/test-sensor-locate.sh`, 2-4 min): when the meter is more
@@ -476,6 +476,51 @@ Site overrides go in `/home/pi/system-settings/hdr-profile.conf` (sourced by bot
 
 Times measured on the rigs (2026-10-28): see sdr-hdr-shootout-demo plan section "Measuring a profile
 from the launcher".
+
+### Placement: the sensor outline, landed and verified (all three measurement gates)
+
+HDR Display Profile, Analyze Color Gamut and Analyze Local-Dimming APL start disp-tester with
+`--initial-pattern black` and "Starting..." at the bottom centre, so the first frame is never
+disp-tester's default grey ramp. The gate then shows disp-tester's `sensor-outline`: the i1 Display
+Pro (body 37 x 65 mm, lens 20 mm, cable up) at true size, the active area from the model's framework
+config (`physical.active_*_mm`; the 10 % white box when the config has none). The prompt text sits below
+it (`set-metadata-position bottom-center`). The operator lays the sensor on the drawing. On the OLED-IB
+that put it 0.7 mm from the centre, inside the locator's tolerance with no guidance round. After a
+locator round the gate returns to the outline. While a measurement runs, the status text goes back to
+the bottom right.
+
+`land_pattern` (`display-analysis-common.sh`) does not trust one command:
+1. `get-pid` must be the gate's parent disp-tester (`$PPID`).
+2. `pattern …`, then `get-pattern` until it names the pattern (10 tries, 0.3 s apart).
+3. Every attempt goes to the gate log with disp-tester's answers ("landing sensor-outline: attempt 1:
+   pattern -> OK; get-pattern -> sensor-outline").
+
+A pattern that does not land, or a `disp_cmd` that fails after its retries, is logged and shown in red
+on the screen (`da_alert`), never silent.
+
+**Why the flows stayed on the grey ramp (2.31, prompt v9):**
+1. The gates built the prompt with `echo "…\\n…"`. dash's echo turns `\n` into newlines, so one
+   `set-metadata-text` went to disp-tester as seven commands, each answered.
+2. launcher-client reads one answer and closes, so a later answer hit a reset socket. The SIGPIPE
+   killed disp-tester (exit status 141), timing-dependent.
+3. The gate and its launcher-client had inherited disp-tester's listening socket (no close-on-exec), so
+   port 8082 stayed open with nobody serving it: launcher-client rc=4, "Timeout waiting for response".
+4. Entering again before that orphaned gate ended (up to 25 s), the new disp-tester could not bind the
+   port ("Address already in use"). It sat on its first pattern, and the gate's commands went to the
+   orphan's socket.
+
+Fixed:
+- disp-tester and the launcher use close-on-exec sockets, `send(MSG_NOSIGNAL)` and ignore SIGPIPE.
+- `disp_cmd` sends one line per command (real newlines become `\n`).
+- disp-tester shows an unbindable port in red.
+
+Measured on .167: 3 × 20 entries landed, every verification at attempt 1. Warm and re-entry took
+0.8–1.2 s; cold took 3.0–3.4 s, of which disp-tester's own start from the SD card is ~2.5 s
+(sdr-hdr-shootout-demo plan section 14).
+
+The launcher's control port (8081) serves one client at a time and resets the others, and
+streamdeck-ctrl polls `get-running-app` every ~1.1 s. A scripted `start-app` / `stop-app` can be
+turned away ("Connection reset by peer"), so retry it. The touch path is not affected.
 
 ## Building
 

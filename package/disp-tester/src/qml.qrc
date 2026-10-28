@@ -13,5 +13,6 @@
         <file>patterns/Box.qml</file>
         <file>patterns/Checker.qml</file>
         <file>patterns/EdgeRuler.qml</file>
+        <file>patterns/SensorOutline.qml</file>
     </qresource>
 </RCC>

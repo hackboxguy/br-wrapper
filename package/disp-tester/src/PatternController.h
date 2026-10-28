@@ -24,6 +24,7 @@ class PatternController : public QObject
     Q_PROPERTY(QString metadataStatus READ metadataStatus NOTIFY metadataStatusChanged)
     Q_PROPERTY(QString networkInfo READ getNetworkInfo NOTIFY networkInfoChanged)
     Q_PROPERTY(QString metadataAlign READ getMetadataAlign NOTIFY metadataAlignChanged)
+    Q_PROPERTY(QString metadataPosition READ getMetadataPosition NOTIFY metadataPositionChanged)
     Q_PROPERTY(int metadataFontSize READ getMetadataFontSize NOTIFY metadataFontSizeChanged)
     Q_PROPERTY(QColor metadataColor READ getMetadataColor NOTIFY metadataColorChanged)
     Q_PROPERTY(bool userInteractionEnabled READ getUserInteractionEnabled NOTIFY userInteractionEnabledChanged)
@@ -86,7 +87,7 @@ public:
     void configureChildOption(const QString &name, const QString &text, const QString &onText = QString());
     void configureStartupMetadata(const QString &status, const QString &text,
                                   const QString &align, int fontSize,
-                                  const QColor &color);
+                                  const QColor &color, const QString &position = QString());
     void requestQuit(const QString &reason);
     // what the patterns are drawn with, e.g. "platform=eglfs depth=32 rgb=8,8,8" (get-colour-depth)
     void setSurfaceInfo(const QString &info) { m_surfaceInfo = info; }
@@ -98,10 +99,15 @@ public slots:
     void setCustomColor(int r, int g, int b);
     void setBox(double areaPct, int sidePx, int cx, int cy, const QColor &box, const QColor &bg);
     void setChecker(int cols, int rows, const QColor &a, const QColor &b);
+    void setSensorOutline(double widthMM, double heightMM, int cx, int cy);
+    QString applyPatternCommand(const QStringList &parts);   // "pattern ..." -> "OK" / "ERROR: ..."
+    bool applyPatternSpec(const QString &spec);             // "<name> [parameters]", e.g. --initial-pattern
     QString getResolution();
     QString listPatterns();
     QString getNetworkInfo();
     QString getMetadataAlign() const { return m_metadataAlign; }
+    QString getMetadataPosition() const { return m_metadataPosition; }
+    bool setMetadataPosition(const QString &position);   // bottom-right (default), bottom-center, top-center
     int getMetadataFontSize() const { return m_metadataFontSize; }
     QColor getMetadataColor() const { return m_metadataColor; }
     bool getUserInteractionEnabled() const { return m_userInteractionEnabled; }
@@ -118,6 +124,7 @@ signals:
     void metadataTextChanged();
     void networkInfoChanged();
     void metadataAlignChanged();
+    void metadataPositionChanged();
     void metadataFontSizeChanged();
     void metadataColorChanged();
     void userInteractionEnabledChanged();
@@ -153,6 +160,7 @@ private:
     QString m_metadataStatus;  // "autohide", "enable", "disable"
     QString m_metadataText;    // Custom metadata text (empty = use default IP:port)
     QString m_metadataAlign;   // "left", "center", "right"
+    QString m_metadataPosition;   // where the overlay sits: "bottom-right", "bottom-center", "top-center"
     int m_metadataFontSize;    // Font size (8-48)
     QColor m_metadataColor;    // Text color
     bool m_userInteractionEnabled; // Enable/disable user touch interaction

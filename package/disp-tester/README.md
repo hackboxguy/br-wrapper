@@ -44,6 +44,7 @@ A Qt5-based display pattern generator application designed for testing displays 
 ### **Custom Patterns**
 - **RGB patches**: Custom colors with `pattern rgb R G B` (values 0-255)
 - **Measurement box**: `pattern box AREA|Npx R G B [bg R G B] [at X Y]` — a square of one colour covering AREA % of the screen area (0-100), or N px a side, on a background colour, centred on the screen or on pixel X,Y; for window-referenced measurements (OLED ABL, local dimming) where the surround sets the frame's APL, and for the sensor locator (a small box stepped across the screen)
+- **Sensor outline**: `pattern sensor-outline width-mm W height-mm H [at X Y]` — the i1 Display Pro drawn at true size (body 37 x 65 mm, lens 20 mm, cable end up) in thin mid-grey lines on black, for placing the sensor before a measurement; W x H is the panel's active area in mm (px per mm per axis, as `whiteboxmm`), the lens centred on the screen or on pixel X,Y. The lens circle is where the i1 measures (calibrated with the sensor locator on the OLED-IB: placed on the outline, 0.7 mm off). See WHITEBOX-USAGE.md
 - **Checkerboard**: `pattern checker COLS ROWS [R G B R G B]` — COLS x ROWS tiles over the whole screen, the top-left (and on an odd board the centre) tile in the first colour (default black, the other white); `checker 3 3` is the in-scene black of a local-dimming profile (640x360 tiles on 1080p, the meter on the centre)
 
 ## Installation
@@ -95,6 +96,12 @@ Options:
   --disable-ui-autohide Keep overlay controls visible
   --hide-navigation-help
                          Hide the generic tap/swipe navigation help box
+  --initial-pattern <spec>
+                         First pattern: a name, or a name with the pattern command's parameters,
+                         e.g. "sensor-outline width-mm 376 height-mm 212" (default grayscale-ramp)
+  --initial-metadata-status / -text / -align / -fontsize / -color / -position <value>
+                         The metadata overlay before any command (position: bottom-right,
+                         bottom-center, top-center)
   -h, --help            Display help
   -v, --version         Display version
 ```
@@ -522,9 +529,11 @@ pattern box 10 128 128 128  # 10 % area grey square on black
 pattern box 10 255 255 255 bg 64 64 64   # white square on a grey surround
 pattern box 120px 255 255 255 at 760 540   # 120-px white square centred 200 px left of the centre
 pattern checker 3 3                       # 3x3 board, centre tile black
+pattern sensor-outline width-mm 376 height-mm 212   # the i1 Display Pro at true size on a 17" panel
 
-# Bottom-right metadata text overlay
-set-metadata-text <message>            # Set the overlay text (literal \n becomes newline)
+# Metadata text overlay (bottom right by default)
+set-metadata-text <message>            # Set the overlay text (literal \n becomes newline; one command is
+                                       # one line - a real newline would make each line a command)
 clear-metadata-text                    # Clear back to default IP:port display
 set-metadata-status <autohide|enable|disable>  # Visibility mode (autohide is default)
 get-metadata-status                    # Read current visibility mode
@@ -532,6 +541,8 @@ get-metadata-text                      # Read current text (default = empty)
 set-metadata-align  <left|center|right>
 set-metadata-fontsize <8..48>
 set-metadata-color  <r> <g> <b>        # OR set-metadata-color <named-color>
+set-metadata-position <bottom-right|bottom-center|top-center>   # where the overlay sits
+get-metadata-position
 get-metadata-align
 get-metadata-fontsize
 get-metadata-color
@@ -546,10 +557,15 @@ toggle-child-option                    # tap the option toggle beside it (not wh
 ```bash
 get-resolution              # Returns display resolution
 get-pattern                 # Returns current pattern name  
+get-pid                     # This disp-tester's pid (a child script checks the port is its parent's)
 get-colour-depth            # Returns the pattern surface, e.g. platform=eglfs depth=32 rgb=8,8,8
 list-patterns              # Returns all available patterns
 quit                       # Exit application
 ```
+
+The port is close-on-exec (a child script does not inherit it) and a reply to a client that has
+already closed is dropped (no SIGPIPE). If the port cannot be bound (another process holds it),
+disp-tester says so in red on the screen.
 
 ### Response Format
 ```bash

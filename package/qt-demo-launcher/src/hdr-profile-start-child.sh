@@ -2,7 +2,9 @@
 # disp-tester child gate of the launcher's "HDR Display Profile" -> "Measure Display Profile".
 #
 # Shows what will be measured (the detected display, its type and local-dimming state, the
-# brightness, the expected duration) on a 10 % white box and waits for Start. Start runs the
+# brightness, the expected duration) under the i1 Display Pro's outline drawn at true size
+# (disp-tester sensor-outline, from the model config's physical size; the 10 % white box when the
+# config has none), verified with get-pattern (land_pattern), and waits for Start. Start runs the
 # sensor locator (display-test-framework tests/02-validation/test-sensor-locate.sh): when the
 # meter is more than 25 px off the centre it says which way to move it and waits for Start again
 # (at most three rounds, then it refuses; SENSOR_LOCATE_TOLERANCE_PX in hdr-profile.conf widens the 25 px). On target it launches hdr-profile-worker.sh detached
@@ -21,6 +23,7 @@ GATE_LOG="${HDR_PROFILE_GATE_LOG:-/tmp/hdr-profile-start-child.log}"
 LOCATE_ROUNDS="${HDR_PROFILE_LOCATE_ROUNDS:-3}"
 DA_DISP_ADDR="${DISP_TESTER_HOST:-127.0.0.1}:${DISP_TESTER_PORT:-8082}"
 DA_CMD_TIMEOUT="$TIMEOUT" DA_CMD_RETRIES=5 DA_CMD_GAP=0.20
+DA_EXPECT_PID="$PPID"   # disp-tester started this gate: land_pattern checks the port is its
 TITLE="HDR Display Profile"
 USE_CURRENT_BRIGHTNESS=0
 ROUND=0
@@ -34,8 +37,17 @@ log() {
 
 LAUNCHER_CLIENT_BIN="$(detect_launcher_client)"
 mkdir -p "$HP_STATE_DIR" 2>/dev/null
+# the outline first (the model needs only the resolution and the config): it replaces the launcher's
+# black "Starting..." before hp_detect's I2C reads (serial, local dimming) - about 0.5 s on a cold boot
+PLACEMENT="$(placement_pattern "$(resolve_display_model)")"
+log "gate starting: placement='$PLACEMENT'"
+land_pattern "$PLACEMENT"
 hp_detect
-log "gate starting: model=$HP_MODEL type=$HP_TYPE serial=${HP_SERIAL:-none} ld=$HP_LD unsupported='${HP_UNSUPPORTED}'"
+case "$PLACEMENT" in
+    sensor-outline*) PLACE_TEXT="Place the sensor on its outline (cable up)" ;;
+    *)               PLACE_TEXT="Place the sensor on the white box" ;;
+esac
+log "detected: model=$HP_MODEL type=$HP_TYPE serial=${HP_SERIAL:-none} ld=$HP_LD unsupported='${HP_UNSUPPORTED}'"
 
 brightness_text() {
     if [ "$USE_CURRENT_BRIGHTNESS" -eq 1 ]; then
@@ -48,12 +60,12 @@ brightness_text() {
 
 prompt_text() {
     if [ -n "$HP_UNSUPPORTED" ]; then
-        echo "$TITLE\\n$HP_MODEL\\n$HP_UNSUPPORTED"
+        printf '%s' "$TITLE\\n$HP_MODEL\\n$HP_UNSUPPORTED"
         return
     fi
     state="local dimming $HP_LD"
     [ "$HP_TYPE" = oled ] && state="OLED, no local dimming"
-    echo "$TITLE\\n$HP_MODEL  ${HP_SERIAL:-no serial}\\ntype $HP_TYPE, $state\\n$(brightness_text)\\nTakes $HP_EST\\nPlace the sensor on the white box\\nand click Start Measurement"
+    printf '%s' "$TITLE\\n$HP_MODEL  ${HP_SERIAL:-no serial}\\ntype $HP_TYPE, $state\\n$(brightness_text)\\nTakes $HP_EST\\n$PLACE_TEXT\\nand click Start Measurement"
 }
 
 say() {   # say <colour> <text> (status re-enabled: the locator's overlay leaves it on autohide)
@@ -65,8 +77,9 @@ say() {   # say <colour> <text> (status re-enabled: the locator's overlay leaves
 
 setup_prompt() {
     log "showing placement prompt"
-    disp_cmd pattern "whitebox percent 10"
+    land_pattern "$PLACEMENT"
     disp_cmd set-user-interaction enable
+    disp_cmd set-metadata-position bottom-center
     disp_cmd set-metadata-status enable
     disp_cmd set-metadata-fontsize 28
     disp_cmd set-metadata-align center
@@ -93,7 +106,7 @@ locate_sensor() {
     loc_rc=$?
     res="$dir/artifacts/sensor-locate.json"
     log "locator round $ROUND: rc=$loc_rc $(jq -c '{sensor_px, offset_mm, footprint_px, guidance}' "$res" 2>/dev/null)"
-    disp_cmd pattern "whitebox percent 10"
+    land_pattern "$PLACEMENT"
     if [ "$loc_rc" -eq 0 ]; then
         cp "$res" "$HP_STATE_DIR/sensor-location.json"
         return 0
@@ -141,6 +154,7 @@ start_requested() {
     fi
     say white "$TITLE\\nSensor on the centre (footprint $(jq -r '.footprint_px // "?"' "$HP_STATE_DIR/sensor-location.json") px)\\nMeasuring - $HP_EST"
     SENSOR_LOCATION="$HP_STATE_DIR/sensor-location.json"
+    disp_cmd set-metadata-position bottom-right   # the worker's status text, away from the windows
     export SENSOR_LOCATION DISPLAY_MODEL="$HP_MODEL" DISPLAY_SERIAL="$HP_SERIAL"
     rm -f "$HP_STATE_DIR/cancel"
     # detached: the worker outlives this gate (it stops disp-tester to show the gallery)

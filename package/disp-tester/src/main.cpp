@@ -38,7 +38,7 @@ static bool setNonBlocking(int fd)
 
 static bool setupUnixSignalHandlers()
 {
-    if (pipe(signalPipe) != 0) {
+    if (pipe2(signalPipe, O_CLOEXEC) != 0) {   // not inherited by the child script
         qWarning() << "Failed to create signal pipe:" << strerror(errno);
         return false;
     }
@@ -130,6 +130,9 @@ static bool surfaceIsExact(const QString &info)
 
 int main(int argc, char *argv[])
 {
+    // A reply to a client that has gone must not end the program (the control port sends with
+    // MSG_NOSIGNAL; this covers every other write to a pipe or socket)
+    signal(SIGPIPE, SIG_IGN);
     selectPlatform(argc, argv);
     QGuiApplication app(argc, argv);
     app.setApplicationName("disp-tester");
@@ -224,7 +227,9 @@ int main(int argc, char *argv[])
     parser.addOption(disableUserInteractionOption);
 
     QCommandLineOption initialPatternOption(QStringList() << "initial-pattern",
-                                            "Initial pattern shown before the UI is loaded.",
+                                            "Initial pattern shown before the UI is loaded: a name, or a "
+                                            "name with the parameters of the control port's pattern command, "
+                                            "e.g. \"sensor-outline width-mm 376 height-mm 212\".",
                                             "pattern");
     parser.addOption(initialPatternOption);
 
@@ -242,6 +247,12 @@ int main(int argc, char *argv[])
                                                   "Initial metadata alignment: left, center, or right.",
                                                   "align");
     parser.addOption(initialMetadataAlignOption);
+
+    QCommandLineOption initialMetadataPositionOption(QStringList() << "initial-metadata-position",
+                                                     "Initial metadata overlay position: bottom-right (default), "
+                                                     "bottom-center, or top-center.",
+                                                     "position");
+    parser.addOption(initialMetadataPositionOption);
 
     QCommandLineOption initialMetadataFontSizeOption(QStringList() << "initial-metadata-fontsize",
                                                      "Initial metadata font size.",
@@ -297,8 +308,8 @@ int main(int argc, char *argv[])
     patternController.setExitDisabledWhileChildActionActive(parser.isSet(disableExitWhileChildActiveOption));
 
     QString initialPattern = parser.value(initialPatternOption).trimmed().toLower();
-    if (!initialPattern.isEmpty()) {
-        patternController.setPattern(initialPattern);
+    if (!initialPattern.isEmpty() && !patternController.applyPatternSpec(initialPattern)) {
+        qWarning() << "Invalid initial pattern" << initialPattern << "- keeping" << patternController.currentPattern();
     }
 
     QString initialMetadataText;
@@ -332,7 +343,8 @@ int main(int argc, char *argv[])
         parser.isSet(initialMetadataTextOption) ? initialMetadataText : QString(),
         parser.isSet(initialMetadataAlignOption) ? parser.value(initialMetadataAlignOption) : QString(),
         initialMetadataFontSize,
-        initialMetadataColor);
+        initialMetadataColor,
+        parser.isSet(initialMetadataPositionOption) ? parser.value(initialMetadataPositionOption) : QString());
 
     QSocketNotifier *signalNotifier = nullptr;
     if (setupUnixSignalHandlers()) {
@@ -362,6 +374,11 @@ int main(int argc, char *argv[])
     bool networkStarted = patternController.startNetworkInterface(port);
     if (!networkStarted) {
         qWarning() << "Failed to start network interface on port" << port;
+        // Without its control port nothing can drive this instance (its child script would talk to
+        // whatever holds the port): say so on the screen instead of sitting on the first pattern
+        patternController.configureStartupMetadata(
+            "enable", QString("disp-tester: control port %1 is in use\nExit and start again").arg(port),
+            QString(), -1, QColor(255, 0, 0));
     } else {
         qDebug() << "Network interface started on port" << port;
     }

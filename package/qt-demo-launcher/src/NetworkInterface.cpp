@@ -34,7 +34,9 @@ NetworkInterface::~NetworkInterface()
 bool NetworkInterface::startServer()
 {
     // Create socket
-    m_serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    // Close-on-exec: the apps the launcher starts (and their children) must not inherit the
+    // listening socket, or a launcher restart cannot bind its port while one of them runs
+    m_serverSocket = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (m_serverSocket < 0) {
         qWarning() << "Failed to create socket:" << strerror(errno);
         return false;
@@ -88,7 +90,8 @@ void NetworkInterface::sendResponse(const QString &response)
     if (m_clientSocket >= 0) {
         QString message = response + "\n";
         QByteArray data = message.toUtf8();
-        ssize_t sent = write(m_clientSocket, data.constData(), data.size());
+        // MSG_NOSIGNAL: a client that has gone gives EPIPE, not a SIGPIPE that ends the launcher
+        ssize_t sent = send(m_clientSocket, data.constData(), data.size(), MSG_NOSIGNAL);
         if (sent < 0) {
             qWarning() << "Failed to send response:" << strerror(errno);
         } else {
@@ -103,7 +106,7 @@ void NetworkInterface::handleSocketActivity()
 {
     if (m_clientSocket >= 0) {
         // Already have a client, reject new connections
-        int newSocket = accept(m_serverSocket, nullptr, nullptr);
+        int newSocket = accept4(m_serverSocket, nullptr, nullptr, SOCK_CLOEXEC);
         if (newSocket >= 0) {
             qDebug() << "Rejecting connection - client already connected";
             close(newSocket);
@@ -114,7 +117,7 @@ void NetworkInterface::handleSocketActivity()
     // Accept new connection
     struct sockaddr_in clientAddr;
     socklen_t clientLen = sizeof(clientAddr);
-    m_clientSocket = accept(m_serverSocket, (struct sockaddr*)&clientAddr, &clientLen);
+    m_clientSocket = accept4(m_serverSocket, (struct sockaddr*)&clientAddr, &clientLen, SOCK_CLOEXEC);
 
     if (m_clientSocket < 0) {
         if (errno != EWOULDBLOCK && errno != EAGAIN) {

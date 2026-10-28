@@ -82,6 +82,8 @@ Window {
                     return "qrc:/patterns/Checker.qml"
                 case "edge-ruler":
                     return "qrc:/patterns/EdgeRuler.qml"
+                case "sensor-outline":
+                    return "qrc:/patterns/SensorOutline.qml"
                 default:
                     return "qrc:/patterns/GrayscaleRamp.qml"
             }
@@ -443,12 +445,13 @@ Window {
         }
     }
 
-    // Network info (bottom-right) - Outside uiOverlay for independent visibility
+    // Network info / metadata text (metadataPosition: bottom-right by default; bottom-center keeps a
+    // placement prompt below the sensor outline) - Outside uiOverlay for independent visibility
     Rectangle {
         id: networkInfoRect
-        anchors.bottom: parent.bottom
-        anchors.right: parent.right
-        anchors.margins: 20
+        x: patternController.metadataPosition === "bottom-right" ? parent.width - width - 20
+                                                                 : Math.round((parent.width - width) / 2)
+        y: patternController.metadataPosition === "top-center" ? 20 : parent.height - height - 20
         width: networkText.contentWidth + 20
         height: networkText.contentHeight + 20
         color: "#C0000000"

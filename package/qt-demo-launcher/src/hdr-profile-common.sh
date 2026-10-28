@@ -19,7 +19,6 @@ HP_CONF="${HDR_PROFILE_CONF:-/home/pi/system-settings/hdr-profile.conf}"
 # shellcheck disable=SC1090
 [ -f "$HP_CONF" ] && . "$HP_CONF"
 
-FRAMEWORK_DIR="${DISPLAY_TEST_FRAMEWORK:-$MICROPANEL_HOME/share/disptool/display-test-framework}"
 HP_STATE_DIR="${HDR_PROFILE_STATE_DIR:-/tmp/hdr-profile}"
 HP_LOCK_DIR="$HP_STATE_DIR/lock"
 PROFILE_ROOT="${HDR_PROFILE_ROOT:-/home/pi/display-profiles}"

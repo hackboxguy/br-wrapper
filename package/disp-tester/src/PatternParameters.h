@@ -58,6 +58,12 @@ struct PatternParameters {
     int checkerAR = 0, checkerAG = 0, checkerAB = 0;
     int checkerBR = 255, checkerBG = 255, checkerBB = 255;
 
+    // i1 Display Pro outline ("pattern sensor-outline width-mm <W> height-mm <H> [at <x> <y>]"): the
+    // sensor drawn at true size for placing it; W x H = the panel's active area in mm (px per mm per
+    // axis, as whiteboxmm), the lens centred on pixel x,y (-1 = screen centre)
+    double outlineWidthMM = 0.0, outlineHeightMM = 0.0;
+    int outlineCx = -1, outlineCy = -1;
+
     QVariantMap toVariantMap() const {
         QVariantMap map;
         map["ballSize"] = ballSize;
@@ -100,6 +106,10 @@ struct PatternParameters {
         map["checkerBR"] = checkerBR;
         map["checkerBG"] = checkerBG;
         map["checkerBB"] = checkerBB;
+        map["outlineWidthMM"] = outlineWidthMM;
+        map["outlineHeightMM"] = outlineHeightMM;
+        map["outlineCx"] = outlineCx;
+        map["outlineCy"] = outlineCy;
         return map;
     }
 };

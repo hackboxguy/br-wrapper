@@ -1,8 +1,9 @@
 #!/bin/sh
 # disp-tester child gate for display-analysis-report.sh.
 #
-# Shows an operator placement prompt, waits for the disp-tester child-action
-# Start button, then launches the long-running analysis worker detached from
+# Shows an operator placement prompt under the i1 Display Pro's outline at true
+# size (verified with get-pattern; the 10 % white box when the model config has
+# no physical size), waits for the disp-tester child-action Start button, then launches the long-running analysis worker detached from
 # disp-tester so the worker can later stop disp-tester and show touch-gallery.
 #
 # Optional toggle (disp-tester --child-option-name use-current-brightness):
@@ -31,13 +32,14 @@ case "$SUITE" in
         ;;
 esac
 ANALYSIS_TITLE="${DISPLAY_ANALYSIS_TITLE:-$DEFAULT_TITLE}"
-PLACEMENT_TEXT="${DISPLAY_ANALYSIS_PLACEMENT_TEXT:-Place the USB sensor on the white box\\nand click Start Measurement}"
+PLACEMENT_TEXT="${DISPLAY_ANALYSIS_PLACEMENT_TEXT:-}"
 STARTING_TEXT="${DISPLAY_ANALYSIS_STARTING_TEXT:-$ANALYSIS_TITLE\\nMeasurement running...}"
 DISP_CMD_GAP="${DISPLAY_ANALYSIS_CMD_GAP:-0.20}"
 DISP_CMD_RETRIES="${DISPLAY_ANALYSIS_CMD_RETRIES:-5}"
 # shared helpers (launcher-client, als-dimmer brightness, disp_cmd)
 . "$SCRIPT_DIR/display-analysis-common.sh"
 DA_DISP_ADDR="$DISP_ADDR" DA_CMD_TIMEOUT="$TIMEOUT" DA_CMD_RETRIES="$DISP_CMD_RETRIES" DA_CMD_GAP="$DISP_CMD_GAP"
+DA_EXPECT_PID="$PPID"   # disp-tester started this gate: land_pattern checks the port is its
 USE_CURRENT_BRIGHTNESS=0
 
 log() {
@@ -48,18 +50,25 @@ log() {
 prompt_text() {
     case "$SUITE" in
         color-gamut|gamut) ;;
-        *) echo "$PLACEMENT_TEXT"; return 0 ;;
+        *) printf '%s' "$PLACEMENT_TEXT"; return 0 ;;
     esac
     if [ "$USE_CURRENT_BRIGHTNESS" -eq 1 ]; then
         level="$(current_brightness || true)"
-        echo "$PLACEMENT_TEXT\\nCurrent-Brightness (${level:+$level%}${level:-unknown})"
+        printf '%s' "$PLACEMENT_TEXT\\nCurrent-Brightness (${level:+$level%}${level:-unknown})"
     else
-        echo "$PLACEMENT_TEXT\\nFull-Brightness (100%)"
+        printf '%s' "$PLACEMENT_TEXT\\nFull-Brightness (100%)"
     fi
 }
 
 LAUNCHER_CLIENT_BIN="$(detect_launcher_client)"
-log "gate starting: suite=$SUITE disp=$DISP_ADDR launcher-client=$LAUNCHER_CLIENT_BIN report=$REPORT_SCRIPT"
+PLACEMENT="$(placement_pattern "$(resolve_display_model)")"
+if [ -z "$PLACEMENT_TEXT" ]; then
+    case "$PLACEMENT" in
+        sensor-outline*) PLACEMENT_TEXT="Place the USB sensor on its outline (cable up)\\nand click Start Measurement" ;;
+        *)               PLACEMENT_TEXT="Place the USB sensor on the white box\\nand click Start Measurement" ;;
+    esac
+fi
+log "gate starting: suite=$SUITE disp=$DISP_ADDR launcher-client=$LAUNCHER_CLIENT_BIN report=$REPORT_SCRIPT placement='$PLACEMENT'"
 
 is_apl_suite() {
     case "$SUITE" in
@@ -73,8 +82,9 @@ is_apl_suite() {
 
 setup_prompt() {
     log "showing placement prompt"
-    disp_cmd pattern "whitebox percent 10"
+    land_pattern "$PLACEMENT"
     disp_cmd set-user-interaction enable
+    disp_cmd set-metadata-position bottom-center
     disp_cmd set-metadata-status enable
     disp_cmd set-metadata-fontsize 28
     disp_cmd set-metadata-align center
@@ -109,6 +119,7 @@ start_worker() {
         log "measuring at the suite's default brightness"
     fi
 
+    disp_cmd set-metadata-position bottom-right   # status text away from the measurement windows
     if is_apl_suite; then
         disp_cmd clear-metadata-text
         disp_cmd set-metadata-status disable

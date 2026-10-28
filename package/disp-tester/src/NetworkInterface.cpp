@@ -28,8 +28,10 @@ NetworkInterface::~NetworkInterface()
 
 bool NetworkInterface::startServer()
 {
-    // Create socket
-    m_serverSocket = socket(AF_INET, SOCK_STREAM, 0);
+    // Create socket. Close-on-exec: the child script (and everything it starts) must not inherit
+    // the listening socket - an orphaned child kept port 8082 open after disp-tester died, the
+    // next disp-tester could not bind it, and every command went to a socket nobody served.
+    m_serverSocket = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (m_serverSocket < 0) {
         qWarning() << "Failed to create socket:" << strerror(errno);
         return false;
@@ -85,7 +87,9 @@ void NetworkInterface::sendResponse(const QString &response)
         return;
     }
     QByteArray data = (response + "\n").toUtf8();
-    ssize_t sent = write(fd, data.constData(), data.size());
+    // MSG_NOSIGNAL: a client that already closed (launcher-client reads one line, then closes) must
+    // give EPIPE here, not a SIGPIPE that kills disp-tester
+    ssize_t sent = send(fd, data.constData(), data.size(), MSG_NOSIGNAL);
     if (sent < 0) {
         qWarning() << "Failed to send response:" << strerror(errno);
         closeClient(fd);
@@ -102,15 +106,13 @@ void NetworkInterface::sendResponse(const QString &response)
 void NetworkInterface::handleSocketActivity()
 {
     while (true) {
-        int fd = accept(m_serverSocket, nullptr, nullptr);
+        int fd = accept4(m_serverSocket, nullptr, nullptr, SOCK_NONBLOCK | SOCK_CLOEXEC);
         if (fd < 0) {
             if (errno != EWOULDBLOCK && errno != EAGAIN) {
                 qWarning() << "Failed to accept connection:" << strerror(errno);
             }
             return;
         }
-        int flags = fcntl(fd, F_GETFL, 0);
-        fcntl(fd, F_SETFL, flags | O_NONBLOCK);
         QSocketNotifier *notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
         connect(notifier, &QSocketNotifier::activated, this, &NetworkInterface::handleClientData);
         m_clients.insert(fd, Client{notifier, QByteArray()});

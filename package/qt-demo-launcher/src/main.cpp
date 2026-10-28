@@ -9,6 +9,7 @@
 #include <QtWidgets/QWidget>
 #include <QtWidgets/QMessageBox>
 #include <QProcess>
+#include <signal.h>
 #include <QDir>
 #include <QFont>
 #include <QDesktopWidget>
@@ -2814,6 +2815,7 @@ private:
 
 int main(int argc, char *argv[])
 {
+    signal(SIGPIPE, SIG_IGN);   // a reply to a client that has gone must not end the launcher
     QApplication app(argc, argv);
 
     // Set application properties

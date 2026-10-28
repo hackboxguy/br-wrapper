@@ -23,6 +23,7 @@ PatternController::PatternController(QObject *parent)
     , m_metadataStatus("autohide")  // Default to autohide behavior
     , m_metadataText("")           // Empty = use default IP:port display
     , m_metadataAlign("center")    // Default center alignment
+    , m_metadataPosition("bottom-right")
     , m_metadataFontSize(16)       // Default font size
     , m_metadataColor(255, 255, 255) // Default white color
     , m_userInteractionEnabled(true) // Default user interaction enabled
@@ -187,13 +188,16 @@ void PatternController::setExitDisabledWhileChildActionActive(bool enabled)
 
 void PatternController::configureStartupMetadata(const QString &status, const QString &text,
                                                  const QString &align, int fontSize,
-                                                 const QColor &color)
+                                                 const QColor &color, const QString &position)
 {
     if (!status.isEmpty()) {
         setMetadataStatus(status);
     }
     if (!align.isEmpty()) {
         setMetadataAlign(align);
+    }
+    if (!position.isEmpty() && !setMetadataPosition(position)) {
+        qWarning() << "Invalid metadata position" << position;
     }
     if (fontSize > 0) {
         setMetadataFontSize(fontSize);
@@ -479,6 +483,22 @@ void PatternController::setBox(double areaPct, int sidePx, int cx, int cy, const
     emit currentPatternChanged();
 }
 
+void PatternController::setSensorOutline(double widthMM, double heightMM, int cx, int cy)
+{
+    m_parameters.outlineWidthMM = widthMM;
+    m_parameters.outlineHeightMM = heightMM;
+    m_parameters.outlineCx = cx;
+    m_parameters.outlineCy = cy;
+    m_showCustomColor = false;
+    m_currentPattern = "sensor-outline";
+
+    qDebug() << "Sensor outline set: active area" << widthMM << "x" << heightMM << "mm, lens at" << cx << cy;
+
+    emit patternParamsChanged();
+    emit showCustomColorChanged();
+    emit currentPatternChanged();
+}
+
 void PatternController::setChecker(int cols, int rows, const QColor &a, const QColor &b)
 {
     m_parameters.checkerCols = cols;
@@ -616,6 +636,20 @@ void PatternController::setMetadataAlign(const QString &align)
     }
 }
 
+bool PatternController::setMetadataPosition(const QString &position)
+{
+    const QString p = position.toLower();
+    if (p != "bottom-right" && p != "bottom-center" && p != "top-center") {
+        return false;
+    }
+    if (m_metadataPosition != p) {
+        m_metadataPosition = p;
+        emit metadataPositionChanged();
+        qDebug() << "Metadata position changed to:" << m_metadataPosition;
+    }
+    return true;
+}
+
 void PatternController::setMetadataFontSize(int size)
 {
     if (size >= 8 && size <= 48) {
@@ -677,6 +711,150 @@ void PatternController::setUserInteractionEnabled(bool enabled)
     }
 }
 
+/*
+ * One "pattern ..." command (parts[0] == "pattern"): the control port's and --initial-pattern's
+ * parser. Returns the response ("OK" or "ERROR: ...").
+ */
+QString PatternController::applyPatternCommand(const QStringList &parts)
+{
+    if (parts.size() < 2) {
+        return "ERROR: usage: pattern <name> [parameters]";
+    }
+    QString pattern = parts[1].toLower();
+
+    if (pattern == "rgb" && parts.size() >= 5) {
+        bool rOk, gOk, bOk;
+        int r = parts[2].toInt(&rOk);
+        int g = parts[3].toInt(&gOk);
+        int b = parts[4].toInt(&bOk);
+
+        if (rOk && gOk && bOk && r >= 0 && r <= 255 &&
+            g >= 0 && g <= 255 && b >= 0 && b <= 255) {
+            setCustomColor(r, g, b);
+            return "OK";
+        } else {
+            return "ERROR: Invalid RGB values";
+        }
+    } else if (pattern == "box" && parts.size() >= 6) {
+        // box <area-pct>|<N>px <r> <g> <b> [bg <r> <g> <b>] [at <x> <y>]
+        bool ok = true;
+        auto num = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 255; return v; };
+        auto pix = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 16384; return v; };
+        double pct = 0;
+        int sidePx = 0;
+        if (parts[2].toLower().endsWith("px")) {
+            bool k;
+            sidePx = parts[2].left(parts[2].size() - 2).toInt(&k);
+            ok = ok && k && sidePx > 0 && sidePx <= 16384;
+        } else {
+            bool k;
+            pct = parts[2].toDouble(&k);
+            ok = ok && k && pct > 0 && pct <= 100;
+        }
+        QColor box(num(3), num(4), num(5));
+        QColor bg(0, 0, 0);
+        int cx = -1, cy = -1;
+        int i = 6;
+        if (parts.size() >= i + 4 && parts[i].toLower() == "bg") {
+            bg = QColor(num(i + 1), num(i + 2), num(i + 3));
+            i += 4;
+        }
+        if (parts.size() >= i + 3 && parts[i].toLower() == "at") {
+            cx = pix(i + 1);
+            cy = pix(i + 2);
+            i += 3;
+        }
+        if (parts.size() != i) {
+            ok = false;
+        }
+        if (ok) {
+            setBox(pct, sidePx, cx, cy, box, bg);
+            return "OK";
+        } else {
+            return "ERROR: usage: pattern box <area-pct 0-100>|<N>px <r> <g> <b> [bg <r> <g> <b>] [at <x> <y>]";
+        }
+    } else if (pattern == "checker" && (parts.size() == 4 || parts.size() == 10)) {
+        // checker <cols> <rows> [<r> <g> <b> <r> <g> <b>]
+        bool ok = true;
+        auto num = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 255; return v; };
+        bool cOk, rOk;
+        int cols = parts[2].toInt(&cOk);
+        int rows = parts[3].toInt(&rOk);
+        QColor a(0, 0, 0), b(255, 255, 255);
+        if (parts.size() == 10) {
+            a = QColor(num(4), num(5), num(6));
+            b = QColor(num(7), num(8), num(9));
+        }
+        if (ok && cOk && rOk && cols >= 1 && cols <= 64 && rows >= 1 && rows <= 64) {
+            setChecker(cols, rows, a, b);
+            return "OK";
+        } else {
+            return "ERROR: usage: pattern checker <cols 1-64> <rows 1-64> [<r> <g> <b> <r> <g> <b>]";
+        }
+    } else if (pattern == "sensor-outline") {
+        // sensor-outline width-mm <W> height-mm <H> [at <x> <y>]: the i1 Display Pro's outline at true
+        // size (W x H = the panel's active area, mm -> px per axis as whiteboxmm), lens centre at x,y
+        double w = 0, h = 0;
+        int cx = -1, cy = -1;
+        bool ok = true;
+        int i = 2;
+        while (ok && i < parts.size()) {
+            const QString key = parts[i].toLower();
+            if ((key == "width-mm" || key == "height-mm") && i + 1 < parts.size()) {
+                bool k;
+                const double v = parts[i + 1].toDouble(&k);
+                ok = k && v >= 10 && v <= 2000;
+                (key == "width-mm" ? w : h) = v;
+                i += 2;
+            } else if (key == "at" && i + 2 < parts.size()) {
+                bool kx, ky;
+                cx = parts[i + 1].toInt(&kx);
+                cy = parts[i + 2].toInt(&ky);
+                ok = kx && ky && cx >= 0 && cy >= 0 && cx <= 16384 && cy <= 16384;
+                i += 3;
+            } else {
+                ok = false;
+            }
+        }
+        if (!ok || w <= 0 || h <= 0) {
+            return "ERROR: usage: pattern sensor-outline width-mm <W> height-mm <H> [at <x> <y>]";
+        }
+        setSensorOutline(w, h, cx, cy);
+        return "OK";
+    } else if (m_patterns.contains(pattern)) {
+        // Check for pattern parameters
+        if (parts.size() > 2) {
+            // First update the pattern, then set parameters
+            updatePattern(pattern);
+
+            QString param = parts[2].toLower();
+            QStringList values = parts.mid(3);
+            if (setPatternParameter(pattern, param, values)) {
+                return "OK";
+            } else {
+                return "ERROR: Invalid parameter";
+            }
+        } else {
+            updatePattern(pattern);
+            return "OK";
+        }
+    } else {
+        return "ERROR: Unknown pattern";
+    }
+    return "ERROR: Unknown pattern";
+}
+
+bool PatternController::applyPatternSpec(const QString &spec)
+{
+    QStringList parts = (QStringLiteral("pattern ") + spec.trimmed()).split(' ', Qt::SkipEmptyParts);
+    const QString response = applyPatternCommand(parts);
+    if (response != "OK") {
+        qWarning() << "Pattern" << spec << "not applied:" << response;
+        return false;
+    }
+    return true;
+}
+
 void PatternController::handleNetworkCommand(const QString &command)
 {
     qDebug() << "Network command received:" << command;
@@ -690,97 +868,7 @@ void PatternController::handleNetworkCommand(const QString &command)
     QString cmd = parts[0].toLower();
 
     if (cmd == "pattern" && parts.size() >= 2) {
-        QString pattern = parts[1].toLower();
-
-        if (pattern == "rgb" && parts.size() >= 5) {
-            bool rOk, gOk, bOk;
-            int r = parts[2].toInt(&rOk);
-            int g = parts[3].toInt(&gOk);
-            int b = parts[4].toInt(&bOk);
-
-            if (rOk && gOk && bOk && r >= 0 && r <= 255 &&
-                g >= 0 && g <= 255 && b >= 0 && b <= 255) {
-                setCustomColor(r, g, b);
-                m_networkInterface->sendResponse("OK");
-            } else {
-                m_networkInterface->sendResponse("ERROR: Invalid RGB values");
-            }
-        } else if (pattern == "box" && parts.size() >= 6) {
-            // box <area-pct>|<N>px <r> <g> <b> [bg <r> <g> <b>] [at <x> <y>]
-            bool ok = true;
-            auto num = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 255; return v; };
-            auto pix = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 16384; return v; };
-            double pct = 0;
-            int sidePx = 0;
-            if (parts[2].toLower().endsWith("px")) {
-                bool k;
-                sidePx = parts[2].left(parts[2].size() - 2).toInt(&k);
-                ok = ok && k && sidePx > 0 && sidePx <= 16384;
-            } else {
-                bool k;
-                pct = parts[2].toDouble(&k);
-                ok = ok && k && pct > 0 && pct <= 100;
-            }
-            QColor box(num(3), num(4), num(5));
-            QColor bg(0, 0, 0);
-            int cx = -1, cy = -1;
-            int i = 6;
-            if (parts.size() >= i + 4 && parts[i].toLower() == "bg") {
-                bg = QColor(num(i + 1), num(i + 2), num(i + 3));
-                i += 4;
-            }
-            if (parts.size() >= i + 3 && parts[i].toLower() == "at") {
-                cx = pix(i + 1);
-                cy = pix(i + 2);
-                i += 3;
-            }
-            if (parts.size() != i) {
-                ok = false;
-            }
-            if (ok) {
-                setBox(pct, sidePx, cx, cy, box, bg);
-                m_networkInterface->sendResponse("OK");
-            } else {
-                m_networkInterface->sendResponse("ERROR: usage: pattern box <area-pct 0-100>|<N>px <r> <g> <b> [bg <r> <g> <b>] [at <x> <y>]");
-            }
-        } else if (pattern == "checker" && (parts.size() == 4 || parts.size() == 10)) {
-            // checker <cols> <rows> [<r> <g> <b> <r> <g> <b>]
-            bool ok = true;
-            auto num = [&](int i) { bool k; int v = parts[i].toInt(&k); ok = ok && k && v >= 0 && v <= 255; return v; };
-            bool cOk, rOk;
-            int cols = parts[2].toInt(&cOk);
-            int rows = parts[3].toInt(&rOk);
-            QColor a(0, 0, 0), b(255, 255, 255);
-            if (parts.size() == 10) {
-                a = QColor(num(4), num(5), num(6));
-                b = QColor(num(7), num(8), num(9));
-            }
-            if (ok && cOk && rOk && cols >= 1 && cols <= 64 && rows >= 1 && rows <= 64) {
-                setChecker(cols, rows, a, b);
-                m_networkInterface->sendResponse("OK");
-            } else {
-                m_networkInterface->sendResponse("ERROR: usage: pattern checker <cols 1-64> <rows 1-64> [<r> <g> <b> <r> <g> <b>]");
-            }
-        } else if (m_patterns.contains(pattern)) {
-            // Check for pattern parameters
-            if (parts.size() > 2) {
-                // First update the pattern, then set parameters
-                updatePattern(pattern);
-
-                QString param = parts[2].toLower();
-                QStringList values = parts.mid(3);
-                if (setPatternParameter(pattern, param, values)) {
-                    m_networkInterface->sendResponse("OK");
-                } else {
-                    m_networkInterface->sendResponse("ERROR: Invalid parameter");
-                }
-            } else {
-                updatePattern(pattern);
-                m_networkInterface->sendResponse("OK");
-            }
-        } else {
-            m_networkInterface->sendResponse("ERROR: Unknown pattern");
-        }
+        m_networkInterface->sendResponse(applyPatternCommand(parts));
     } else if (cmd == "get-metadata-status") {
         m_networkInterface->sendResponse(m_metadataStatus);
     } else if (cmd == "set-metadata-status" && parts.size() >= 2) {
@@ -822,6 +910,14 @@ void PatternController::handleNetworkCommand(const QString &command)
         } else {
             m_networkInterface->sendResponse("ERROR: Invalid alignment (use: left, center, right)");
         }
+    } else if (cmd == "set-metadata-position" && parts.size() >= 2) {
+        if (setMetadataPosition(parts[1])) {
+            m_networkInterface->sendResponse("OK");
+        } else {
+            m_networkInterface->sendResponse("ERROR: Invalid position (use: bottom-right, bottom-center, top-center)");
+        }
+    } else if (cmd == "get-metadata-position") {
+        m_networkInterface->sendResponse(m_metadataPosition);
     } else if (cmd == "get-metadata-align") {
         m_networkInterface->sendResponse(m_metadataAlign);
     } else if (cmd == "set-metadata-fontsize" && parts.size() >= 2) {
@@ -907,6 +1003,9 @@ void PatternController::handleNetworkCommand(const QString &command)
         m_networkInterface->sendResponse(getResolution());
     } else if (cmd == "get-colour-depth" || cmd == "get-color-depth") {
         m_networkInterface->sendResponse(m_surfaceInfo.isEmpty() ? QString("unknown") : m_surfaceInfo);
+    } else if (cmd == "get-pid") {
+        // which disp-tester answers: a child script checks it is its own parent's port
+        m_networkInterface->sendResponse(QString::number(QCoreApplication::applicationPid()));
     } else if (cmd == "get-pattern") {
         m_networkInterface->sendResponse(m_currentPattern);
     } else if (cmd == "list-patterns") {
@@ -1175,6 +1274,10 @@ QString PatternController::getPatternParameter(const QString &pattern, const QSt
         if (param == "width-mm") return QString::number(m_parameters.whiteboxmmPhysWidthMM);
         if (param == "height-mm") return QString::number(m_parameters.whiteboxmmPhysHeightMM);
         if (param == "verbose") return m_parameters.whiteboxmmVerbose ? "true" : "false";
+    } else if (pattern == "sensor-outline") {
+        if (param == "width-mm") return QString::number(m_parameters.outlineWidthMM);
+        if (param == "height-mm") return QString::number(m_parameters.outlineHeightMM);
+        if (param == "at") return QString("%1 %2").arg(m_parameters.outlineCx).arg(m_parameters.outlineCy);
     }
     return "";
 }

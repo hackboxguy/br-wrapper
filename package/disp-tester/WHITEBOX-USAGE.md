@@ -267,3 +267,31 @@ A dim white crosshair (opacity 0.05) appears when box size < 200 pixels to help 
 - Measure your colorimeter's aperture diameter (typically 8-12mm)
 - Use mm mode with measured diagonal: `whitebox mm 10 diagonal-inch 15.6`
 - Fine-tune mm value to match your colorimeter's spot size
+
+---
+
+## `sensor-outline` — the i1 Display Pro at true size (placement)
+
+Not a box to measure on: the sensor's outline, so the operator puts the i1 on the drawing instead of
+guessing the centre of a white box. The launcher's measurement gates (HDR Display Profile, Analyze
+Color Gamut, Local-Dimming APL) show it with the active area from the display-test-framework config
+(`physical.active_width_mm` / `active_height_mm`) and fall back to `whitebox percent 10` when the
+config has no size.
+
+```bash
+./launcher-client --srv=127.0.0.1:8082 --command=pattern \
+  --command-arg="sensor-outline width-mm 376 height-mm 212"            # lens on the screen centre
+./launcher-client --srv=127.0.0.1:8082 --command=pattern \
+  --command-arg="sensor-outline width-mm 323 height-mm 186 at 960 540" # lens on pixel 960,540
+disp-tester --initial-pattern "sensor-outline width-mm 376 height-mm 212"
+```
+
+- Drawing: body 37 x 65 mm with flat ends (60 % of the width), full width around the lens, a 30 mm
+  bezel ring, the 20 mm lens with a crosshair, the cable boss at the top: the sensor as it hangs on a
+  display, cable up. 3 px mid-grey (128) lines on black, so a prompt left for minutes changes neither
+  an OLED's ABL nor a panel's warm-up.
+- px per mm per axis as `whiteboxmm`: the drawing is the sensor's size on any panel and resolution.
+  Check with a ruler: the lens circle is 20 mm (OLED-IB, 376 x 212 mm: 20 mm, 2026-10-28).
+- The lens sits 32.1 mm from the non-cable end: the sensor locator found the i1's measuring aperture
+  there with the body on the outline (OLED-IB: placed on it, 0.7 mm / 4.8 px from the centre).
+- `get-pattern` returns `sensor-outline`; `get sensor-outline width-mm|height-mm|at` the parameters.
