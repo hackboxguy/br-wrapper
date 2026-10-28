@@ -137,35 +137,36 @@ resolve_display_model() {
 }
 
 # disp_cmd <command> [arg]: one disp-tester control command (pattern, set-metadata-*, ...), retried.
+# Its variables are da_-prefixed: sh has no locals, and a caller's $rc must survive a disp_cmd.
 disp_cmd() {
-    command="$1"
-    arg="${2:-}"
-    attempt=1
-    response=""
-    rc=1
+    da_command="$1"
+    da_arg="${2:-}"
+    da_attempt=1
+    da_response=""
+    da_rc=1
 
-    while [ "$attempt" -le "${DA_CMD_RETRIES:-5}" ]; do
-        if [ "$attempt" -gt 1 ]; then
+    while [ "$da_attempt" -le "${DA_CMD_RETRIES:-5}" ]; do
+        if [ "$da_attempt" -gt 1 ]; then
             sleep "${DA_CMD_GAP:-0.20}"
         fi
 
-        if [ -n "$arg" ]; then
-            response="$("$LAUNCHER_CLIENT_BIN" --srv="${DA_DISP_ADDR:-127.0.0.1:8082}" --command="$command" \
-                --command-arg="$arg" --timeoutsec="${DA_CMD_TIMEOUT:-5}" 2>&1)"
+        if [ -n "$da_arg" ]; then
+            da_response="$("$LAUNCHER_CLIENT_BIN" --srv="${DA_DISP_ADDR:-127.0.0.1:8082}" --command="$da_command" \
+                --command-arg="$da_arg" --timeoutsec="${DA_CMD_TIMEOUT:-5}" 2>&1)"
         else
-            response="$("$LAUNCHER_CLIENT_BIN" --srv="${DA_DISP_ADDR:-127.0.0.1:8082}" --command="$command" \
+            da_response="$("$LAUNCHER_CLIENT_BIN" --srv="${DA_DISP_ADDR:-127.0.0.1:8082}" --command="$da_command" \
                 --timeoutsec="${DA_CMD_TIMEOUT:-5}" 2>&1)"
         fi
-        rc=$?
-        if [ "$rc" -eq 0 ] && echo "$response" | grep -q "OK"; then
+        da_rc=$?
+        if [ "$da_rc" -eq 0 ] && echo "$da_response" | grep -q "OK"; then
             sleep "${DA_CMD_GAP:-0.20}"
             return 0
         fi
 
-        attempt=$((attempt + 1))
+        da_attempt=$((da_attempt + 1))
     done
 
-    log "warning: disp-tester command failed: $command $arg attempts=${DA_CMD_RETRIES:-5} rc=$rc response=$response"
+    log "warning: disp-tester command failed: $da_command $da_arg attempts=${DA_CMD_RETRIES:-5} rc=$da_rc response=$da_response"
     sleep "${DA_CMD_GAP:-0.20}"
     return 1
 }

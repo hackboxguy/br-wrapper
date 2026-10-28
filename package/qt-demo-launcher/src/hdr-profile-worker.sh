@@ -173,6 +173,35 @@ fi
 # 1 = a test failed or the state drifted (data kept): the creator decides; 2 / 3 = usage / state not set
 case "$RUN_RC" in 0|1) ;; *) fail "the runner stopped (exit $RUN_RC): $(grep -m1 ERROR "$SESSION/session.log" 2>/dev/null)" ;; esac
 
+# runner exit 1: which test, and why (a test exits non-zero also when it wrote its data: the gamma test's
+# LCD fit criterion on an OLED, one failed i1 read in the abl table) - one line each for the card
+runner_problems() {
+    python3 - "$SESSION" <<'PY'
+import glob, json, os, sys
+d = sys.argv[1]
+s = json.load(open(os.path.join(d, "session.json")))
+for t in s.get("tests", []):
+    if t.get("exit_code") in (0, None):
+        continue
+    name, folder, why = t["name"], os.path.join(d, t.get("folder") or t["name"]), []
+    try:
+        if name == "abl":
+            rows = json.load(open(os.path.join(folder, "abl-gain.json")))["rows"]
+            bad = [f"code {r['window_code']} on {r['surround_code']}" for r in rows if r.get("Y") is None]
+            why.append(f"{len(bad)} of {len(rows)} reads failed ({', '.join(bad[:3])}); the table uses the rest")
+        for f in glob.glob(os.path.join(folder, "raw", "test-*.json")):
+            r = json.load(open(f))
+            why += [f"{c['name']} {c['actual']} (wants {c['expected']})" for c in
+                    (r.get("validation") or {}).get("checks", []) if c.get("result") == "FAIL"]
+            why += [e for e in r.get("errors") or [] if e]
+    except (OSError, ValueError, KeyError) as ex:
+        why.append(f"no detail ({ex.__class__.__name__})")
+    print(f"test {name} exited {t['exit_code']}: " + ("; ".join(why)[:200] or "see session/session.log"))
+if s.get("state_verified") is False or any(t.get("state_after") == "changed" for t in s.get("tests", [])):
+    print("the display state changed during the session: see session/session.log")
+PY
+}
+
 # ---------------------------------------------------------------- the profile
 say white "$TITLE\\nCreating the profile..."
 set -- --session="$SESSION" --type="$HP_TYPE" --id="$ID" --backlight="$BL" --player-code-offset="$HP_OFFSET" \
@@ -187,7 +216,7 @@ CRC=$?
     || fail "make-display-profile.py failed: $(grep -m1 -i error "$DATA/make-display-profile.txt" | cut -c1-120)"
 python3 "$CREATOR" --validate="$PROFILE" > "$DATA/validate.txt" 2>&1
 grep -E '^[[:space:]]*assumed:' "$DATA/validate.txt" | sed 's/^[[:space:]]*//' > "$HP_STATE_DIR/card-notes.txt"
-[ "$RUN_RC" -eq 0 ] || echo "the runner reported a failed test or a state change (exit $RUN_RC): see session/session.log" >> "$HP_STATE_DIR/card-notes.txt"
+[ "$RUN_RC" -eq 0 ] || runner_problems >> "$HP_STATE_DIR/card-notes.txt"
 log "profile: $PROFILE"
 
 python3 "$REPORT_CARD" --display-profile="$PROFILE" --output="$PNG" --notes-file="$HP_STATE_DIR/card-notes.txt" >> "$LOG_FILE" 2>&1 \

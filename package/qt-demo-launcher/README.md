@@ -468,7 +468,8 @@ A new dual-video-player build or decode path needs new values.
 **Files** (serial first, as the reports): `/home/pi/display-profiles/<serial>_profile-<date>-<time>.png`
 and `…-data/` with `<model>-<serial>-b<backlight>[-ld<on|off>]-<date>.json`, `session/` (the runner's
 folder, with the sensor location in `session.json`), `make-display-profile.txt`, `validate.txt` and
-`hdr-profile.log`. `/home/pi/display-profiles` is bound from `/data/display-profiles` (misc-tools
+`hdr-profile.log`. When the runner exits 1, the card names each test that exited non-zero and why
+(a failed check with its value, failed i1 reads in the abl table), from the session's own files. `/home/pi/display-profiles` is bound from `/data/display-profiles` (misc-tools
 micropanel image). Gate log `/tmp/hdr-profile-start-child.log`, state and lock in `/tmp/hdr-profile/`.
 Site overrides go in `/home/pi/system-settings/hdr-profile.conf` (sourced by both scripts), e.g.
 `export SENSOR_LOCATE_TOLERANCE_PX=40` where the meter's holder cannot sit closer to the centre.

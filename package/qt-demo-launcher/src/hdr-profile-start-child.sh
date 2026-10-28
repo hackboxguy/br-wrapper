@@ -90,16 +90,16 @@ locate_sensor() {
     DISPLAY_MODEL="$HP_MODEL" RESULTS_DIR="$dir" JSON_OUTPUT=0 DISPLAY_ANALYSIS_KEEP_PATTERN_APP=1 \
         LAUNCHER_CLIENT="$LAUNCHER_CLIENT_BIN" \
         "$FRAMEWORK_DIR/tests/02-validation/test-sensor-locate.sh" >> "$GATE_LOG" 2>&1
-    rc=$?
+    loc_rc=$?
     res="$dir/artifacts/sensor-locate.json"
-    log "locator round $ROUND: rc=$rc $(jq -c '{sensor_px, offset_mm, footprint_px, guidance}' "$res" 2>/dev/null)"
+    log "locator round $ROUND: rc=$loc_rc $(jq -c '{sensor_px, offset_mm, footprint_px, guidance}' "$res" 2>/dev/null)"
     disp_cmd pattern "whitebox percent 10"
-    if [ "$rc" -eq 0 ]; then
+    if [ "$loc_rc" -eq 0 ]; then
         cp "$res" "$HP_STATE_DIR/sensor-location.json"
         return 0
     fi
     guidance="$(jq -r '.guidance // empty' "$res" 2>/dev/null)"
-    if [ "$rc" -eq 1 ] && [ -n "$guidance" ]; then
+    if [ "$loc_rc" -eq 1 ] && [ -n "$guidance" ]; then
         say yellow "$TITLE\\nThe sensor is off the centre:\\n$guidance\\nthen click Start Measurement again"
         return 1
     fi
