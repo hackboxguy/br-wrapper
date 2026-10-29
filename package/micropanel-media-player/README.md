@@ -31,6 +31,10 @@ dual-video-player --playlist /media/pi/<stick>/micropanel-playlist.json --sync=m
 dual-video-player --playlist /media/pi/<stick>/micropanel-playlist.json --sync=client
 ```
 
+To leave a player running after the ssh session ends, start it as a plain command —
+`nohup dual-video-player … > /tmp/dvp.log 2>&1 < /dev/null &` — not inside an `a && b &` list
+(bash then waits in a subshell that holds the ssh session's pipes, and ssh does not return).
+
 Start them within `--sync-wait` seconds (10) of each other: both show their first frame, the
 client reports ready, and both start 1.5 s later on the same frame. A client started later (or
 restarted) joins at the master's next pass start, holding its first frame until then. `--sync=auto`
@@ -110,7 +114,8 @@ round trip under twice the minimum). A `sync pass N` line per pass gives the sam
 ### Protocol
 
 **Discovery** (Avahi, through `avahi-publish -s` / `avahi-browse -p -r -k`, avahi-utils): service
-`_micropanel-player._tcp`, name `dvp-<last 3 bytes of eth0's MAC>`, port = the control port. TXT:
+`_micropanel-player._tcp`, name `dvp-<last 3 bytes of eth0's MAC>-<pid>` (unique per run, so a restarted player never collides
+with its predecessor's record), port = the control port. TXT:
 
 | key | value |
 |---|---|
@@ -124,13 +129,17 @@ round trip under twice the minimum). A `sync pass N` line per pass gives the sam
 The record is re-announced when a value changes, but a peer's running `avahi-browse` keeps the
 record it resolved first (TXT changes of a known service are not reported), so `role` and `state`
 are a hint: a client connects to a peer announced as `master`, else to the `auto` peer that wins
-the auto choice — only a master listens on the control port, a wrong guess is refused and retried. The announcer dies with the player (`PR_SET_PDEATHSIG`).
+the auto choice — only a master listens on the control port, a wrong guess is refused and retried.
+A record at one of this rig's own addresses and the control port is our own (also an earlier run's
+that Avahi has not dropped yet) and is never a peer. The announcer dies with the player
+(`PR_SET_PDEATHSIG`); if it ends on its own the player logs why and announces again (1 s, doubling
+to 30 s).
 
 **Control**: TCP to the master's port, one JSON object per line, `TCP_NODELAY`.
 
 | from | message | meaning |
 |---|---|---|
-| client | `{"msg":"hello","name":"dvp-4f638b","proto":1}` | first line after connecting |
+| client | `{"msg":"hello","name":"dvp-4f638b-1234","proto":1}` | first line after connecting |
 | master | `{"msg":"clock","port":8096,"proto":1}` | the clock provider's UDP port (at the master's address) |
 | master | `{"msg":"prepare","loop":true,"pass_ns":120003216666,"items":[{"item":"…mp4","kind":"video","frames":7193,"fps":"60000/1001","duration_ns":120003216666}]}` | the master's playlist |
 | client | `{"msg":"ready"}` | items match, first frame on screen, clock synchronised |

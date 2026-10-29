@@ -46,6 +46,8 @@
 #define AUTO_WINDOW (3 * GST_SECOND)        /* --sync=auto: look this long before choosing */
 #define RECONNECT (2 * GST_SECOND)
 #define PING_EVERY (1 * GST_SECOND)
+#define PUBLISH_RETRY (1 * GST_SECOND)      /* avahi-publish ended on its own: respawn after this, doubling */
+#define PUBLISH_RETRY_MAX (30 * GST_SECOND)
 
 enum role { ROLE_AUTO, ROLE_MASTER, ROLE_CLIENT };
 static const char *role_name[] = { "auto", "master", "client" };
@@ -81,7 +83,7 @@ struct conn {
 struct sync {
 	struct player *p;
 	enum role want, role;
-	char name[32];            /* service name: dvp-<MAC tail> */
+	char name[48];            /* service name: dvp-<MAC tail>-<pid>, unique per run */
 	char host[64];
 	int port, wait_s;
 	char *peer_arg;           /* --sync-peer: the master's address */
@@ -128,6 +130,8 @@ struct sync {
 	GDataInputStream *browse_in;
 	GCancellable *cancel;
 	char *published;
+	gint64 publish_spawned, publish_after, publish_backoff;
+	gboolean stopping;        /* sync_free: closing connections is not losing the master */
 	guint tick;
 	gint64 next_ping;
 
@@ -244,6 +248,20 @@ static guint32 parse_addr(const char *s)
 {
 	struct in_addr a;
 	return s && inet_pton(AF_INET, s, &a) == 1 ? ntohl(a.s_addr) : 0;
+}
+
+/* @a (host order) is one of this rig's IPv4 addresses */
+static gboolean is_own_addr(guint32 a)
+{
+	struct ifaddrs *ifa, *i;
+	gboolean own = FALSE;
+	if (!a || getifaddrs(&ifa))
+		return FALSE;
+	for (i = ifa; i && !own; i = i->ifa_next)
+		own = i->ifa_addr && i->ifa_addr->sa_family == AF_INET &&
+		      ntohl(((struct sockaddr_in *)i->ifa_addr)->sin_addr.s_addr) == a;
+	freeifaddrs(ifa);
+	return own;
 }
 
 /* ---- the plan: this playlist as a schedule ---- */
@@ -674,7 +692,7 @@ static void conn_close(struct conn *c)
 		g_mutex_lock(&s->lock);
 		gboolean sched = s->have_schedule;
 		g_mutex_unlock(&s->lock);
-		if (sched)
+		if (sched && !s->stopping)
 			sync_log("lost the master: keeping its schedule on the last clock estimate; "
 				 "a restarted master's schedule applies from the next pass");
 	}
@@ -774,7 +792,12 @@ static void on_browse_line(struct sync *s, const char *line)
 	if (nf >= 4 && strcmp(f[2], "IPv4") == 0 && (!s->iface || !strcmp(f[1], s->iface))) {
 		gchar *name = unescape(f[3]);
 		struct peer *seen = g_hash_table_lookup(s->peers, name);
-		if (!strcmp(name, s->name)) {
+		/* our own record, also one of an earlier run on this rig that avahi has not dropped yet */
+		gboolean own = !strcmp(name, s->name) ||
+			       (nf >= 9 && atoi(f[8]) == s->port && is_own_addr(parse_addr(f[7])));
+		if (own) {
+			if (seen && g_hash_table_remove(s->peers, name))
+				sync_log("peer %s left", name);
 			g_free(name);
 		} else if (seen && strcmp(seen->iface, f[1])) {
 			g_free(name);   /* a peer seen on two networks: keep the first (or use --sync-iface) */
@@ -871,9 +894,44 @@ static const char *own_state(struct sync *s)
 	return st;
 }
 
+/* avahi-publish ended: expected when publish() replaced it, else log why and respawn (back-off) */
+static void on_publish_done(GObject *src, GAsyncResult *res, gpointer data)
+{
+	struct sync *s = data;
+	GError *err = NULL;
+	gchar *errout = NULL;
+	GSubprocess *sp = G_SUBPROCESS(src);
+	gboolean ok = g_subprocess_communicate_utf8_finish(sp, res, NULL, &errout, &err);
+	if (g_error_matches(err, G_IO_ERROR, G_IO_ERROR_CANCELLED) || sp != s->publish) {
+		g_clear_error(&err);
+		g_free(errout);
+		return;
+	}
+	gint64 now = mono_ns();
+	if (now - s->publish_spawned > PUBLISH_RETRY_MAX)
+		s->publish_backoff = 0;
+	s->publish_backoff = s->publish_backoff ? MIN(s->publish_backoff * 2, PUBLISH_RETRY_MAX) : PUBLISH_RETRY;
+	gchar *why = errout ? g_strstrip(g_strdelimit(errout, "\n", ' ')) : NULL;
+	if (!ok)
+		sync_log("avahi-publish failed: %s; announcing again in %.0f s", err->message, s->publish_backoff / 1e9);
+	else if (g_subprocess_get_if_exited(sp))
+		sync_log("avahi-publish exited (%d)%s%s; announcing again in %.0f s", g_subprocess_get_exit_status(sp),
+			 why && *why ? ": " : "", why ? why : "", s->publish_backoff / 1e9);
+	else
+		sync_log("avahi-publish ended (signal %d); announcing again in %.0f s", g_subprocess_get_term_sig(sp),
+			 s->publish_backoff / 1e9);
+	g_clear_error(&err);
+	g_free(errout);
+	g_clear_object(&s->publish);
+	g_clear_pointer(&s->published, g_free);   /* the next publish() announces */
+	s->publish_after = now + s->publish_backoff;
+}
+
 /* (re)announce ourselves when anything in the TXT record changed */
 static void publish(struct sync *s)
 {
+	if (!s->publish && mono_ns() < s->publish_after)
+		return;
 	char item[64] = "-", fps[24] = "-", frames[24] = "-";
 	if (s->n) {
 		sanitize(item, sizeof(item), s->items[0].name);
@@ -905,7 +963,14 @@ static void publish(struct sync *s)
 	gchar *port = g_strdup_printf("%d", s->port);
 	const char *argv[] = { "avahi-publish", "-s", s->name, SERVICE, port,
 			       t[0], t[1], t[2], t[3], t[4], t[5], t[6], t[7], NULL };
-	s->publish = spawn(G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_SILENCE, argv);
+	s->publish = spawn(G_SUBPROCESS_FLAGS_STDOUT_SILENCE | G_SUBPROCESS_FLAGS_STDERR_PIPE, argv);
+	if (s->publish) {
+		s->publish_spawned = mono_ns();
+		g_subprocess_communicate_utf8_async(s->publish, NULL, s->cancel, on_publish_done, s);
+	} else {
+		s->publish_after = mono_ns() + PUBLISH_RETRY_MAX;
+		g_clear_pointer(&s->published, g_free);
+	}
 	g_free(port);
 	for (int i = 0; i < 8; i++)
 		g_free(t[i]);
@@ -1144,8 +1209,9 @@ struct sync *sync_new(struct player *p, const char *mode, const char *peer, cons
 		mac = g_strdup(s->host);
 	gchar **b = g_strsplit(g_strstrip(mac), ":", -1);
 	guint nb = g_strv_length(b);
-	g_snprintf(s->name, sizeof(s->name), "dvp-%s%s%s", nb >= 3 ? b[nb - 3] : mac, nb >= 3 ? b[nb - 2] : "",
-		   nb >= 3 ? b[nb - 1] : "");
+	/* unique per run: a restarted player must not collide with its predecessor's record */
+	g_snprintf(s->name, sizeof(s->name), "dvp-%s%s%s-%d", nb >= 3 ? b[nb - 3] : mac, nb >= 3 ? b[nb - 2] : "",
+		   nb >= 3 ? b[nb - 1] : "", (int)getpid());
 	g_strfreev(b);
 	g_free(mac);
 	s->peers = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, peer_free);
@@ -1176,6 +1242,7 @@ void sync_free(struct sync *s)
 		return;
 	if (s->tick)
 		g_source_remove(s->tick);
+	s->stopping = TRUE;
 	g_cancellable_cancel(s->cancel);
 	while (s->conns)
 		conn_close(s->conns->data);
