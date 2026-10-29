@@ -331,6 +331,20 @@ the planes, finding 8), per-item duration, shuffle, portrait videos via software
 HEVC path if GStreamer gains `v4l2slh265dec` for `rpi-hevc-dec`, libjpeg DCT-domain downscaling for
 50 MP images.
 
+### Network sync between two rigs (prompt v10, 2026-10-29)
+`--sync=master|client|auto` makes two players on two rigs show the same frame (the shootout's
+HDR10+ / "SDR today" pair side by side). The master serves its monotonic clock (GStreamer net clock,
+UDP 8096) and a start time `T0`; each frame is due at `T0 + pass × duration + offset + PTS` and goes up
+on each rig's first vblank at or after that, so nothing drifts; Avahi (`avahi-publish`/`avahi-browse`)
+finds the peer, a JSON-lines TCP connection carries prepare / ready / start. Measured on the 14.6"
+rigs (both 60.07 Hz) over 32 min on the LAN and on a direct cable (one rig in DHCP-server mode):
+clock error 0.04–0.09 ms, every frame up within one vblank of its due time on both sides, the two
+panels never a whole frame apart, camera photos at 1 ms all equal or one apart. Without `--sync` the
+player is unchanged (before/after table). The synced path commits as late as the vblank allows:
+`show()`'s commit plan (early in the window, else the next vblank) cost ~90 frames per 2-min pass —
+the same rule is behind the non-synced player's `late` count and is a follow-up. README "Playlist
+sync"; evidence `tmp-docs/m10/findings.md`.
+
 ## Lessons from dual-video-player (do not relearn these)
 
 - **One atomic commit for both displays.** A commit on one CRTC waits for the other CRTC's pending flip

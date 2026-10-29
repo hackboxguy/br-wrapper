@@ -8,16 +8,19 @@ include(GNUInstallDirs)
 # hw decode, frames presented with libdrm atomic commits). Used by the launcher's
 # Dual Video button (package/qt-demo-launcher/src/dual-video.sh). Optional: built
 # only where the GStreamer (core + plugins-base) and libdrm dev packages are
-# installed (+ json-glib for playlists).
+# installed (+ json-glib for playlists; gstreamer-net-1.0 and gio, for --sync,
+# come with the GStreamer core and GLib dev packages).
 find_package(PkgConfig QUIET)
 if(PKG_CONFIG_FOUND)
     pkg_check_modules(GST gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0
-                      gstreamer-allocators-1.0 libdrm json-glib-1.0)
+                      gstreamer-allocators-1.0 gstreamer-net-1.0 gio-2.0
+                      libdrm json-glib-1.0)
 endif()
 if(GST_FOUND)
     add_executable(dual-video-player src/dual-video-player.c src/drm.c src/input.c
                                      src/presenter.c src/probe.c
-                                     src/item.c src/playlist.c src/mirror.c)
+                                     src/item.c src/playlist.c src/mirror.c
+                                     src/sync.c)
     target_include_directories(dual-video-player PRIVATE ${GST_INCLUDE_DIRS})
     target_link_libraries(dual-video-player PRIVATE ${GST_LIBRARIES} m)
     install(TARGETS dual-video-player

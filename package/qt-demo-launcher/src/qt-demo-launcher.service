@@ -72,6 +72,9 @@ TimeoutStopSec=10
 
 # Security and resource limits
 LimitNOFILE=4096
+# dual-video-player --sync makes its presenter thread SCHED_FIFO 10: a commit
+# delayed by a busy CPU shows a frame one vblank off the other rig's (M10)
+LimitRTPRIO=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=qt-demo-launcher

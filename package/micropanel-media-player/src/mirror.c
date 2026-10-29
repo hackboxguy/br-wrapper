@@ -22,9 +22,17 @@
  * - Stills (images, the last frame of a video) wait on p->wake_fd, so a tap
  *   shows the EXIT button and EXIT stops at once.
  * - The stick's mount point is watched; if it goes, exit code 3.
+ * - --sync (sync.c): play_item_synced() instead of play_item(). Every frame
+ *   has a due time on the clock shared with the other player (pass start +
+ *   the item's offset in the pass + PTS) and is shown at the first master
+ *   vblank at or after it; a frame that can no longer make it while the next
+ *   one already could is dropped. Item preparation, boundaries and the hold
+ *   of the last frame are the same as without sync.
  */
 #include "player.h"
 #include <malloc.h>
+#include <pthread.h>
+#include <sched.h>
 
 #define NO_FRAME_TIMEOUT (5 * GST_SECOND)   /* watchdog for a playing video */
 #define MOUNT_CHECK_NS   (500 * GST_MSECOND)
@@ -64,6 +72,20 @@ struct mirror {
 	gboolean cur_hw;           /* the item on screen is a hardware item, its decoder alive */
 	struct media_info *cache;  /* per playlist index: the classification ... */
 	gboolean *cached;          /* ... once one exists */
+
+	/* --sync */
+	struct sync *sync;
+	struct sync_conv conv;     /* the shared clock, for this pass */
+	gboolean in_pass;
+	int pass_item;             /* the last item index shown in this pass */
+	gint64 pass_start;         /* shared clock */
+	unsigned passes;
+	gint64 prev_v;             /* vblank of the previous frame of this item, -1: none */
+	unsigned sync_drops, sync_repeats, sync_missed;
+	gint64 off_max, off_min, off_sum;   /* latch - due (shared clock) */
+	guint64 off_n;
+	unsigned pass_drops0, pass_repeats0, pass_late0, pass_missed0;
+	gint64 pass_off_max;
 };
 
 static void job_run(gpointer data, gpointer user)
@@ -479,10 +501,280 @@ static void play_item(struct mirror *mr, struct item *it, struct item **old)
 	mr->next_target = mr->last_target + MAX(1, llround((double)frame_ns / mr->m->period));
 }
 
+/* ---- --sync ---- */
+
+/* the first master vblank at or after @shared (shared clock) */
+static gint64 vblank_at(struct mirror *mr, gint64 shared)
+{
+	struct output *m = mr->m;
+	gint64 d = conv_local(&mr->conv, shared) - m->last_ts;
+	return m->last_idx + (d <= 0 ? -(-d / m->period) : (d + m->period - 1) / m->period);
+}
+
+/*
+ * The earliest master vblank a commit can still make: one whose time is more
+ * than GUARD_NS (+0.3 ms to get there) ahead. show() aims at a planned
+ * moment early in the vblank's window and moves on when that has passed;
+ * with sync a frame decoded later in the window still goes up on time.
+ */
+static gint64 reachable(struct mirror *mr)
+{
+	struct output *m = mr->m;
+	gint64 now = mono_ns(), v = MAX(mr->last_target + 1, now_idx(m) + 1);
+	while (m->last_ts + (v - m->last_idx) * m->period - GUARD_NS <= now + 300 * 1000)
+		v++;
+	return v;
+}
+
+/* show() for --sync: commit for vblank @target (reachable) at the planned moment, or now if that has passed */
+static gint64 show_sync(struct mirror *mr, const struct frame *f, gint64 target)
+{
+	struct player *p = mr->p;
+	struct output *m = mr->m;
+	gint64 t = submit_time(p, m->last_ts + (target - m->last_idx) * m->period);
+	if (t > mono_ns())
+		sleep_until(t);
+	const struct frame *fs[2] = { f, f };
+	int r = commit_frames(p, fs);
+	if (r) {
+		g_printerr("dual-video-player: commit failed: %s\n", strerror(-r));
+		p->ret = 1;
+		return -1;
+	}
+	mr->shown = *f;
+	mr->last_target = target;
+	return target;
+}
+
+/*
+ * Show @f at the first vblank at or after its due time @due (shared clock).
+ * A frame that missed its vblank is shown at the next one (late), unless the
+ * frame after it (@next_due, -1: none) is due by then too: dropped. Waits on
+ * the held picture first when the vblank is far away (the start of a pass).
+ * 1 shown, 0 dropped, -1 stop or error.
+ */
+static int show_due(struct mirror *mr, const struct frame *f, gint64 due, gint64 next_due)
+{
+	struct player *p = mr->p;
+	sync_conv_update(mr->sync, &mr->conv);
+	gint64 target = vblank_at(mr, due);
+	if (target - now_idx(mr->m) > 30) {
+		hold_until(mr, target - 6);
+		if (stopping(mr))
+			return -1;
+		for (int i = 0; i < p->nout; i++)
+			sync_vblank(p->fd, &p->out[i]);   /* a fresh grid after a long hold */
+		sync_conv_update(mr->sync, &mr->conv);
+		target = vblank_at(mr, due);
+		mr->prev_v = -1;
+	}
+	gint64 reach = reachable(mr);
+	if (target < reach) {
+		if (next_due >= 0 && vblank_at(mr, next_due) <= reach) {
+			mr->sync_drops++;
+			return 0;
+		}
+		p->late++;
+		target = reach;
+	}
+	struct output *m = mr->m;
+	gint64 vt = m->last_ts + (target - m->last_idx) * m->period, entered = mono_ns();
+	gint64 v = show_sync(mr, f, target);
+	if (v < 0)
+		return -1;
+	gint64 off = conv_shared(&mr->conv, m->last_ts) - due;
+	if (m->last_idx != v) {
+		mr->sync_missed++;   /* committed in time for vblank v, latched later: say where the time went */
+		g_print("dual-video-player: sync: frame latched %" G_GINT64_FORMAT " vblank(s) late: commit started "
+			"%.2f ms before its vblank, done %.2f ms after it\n", m->last_idx - v, (vt - entered) / 1e6,
+			(mono_ns() - vt) / 1e6);
+	}
+	if (!mr->off_n || off > mr->off_max)
+		mr->off_max = off;
+	if (!mr->off_n || off < mr->off_min)
+		mr->off_min = off;
+	mr->pass_off_max = MAX(mr->pass_off_max, off);
+	mr->off_sum += off;
+	mr->off_n++;
+	if (mr->prev_v >= 0 && v - mr->prev_v > 1)
+		mr->sync_repeats += (unsigned)(v - mr->prev_v - 1);
+	mr->prev_v = v;
+	if (p->sync_log)
+		fprintf(p->sync_log, "%u,%d,%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT ",%" G_GINT64_FORMAT ",%u\n",
+			mr->passes, mr->pass_item + 1, due, due + off, v, mr->conv.epoch);
+	return 1;
+}
+
+static void pass_summary(struct mirror *mr)
+{
+	if (!mr->in_pass)
+		return;
+	g_print("dual-video-player: sync pass %u (%s): drops %u, repeats %u, late %u, missed %u, offset max %.2f ms\n",
+		mr->passes, sync_role(mr->sync), mr->sync_drops - mr->pass_drops0,
+		mr->sync_repeats - mr->pass_repeats0, mr->p->late - mr->pass_late0, mr->sync_missed - mr->pass_missed0,
+		mr->pass_off_max / 1e6);
+}
+
+/* the next pass starts: when the master's schedule says (waits for one), or now (free-running) */
+static gboolean begin_pass(struct mirror *mr)
+{
+	gint64 start;
+	int r;
+	for (;;) {
+		r = sync_pass_start(mr->sync, &start, &mr->conv);
+		if (r > 0)
+			break;
+		if (r < 0) {
+			start = conv_shared(&mr->conv, mono_ns() + 2 * mr->m->period);
+			break;
+		}
+		if (stopping(mr) || !mount_present(mr))
+			return FALSE;
+		hold_until(mr, now_idx(mr->m) + 6);
+	}
+	pass_summary(mr);
+	sync_pass_started(mr->sync, start, &mr->conv);
+	mr->passes++;
+	mr->in_pass = TRUE;
+	mr->pass_start = start;
+	mr->pass_drops0 = mr->sync_drops;
+	mr->pass_repeats0 = mr->sync_repeats;
+	mr->pass_late0 = mr->p->late;
+	mr->pass_missed0 = mr->sync_missed;
+	mr->pass_off_max = 0;
+	gint64 in = conv_local(&mr->conv, start) - mono_ns();
+	g_print("dual-video-player: sync pass %u (%s): %s, starts in %.3f s\n", mr->passes, sync_role(mr->sync),
+		r < 0 ? "free-running" : mr->conv.epoch ? "on the master's clock" : "own clock", in / 1e9);
+	return TRUE;
+}
+
+/* play_item() for --sync: frames at their due times on the shared clock */
+static void play_item_synced(struct mirror *mr, struct item *it, struct item **old)
+{
+	struct frame f;
+	if (!make_frame(it, it->first, &f)) {
+		g_printerr("dual-video-player: item %d: cannot show its frame\n", it->index + 1);
+		return;
+	}
+	GstSample *first = it->mi.decode == DECODE_HW ? gst_sample_ref(it->first) : NULL;
+	/* the very first frame goes up at once and is held until the start */
+	gboolean opening = !mr->shown.fb;
+	if (opening && show(mr, &f, mr->next_target, FALSE) < 0)
+		goto fail;
+	if (!mr->in_pass || it->index <= mr->pass_item) {
+		if (!begin_pass(mr))
+			goto fail;
+	}
+	mr->pass_item = it->index;
+	gint64 item_start = mr->pass_start + sync_item_offset(mr->sync, it->index);
+	mr->prev_v = -1;
+	gint64 start;
+	if (opening) {
+		/* frame 0 is up; its slot passes while it is held */
+		start = mr->last_target;
+	} else {
+		if (show_due(mr, &f, item_start, -1) < 0)
+			goto fail;
+		start = mr->last_target;
+	}
+	if (*old || mr->shown_sample || mr->hold)
+		g_print("dual-video-player: boundary to item %d: previous frame held %" G_GINT64_FORMAT
+			" vblanks\n", it->index + 1, start - mr->item_end);
+	retire(mr, old);
+	mr->shown_sample = first;
+	mr->cur_hw = it->mi.decode == DECODE_HW;
+	prefetch_after(mr, it->index);
+	stats_begin(mr);
+
+	gint64 next_item = item_start + sync_item_duration(mr->sync, it->index);
+	if (it->mi.kind == MEDIA_IMAGE) {
+		mr->item_end = start;
+		if (vblank_at(mr, next_item) - now_idx(mr->m) > 6)
+			hold_until(mr, vblank_at(mr, next_item) - 6);   /* show_due of the next item waits the rest */
+		return;
+	}
+
+	item_play(it);
+	unsigned frames = 1;
+	gint64 frame_ns = it->mi.fps_n > 0 ? GST_SECOND * it->mi.fps_d / it->mi.fps_n : 40 * GST_MSECOND;
+	gint64 last_seen = mono_ns();
+	while (!stopping(mr) && mount_present(mr)) {
+		skip_failed_next(mr);
+		GstSample *s = item_pull(it, 200 * GST_MSECOND);
+		if (!s) {
+			if (it->eos)
+				break;
+			if (it->why[0]) {
+				g_printerr("dual-video-player: item %d: %s\n", it->index + 1, it->why);
+				break;
+			}
+			if (mono_ns() - last_seen > NO_FRAME_TIMEOUT) {
+				g_printerr("dual-video-player: item %d: no frame for %d s, skipping\n",
+					   it->index + 1, (int)(NO_FRAME_TIMEOUT / GST_SECOND));
+				break;
+			}
+			continue;
+		}
+		last_seen = mono_ns();
+		GstBuffer *b = gst_sample_get_buffer(s);
+		gint64 pts = GST_BUFFER_PTS_IS_VALID(b) ? (gint64)GST_BUFFER_PTS(b) - it->first_pts : 0;
+		if (GST_BUFFER_DURATION_IS_VALID(b))
+			frame_ns = (gint64)GST_BUFFER_DURATION(b);
+		gint64 due = item_start + pts;
+		if (!make_frame(it, s, &f)) {
+			gst_sample_unref(s);
+			continue;
+		}
+		int r = show_due(mr, &f, due, due + frame_ns < next_item ? due + frame_ns : -1);
+		if (r <= 0) {
+			gst_sample_unref(s);
+			if (r < 0)
+				break;
+			continue;
+		}
+		frames++;
+		if (mr->shown_sample)
+			gst_sample_unref(mr->shown_sample);
+		if (it->mi.decode == DECODE_HW)
+			mr->shown_sample = s;
+		else {
+			mr->shown_sample = NULL;
+			gst_sample_unref(s);
+		}
+	}
+	stats_end(mr, it, frames);
+	mr->item_end = mr->last_target;
+	mr->next_target = mr->last_target + 1;
+	return;
+fail:
+	if (first)
+		gst_sample_unref(first);
+}
+
+/*
+ * --sync: a frame that misses its vblank is a vblank off the other rig's. A
+ * presenter thread held off the CPU (decoder threads, the launcher) until
+ * after the vblank misses it; a real-time one is not held off. It needs
+ * RLIMIT_RTPRIO (LimitRTPRIO= in the launcher's unit); without it the
+ * player runs at normal priority, said once.
+ */
+static void presenter_realtime(void)
+{
+	struct sched_param sp = { .sched_priority = 10 };
+	int r = pthread_setschedparam(pthread_self(), SCHED_FIFO, &sp);
+	if (r)
+		g_print("dual-video-player: sync: presenter not real-time (%s): a busy CPU can delay a frame by a vblank\n",
+			strerror(r));
+	else
+		g_print("dual-video-player: sync: presenter thread real-time (SCHED_FIFO %d)\n", sp.sched_priority);
+}
+
 gpointer mirror_presenter(gpointer data)
 {
 	struct player *p = data;
-	struct mirror mr = { .p = p, .m = &p->out[p->master] };
+	struct mirror mr = { .p = p, .m = &p->out[p->master], .sync = p->sync };
+	if (mr.sync)
+		presenter_realtime();
 	g_mutex_init(&mr.lock);
 	g_cond_init(&mr.cond);
 	mr.n = p->pl->items->len;
@@ -546,7 +838,10 @@ gpointer mirror_presenter(gpointer data)
 			continue;
 		}
 		mr.failed_in_row = 0;
-		play_item(&mr, it, &old);
+		if (mr.sync)
+			play_item_synced(&mr, it, &old);
+		else
+			play_item(&mr, it, &old);
 		shown_items++;
 		old = it;   /* its last frame stays until the next item's first one is latched */
 		if (stopping(&mr))
@@ -573,8 +868,21 @@ gpointer mirror_presenter(gpointer data)
 	g_free(mr.cached);
 	g_mutex_clear(&mr.lock);
 	g_cond_clear(&mr.cond);
-	g_print("dual-video-player: STATS\titems_shown=%u\tloops=%u\tlate=%u\texit=%d\n",
-		shown_items, mr.loops, p->late, p->ret);
+	if (mr.sync) {
+		pass_summary(&mr);
+		GString *x = g_string_new(NULL);
+		sync_clock_stats(mr.sync, x);
+		g_print("dual-video-player: STATS\titems_shown=%u\tloops=%u\tlate=%u\texit=%d"
+			"\tsync=%s\tsync_passes=%u\tsync_drops=%u\tsync_repeats=%u\tsync_missed=%u"
+			"\tsync_offset_ms=%.2f\tsync_offset_ms_min=%.2f\tsync_offset_ms_avg=%.2f%s\n",
+			shown_items, mr.loops, p->late, p->ret, sync_role(mr.sync), mr.passes, mr.sync_drops,
+			mr.sync_repeats, mr.sync_missed, mr.off_max / 1e6, mr.off_min / 1e6,
+			mr.off_n ? mr.off_sum / 1e6 / mr.off_n : 0, x->str);
+		g_string_free(x, TRUE);
+	} else {
+		g_print("dual-video-player: STATS\titems_shown=%u\tloops=%u\tlate=%u\texit=%d\n",
+			shown_items, mr.loops, p->late, p->ret);
+	}
 	g_main_loop_quit(p->loop);
 	return NULL;
 }

@@ -72,6 +72,19 @@ static void usage(const char *prog)
 		"  --image-duration=S  seconds per image, overrides the playlist (fractions allowed)\n"
 		"  --max-loops=N       stop after N passes even if the playlist loops (tests)\n"
 		"  exit: 0 done/stopped, 1 nothing playable/setup error, 2 usage, 3 stick removed\n"
+		"Playlist sync with a player on another rig (frame-level, over the network):\n"
+		"  --sync=master|client|auto  master: serves the clock and the start; client:\n"
+		"                      follows a master (found with Avahi); auto: a master on the\n"
+		"                      network -> client, else the rig serving DHCP, else the lower\n"
+		"                      address is the master. Both playlists: same frames and fps\n"
+		"  --sync-peer=ADDR    client: the master's address (no Avahi)\n"
+		"  --sync-iface=IFACE  only peers found on IFACE (a rig on two networks)\n"
+		"  --sync-port=N       TCP control + UDP clock port (default 8096)\n"
+		"  --sync-wait=S       master: wait S s for a client before starting alone;\n"
+		"                      client: play free-running after S s without a master (10)\n"
+		"  --sync-log=FILE     one CSV line per shown frame (pass,item,due,latched,vblank,clock)\n"
+		"  --sync-clock-test=S no display: run the clock only, S seconds; the client prints\n"
+		"                      a CLOCK line per ping and CLOCKSTATS\n"
 		"  --refresh=auto|keep|HZ  display refresh: auto = integer multiple of the\n"
 		"                      video frame rate if offered (default), keep = as is\n",
 		prog, prog);
@@ -205,6 +218,12 @@ static int run_playlist(struct player *p, const char *file, const char *root, in
 	}
 	p->master = 0;
 	setup_popup(p);
+	if (p->sync && !sync_plan(p->sync, pl, p->image_duration_ns > 0 ? p->image_duration_ns :
+				  (gint64)pl->image_duration_s * GST_SECOND)) {
+		g_printerr("dual-video-player: sync: this playlist cannot be synchronised: playing without sync\n");
+		sync_free(p->sync);
+		p->sync = NULL;
+	}
 	int gpu = gpu_mem_mb();
 	p->prefetch = gpu >= 128;
 	if (!p->prefetch)
@@ -217,6 +236,8 @@ static int run_playlist(struct player *p, const char *file, const char *root, in
 	p->loop = g_main_loop_new(NULL, FALSE);
 	g_unix_signal_add(SIGINT, on_signal, p);
 	g_unix_signal_add(SIGTERM, on_signal, p);
+	if (p->sync)
+		sync_start(p->sync);
 	p->thread = g_thread_new("presenter", mirror_presenter, p);
 	p->started = g_get_monotonic_time();
 	watch_inputs(p);
@@ -224,6 +245,9 @@ static int run_playlist(struct player *p, const char *file, const char *root, in
 	g_atomic_int_set(&p->stop, 1);
 	player_wake(p);
 	g_thread_join(p->thread);
+	sync_free(p->sync);
+	if (p->sync_log)
+		fclose(p->sync_log);
 	g_main_loop_unref(p->loop);
 	playlist_free(pl);
 	g_free(mp);
@@ -352,6 +376,8 @@ int main(int argc, char **argv)
 	const char *playlist = NULL, *root = NULL;
 	int list = 0;   /* 1 --list, 2 --autostart-check */
 	gboolean refresh_given = FALSE;
+	const char *sync_mode = NULL, *sync_peer = NULL, *sync_iface = NULL, *sync_log = NULL;
+	int sync_port = 0, sync_wait = 0, clock_test = 0;
 
 	/* Every playlist item brings new GStreamer streaming threads; with glibc's
 	 * default of up to 8 arenas per core each may get its own arena, which keeps
@@ -400,11 +426,50 @@ int main(int argc, char **argv)
 			p.max_loops = atoi(argv[i] + 12);
 		else if (!strcmp(argv[i], "--once"))
 			p.looping = FALSE;
+		else if (!strncmp(argv[i], "--sync=", 7))
+			sync_mode = argv[i] + 7;
+		else if (!strncmp(argv[i], "--sync-peer=", 12))
+			sync_peer = argv[i] + 12;
+		else if (!strncmp(argv[i], "--sync-iface=", 13))
+			sync_iface = argv[i] + 13;
+		else if (!strncmp(argv[i], "--sync-port=", 12))
+			sync_port = atoi(argv[i] + 12);
+		else if (!strncmp(argv[i], "--sync-wait=", 12))
+			sync_wait = atoi(argv[i] + 12);
+		else if (!strncmp(argv[i], "--sync-log=", 11))
+			sync_log = argv[i] + 11;
+		else if (!strncmp(argv[i], "--sync-clock-test=", 18))
+			clock_test = atoi(argv[i] + 18);
 		else if (argv[i][0] == '-') {
 			usage(argv[0]);
 			return 2;
 		} else if (nfiles < 2)
 			files[nfiles++] = argv[i];
+	}
+	if (sync_mode && strcmp(sync_mode, "master") && strcmp(sync_mode, "client") && strcmp(sync_mode, "auto")) {
+		usage(argv[0]);
+		return 2;
+	}
+	if (clock_test > 0) {
+		if (!sync_mode) {
+			usage(argv[0]);
+			return 2;
+		}
+		return sync_clock_test(&p, sync_mode, sync_peer, sync_iface, sync_port, clock_test);
+	}
+	if (sync_mode && (!playlist || list)) {
+		if (!playlist) {
+			g_printerr("dual-video-player: --sync works in playlist mode only\n");
+			return 2;
+		}
+		sync_mode = NULL;   /* --list / --autostart-check: nothing to sync */
+	}
+	if (sync_mode) {
+		p.sync = sync_new(&p, sync_mode, sync_peer, sync_iface, sync_port, sync_wait);
+		if (sync_log && !(p.sync_log = fopen(sync_log, "w")))
+			g_printerr("dual-video-player: --sync-log: %s: %s\n", sync_log, strerror(errno));
+		if (p.sync_log)
+			fprintf(p.sync_log, "pass,item,due_ns,latched_ns,vblank,clock\n");
 	}
 	if (playlist)
 		return run_playlist(&p, playlist, root, list, card, sizeof(card), c1, c2,

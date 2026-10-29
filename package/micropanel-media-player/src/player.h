@@ -146,6 +146,9 @@ struct player {
 	gboolean prefetch;        /* prepare the next item while one plays (gpu_mem >= 128) */
 	const char *mount_point;  /* the stick's mount point, watched for removal */
 
+	struct sync *sync;        /* --sync (playlist mode): due times from a shared clock */
+	FILE *sync_log;           /* --sync-log: one line per shown frame */
+
 	struct plane popup;       /* EXIT button on display 1 (id 0: none) */
 	uint32_t popup_fb;
 	gint popup_on;            /* set by the input handler, read by the presenter */
@@ -227,6 +230,36 @@ void item_play(struct item *it);
 GstSample *item_pull(struct item *it, GstClockTime timeout);
 void item_free(struct item *it);
 gpointer mirror_presenter(gpointer data);
+
+/* sync.c: frame-level sync of two players over the network (--sync) */
+struct sync;
+struct sync_conv {            /* shared clock = shared0 + (local - local0), local = CLOCK_MONOTONIC */
+	gint64 local0, shared0;
+	guint epoch;              /* the clock domain it belongs to (0: own clock) */
+};
+static inline gint64 conv_shared(const struct sync_conv *c, gint64 local)
+{
+	return c->shared0 + (local - c->local0);
+}
+static inline gint64 conv_local(const struct sync_conv *c, gint64 shared)
+{
+	return c->local0 + (shared - c->shared0);
+}
+struct sync *sync_new(struct player *p, const char *mode, const char *peer, const char *iface, int port,
+		      int wait_s);
+gboolean sync_plan(struct sync *s, const struct playlist *pl, gint64 image_ns);
+void sync_start(struct sync *s);
+void sync_free(struct sync *s);
+gint64 sync_item_offset(struct sync *s, int index);
+gint64 sync_item_duration(struct sync *s, int index);
+void sync_presenter_ready(struct sync *s);
+int sync_pass_start(struct sync *s, gint64 *start, struct sync_conv *c);
+void sync_pass_started(struct sync *s, gint64 start, const struct sync_conv *c);
+void sync_conv_update(struct sync *s, struct sync_conv *c);
+const char *sync_role(struct sync *s);
+void sync_clock_stats(struct sync *s, GString *out);
+int sync_clock_test(struct player *p, const char *mode, const char *peer, const char *iface, int port,
+		    int seconds);
 
 /* input.c: signals, input grab, EXIT popup */
 gboolean on_signal(gpointer data);
