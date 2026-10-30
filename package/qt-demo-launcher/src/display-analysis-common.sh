@@ -100,10 +100,20 @@ configured_display_type() {
     return 1
 }
 
-# The display-test-framework config name (config/<model>.json) of the connected display.
+# The display-test-framework config name (config/<model>.json) of the connected display:
+# DISPLAY_MODEL; else an HDMI monitor whose EDID matches a config's "edid" block (manufacturer,
+# product code, model name: lib/edid_identify.py); else the framebuffer resolution and config.txt
+# (the FPGA panels have no EDID that names them).
 resolve_display_model() {
     if [ -n "${DISPLAY_MODEL:-}" ]; then
         echo "$DISPLAY_MODEL"
+        return 0
+    fi
+
+    if [ -f "$FRAMEWORK_DIR/lib/edid_identify.py" ] && \
+       model="$(python3 "$FRAMEWORK_DIR/lib/edid_identify.py" --config-dir="$FRAMEWORK_DIR/config" 2>/dev/null)" && \
+       [ -n "$model" ]; then
+        echo "$model"
         return 0
     fi
 
@@ -213,9 +223,12 @@ sensor_outline_spec() {
     echo "sensor-outline width-mm $so_w height-mm $so_h"
 }
 
-# placement_pattern <model>: the sensor outline, or the 10 % white box when the model's size is unknown
+# placement_pattern <model>: the sensor outline, or a white box of 10 % of the screen area when the
+# model's size is unknown. Not "whitebox percent 10": that is 10 % of the shorter side (108 px on
+# 1080p, ~17 mm), smaller than the i1's footprint (~160 px) - the meter read 202 of 295 nits on it
+# (.237, 2026-10-29), its black surround included.
 placement_pattern() {
-    sensor_outline_spec "$1" || echo "whitebox percent 10"
+    sensor_outline_spec "$1" || echo "box 10 255 255 255"
 }
 
 # land_pattern <spec>: show a pattern and verify it with get-pattern (it must name the spec's first

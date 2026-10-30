@@ -443,27 +443,70 @@ centre. The page has two buttons:
   profile upload.
 
 **Detection** (`hdr-profile-common.sh`, shared by gate and worker): the display-test-framework model
-from the resolution and pi-config-txt.sh's display type (`display-analysis-common.sh`, shared with the
-gamut and APL flows; 2560x1440 + `oled-ib-17` is the 17" OLED-IB). Its config decides the type:
-`display_type: hdmi-ddc` → edge-lit HDMI, **not yet** (the worker exits cleanly; the hooks are in the
-header); a `17-oled-*` model → `oled` (subpixel layout from the config's `panel.subpixel`); an FPGA →
+(`display-analysis-common.sh`, shared with the gamut and APL flows). An HDMI monitor is identified by
+its EDID first: a framework config whose `edid` block has the connected monitor's manufacturer and
+product code (and model name) is the model (`lib/edid_identify.py`). Otherwise the resolution and
+pi-config-txt.sh's display type decide (the FPGA panels have no EDID that names them; 2560x1440 +
+`oled-ib-17` is the 17" OLED-IB). The config then decides the type:
+`display_type: hdmi-ddc` → `edgelit` (below); a `17-oled-*` model → `oled` (subpixel layout from the config's `panel.subpixel`); an FPGA →
 `localdimming`, profiled in the local-dimming state read back through `disptool --device=fpganew`
 (dimming off is a localdimming profile with state off, rendered as edge-lit by the generator).
+
+**HDMI monitors (type `edgelit`, e.g. `rtk-14-fhd-touch` on .237).** What is read, over DDC/CI
+(`lib/ddc_state.py`, ddcutil):
+- the VCPs: brightness 0x10, contrast 0x12, colour preset 0x14 (its name is the profile's
+  `picture_mode`), R/G/B gains 0x16/0x18/0x1A, sharpness 0x87 and input 0x60;
+- the EDID synopsis, including what it claims (e.g. PQ, ~417 nits).
+
+These go into the session's `--display-settings` and the profile's `state.display_settings`. The
+prompt names the model, the serial, the EDID serial and these settings.
+
+The serial is the EDID's unless the config gives `hdr_profile.serial_label`. Use that when the EDID
+serial is a stub repeated on every unit (`demoset-1` on the RTK); the profile then says it is a type
+label, and `DISPLAY_SERIAL` in `hdr-profile.conf` overrides it.
+
+What must be set by hand: anything the monitor does not expose as a VCP. This includes picture modes
+beyond the colour preset, dynamic contrast, eco or ambient modes, and HDR mode in its OSD. The
+profile is of the monitor at the settings it has; the prompt says so. Set them before you measure,
+and keep them for playback.
+
+Brightness is VCP 0x10: Full-Brightness writes 100, and Current-Brightness reads 0x10. The runner
+records every VCP before, at the start and at the end (a change is a warning) and writes them back
+on exit.
+
+**als-dimmer:**
+- An HDMI rig (pi-config-txt.sh type `edid`) runs als-dimmer only with an OPT4001 ambient sensor on
+  the head unit (0x44 on i2c-1). It then uses the ddcutil config; without a sensor it runs no daemon
+  (`als-dimmer-select-config.sh`).
+- The default config would drive a phantom I2C dimmer at 0x1d ("Brightness 0 %").
+- Only one process may own the DDC bus, so the runner stops a running als-dimmer for the session and
+  restarts it after.
+
+Tests: gamut, the full-field grey ramp (its code 0 is the full-screen black) and the window sweep
+(flat on a monitor without dynamic contrast; it is kept as the peak table). Warm-up is 20 min by
+time, settled on the i1's white (no bltemp), about 45 min in all.
 
 **The worker** runs `run-display-profile.sh` as root (`systemd-run --unit=display-profile`) with the
 options of the two real profiles: OLED `--display-type=oled --backlight=100 --warmup-min=20`; dimming
 on `--backlight=100 --local-dimming=on --warmup-min=20 --warmup-pattern=grey:124` (tests gamut,
 gamma-window, gamma-window-small, abl, gamma, apl and the in-scene black, a 3x3 checkerboard read
-last at the session's temperature); dimming off `--local-dimming=off`. Progress (warm-up minute,
+last at the session's temperature); dimming off `--local-dimming=off`; an HDMI monitor
+`--display-type=edgelit --backlight=100 --warmup-min=20 --display-settings=<its VCPs>`. Progress (warm-up minute,
 test i of n) goes to the overlay. Then `make-display-profile.py` (found in
 `$MICROPANEL_HOME/share/display-profile/`, `/data/display-profile-tools/` or `HDR_PROFILE_CREATOR`)
 with the image's **player code offset**, and the card through `disp-report-card --display-profile`.
 
-**Constants of the image** (`hdr-profile-common.sh`): the signal path `pi4-dvp-8bit-bt709-limited`
-(dual-video-player, 8-bit BT.709 limited) and its code offset per model, measured with
-sdr-hdr-shootout-demo `tools/player-offset.py` (22 grey windows played in dual-video-player against
-disp-tester's ramp): `14.6-fhd-spartan7` −0.5, `17-oled-ib` −0.68. A model without a value is refused.
-A new dual-video-player build or decode path needs new values.
+**Constants of the image**: the signal path (`pi4-dvp-8bit-bt709-limited`: dual-video-player, 8-bit
+BT.709 limited) and its code offset are data in each model's framework config:
+`hdr_profile.signal_path` and `hdr_profile.player_code_offset`. A new model needs no code change. The
+offsets are measured with sdr-hdr-shootout-demo `tools/player-offset.py` (22 grey windows played in
+dual-video-player against disp-tester's ramp; measure them, do not assume):
+- `14.6-fhd-spartan7` −0.5
+- `17-oled-ib` −0.68
+- `rtk-14-fhd-touch`: see its config.
+
+`PLAYER_CODE_OFFSET` and `HDR_PROFILE_SIGNAL_PATH` in `hdr-profile.conf` override them. A model
+without a value is refused. A new dual-video-player build or decode path needs new values.
 
 **Files** (serial first, as the reports): `/home/pi/display-profiles/<serial>_profile-<date>-<time>.png`
 and `…-data/` with `<model>-<serial>-b<backlight>[-ld<on|off>]-<date>.json`, `session/` (the runner's
@@ -483,7 +526,9 @@ HDR Display Profile, Analyze Color Gamut and Analyze Local-Dimming APL start dis
 `--initial-pattern black` and "Starting..." at the bottom centre, so the first frame is never
 disp-tester's default grey ramp. The gate then shows disp-tester's `sensor-outline`: the i1 Display
 Pro (body 37 x 65 mm, lens 20 mm, cable up) at true size, the active area from the model's framework
-config (`physical.active_*_mm`; the 10 % white box when the config has none). The prompt text sits below
+config (`physical.active_*_mm`). When the config has no size, the gate shows a white box of 10 % of the
+screen area (`box 10`). It is not `whitebox percent 10`: that box is 10 % of the shorter side (108 px
+on 1080p), smaller than the i1's footprint, and read 202 instead of 295 nits. The prompt text sits below
 it (`set-metadata-position bottom-center`). The operator lays the sensor on the drawing. On the OLED-IB
 that put it 0.7 mm from the centre, inside the locator's tolerance with no guidance round. After a
 locator round the gate returns to the outline. While a measurement runs, the status text goes back to

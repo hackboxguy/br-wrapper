@@ -43,9 +43,24 @@ fi
 # One line per display type. Anything not listed -- including the "unknown" the
 # query returns when it cannot tell -- keeps the config it has always used, so
 # adding a display here cannot change what an existing one does.
+#
+# edid: an HDMI monitor that brings its own EDID (no FPGA, no dimmer at 0x1d - the default config
+# would drive a phantom I2C dimmer and report "Brightness 0 %"). Its brightness is the monitor's
+# VCP 0x10 over DDC/CI: with an OPT4001 ambient sensor on the head unit (0x44 on i2c-1) the ddcutil
+# config dims it; without one there is nothing to do, so no daemon runs (it would only hold the DDC
+# bus that the profile runner and ddcutil need). Brightness by hand: ddcutil setvcp 10 <0-100>.
 case "$DISPLAY_TYPE" in
     ots-oled-17) CONFIG="$ALS_ETC/config_ioc_opt5001_tcon_ots17.json" ;;
     oled-ib-17)  CONFIG="$ALS_ETC/config_ioc_opt5001_tcon_oledib17.json" ;;
+    edid)
+        if i2cdetect -y -r 1 0x44 0x44 2>/dev/null | grep -q ' 44'; then
+            CONFIG="$ALS_ETC/config_opti4001_ddcutil.json"
+        else
+            mkdir -p /run/als-dimmer
+            echo "ALS_DIMMER_CONFIG=none" > /run/als-dimmer/env
+            echo "als-dimmer-select-config: display 'edid' (HDMI monitor) without an ambient sensor (no OPT4001 at 0x44 on i2c-1): not running als-dimmer; the monitor's brightness is its VCP 0x10 (ddcutil)"
+            exit 0   # a clean exit: the unit (Restart=on-failure) stays stopped
+        fi ;;
     *)           CONFIG="$DEFAULT_CONFIG" ;;
 esac
 

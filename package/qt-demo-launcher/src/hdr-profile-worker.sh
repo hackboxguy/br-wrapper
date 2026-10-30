@@ -11,6 +11,9 @@
 #       localdimming, dim on  --backlight=BL --local-dimming=on --warmup-min=20 --warmup-pattern=grey:124
 #                             (tests: gamut gamma-window gamma-window-small abl gamma apl in-scene-black)
 #       localdimming, dim off --backlight=BL --local-dimming=off --warmup-min=20
+#       edgelit               --display-type=edgelit --backlight=BL --warmup-min=20
+#                             --display-settings=<the monitor's VCPs, EDID synopsis, notes>
+#                             (an HDMI monitor: brightness = VCP 0x10, tests gamut gamma apl)
 #     progress (warm-up minute, test i of n) on the disp-tester overlay; the gate's stop button cancels
 #     (systemctl stop: the runner's trap restores backlight, local dimming, adaptive LD, als-dimmer);
 #  3. make-display-profile.py on the session: <model>-<serial>-b<BL>[-ld<on|off>]-<date>.json with the
@@ -68,7 +71,9 @@ PNG="$PROFILE_ROOT/$STEM.png"
 SESSION="$DATA/session"
 LD_PART=""
 [ "$HP_TYPE" = localdimming ] && LD_PART="-ld$HP_LD"
-ID="$(echo "$HP_MODEL-${HP_SERIAL:-noserial}-b$BL$LD_PART-$(date +%Y%m%d)" | tr 'A-Z' 'a-z')"
+SERIAL_PART="-${HP_SERIAL:-noserial}"
+[ -n "$HP_SERIAL" ] && [ "$HP_SERIAL" = "$(hp_cfg .hdr_profile.serial_label)" ] && SERIAL_PART=""   # a type label repeats the model
+ID="$(echo "$HP_MODEL$SERIAL_PART-b$BL$LD_PART-$(date +%Y%m%d)" | tr 'A-Z' 'a-z')"
 PROFILE="$DATA/$ID.json"
 mkdir -p "$DATA"
 LOG_FILE="$DATA/hdr-profile.log"
@@ -115,6 +120,9 @@ case "$HP_TYPE" in
     oled)         set -- --display-type=oled --backlight="$BL" --warmup-min=20 ;;
     localdimming) set -- --backlight="$BL" --local-dimming="$HP_LD" --warmup-min=20
                   [ "$HP_LD" = on ] && set -- "$@" --warmup-pattern=grey:124 ;;
+    edgelit)      cp "$HP_SETTINGS" "$DATA/display-settings.json" || fail "no display settings ($HP_SETTINGS)"
+                  set -- --display-type=edgelit --backlight="$BL" --warmup-min=20 \
+                      --display-settings="$DATA/display-settings.json" ;;
     *)            fail "type $HP_TYPE: not yet" ;;
 esac
 [ -n "${SENSOR_LOCATION:-}" ] && [ -f "$SENSOR_LOCATION" ] && set -- "$@" --sensor-location="$SENSOR_LOCATION"

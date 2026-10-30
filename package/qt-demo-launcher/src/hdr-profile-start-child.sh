@@ -12,7 +12,12 @@
 # button cancels the measurement (the runner restores the display state).
 #
 # Option (disp-tester --child-option-name use-current-brightness): off = 100 %, on = the brightness
-# als-dimmer reports at Start (BRIGHTNESS_VALUE for the worker), as Analyze Color Gamut.
+# als-dimmer reports at Start (an HDMI monitor: its VCP 0x10) (BRIGHTNESS_VALUE for the worker), as
+# Analyze Color Gamut.
+#
+# An HDMI monitor (type edgelit, identified by its EDID): the prompt names the model, the serial
+# (a type label when the EDID's is a stub, with the stub) and the VCP settings read over DDC/CI, and
+# says that its picture modes cannot be read - the profile is at its current settings.
 
 set -u
 
@@ -47,11 +52,11 @@ case "$PLACEMENT" in
     sensor-outline*) PLACE_TEXT="Place the sensor on its outline (cable up)" ;;
     *)               PLACE_TEXT="Place the sensor on the white box" ;;
 esac
-log "detected: model=$HP_MODEL type=$HP_TYPE serial=${HP_SERIAL:-none} ld=$HP_LD unsupported='${HP_UNSUPPORTED}'"
+log "detected: model=$HP_MODEL type=$HP_TYPE serial=${HP_SERIAL:-none} ld=$HP_LD unsupported='${HP_UNSUPPORTED}'${HP_VCP_TEXT:+ $HP_VCP_TEXT (EDID serial ${HP_EDID_SERIAL:-none})}"
 
 brightness_text() {
     if [ "$USE_CURRENT_BRIGHTNESS" -eq 1 ]; then
-        level="$(current_brightness || true)"
+        level="$(hp_current_brightness || true)"
         echo "Current-Brightness (${level:+$level%}${level:-unknown})"
     else
         echo "Full-Brightness (100%)"
@@ -65,6 +70,13 @@ prompt_text() {
     fi
     state="local dimming $HP_LD"
     [ "$HP_TYPE" = oled ] && state="OLED, no local dimming"
+    if [ "$HP_TYPE" = edgelit ]; then
+        es=""
+        [ "$HP_SERIAL" = "$HP_EDID_SERIAL" ] || es=" (EDID serial ${HP_EDID_SERIAL:-none})"
+        [ "$(hp_cfg .hdr_profile.serial_is_type_label)" = true ] && es=" (type label; EDID serial ${HP_EDID_SERIAL:-none} is a stub)"
+        printf '%s' "$TITLE\\n$HP_MODEL  ${HP_SERIAL:-no serial}$es\\ntype edgelit (HDMI, DDC/CI)  $HP_VCP_TEXT\\npicture modes are not readable: profiled at these settings\\n$(brightness_text)\\nTakes $HP_EST\\n$PLACE_TEXT\\nand click Start Measurement"
+        return
+    fi
     printf '%s' "$TITLE\\n$HP_MODEL  ${HP_SERIAL:-no serial}\\ntype $HP_TYPE, $state\\n$(brightness_text)\\nTakes $HP_EST\\n$PLACE_TEXT\\nand click Start Measurement"
 }
 
@@ -132,8 +144,8 @@ start_requested() {
         return
     fi
     if [ "$USE_CURRENT_BRIGHTNESS" -eq 1 ]; then
-        level="$(current_brightness)" || {
-            say red "Cannot read the current brightness\\n(als-dimmer not answering)\\nTurn the option off or retry"
+        level="$(hp_current_brightness)" || {
+            say red "Cannot read the current brightness\\n(als-dimmer / DDC/CI not answering)\\nTurn the option off or retry"
             disp_cmd set-child-action-active disable
             return
         }
