@@ -52,6 +52,10 @@ fi
 case "$DISPLAY_TYPE" in
     ots-oled-17) CONFIG="$ALS_ETC/config_ioc_opt5001_tcon_ots17.json" ;;
     oled-ib-17)  CONFIG="$ALS_ETC/config_ioc_opt5001_tcon_oledib17.json" ;;
+    # 3x-qvue: no ambient sensor and no FPGA dimmer at 0x1d -- the default config
+    # would write a phantom dimmer twice a second. Its MCU (0x32) is dimmed by
+    # the qvue output in MANUAL-only mode, driven by the Stream Deck keys.
+    3x-qvue)     CONFIG="$ALS_ETC/config_null_qvue_3x.json" ;;
     edid)
         if i2cdetect -y -r 1 0x44 0x44 2>/dev/null | grep -q ' 44'; then
             CONFIG="$ALS_ETC/config_opti4001_ddcutil.json"
