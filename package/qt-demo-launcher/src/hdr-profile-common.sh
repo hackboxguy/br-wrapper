@@ -125,7 +125,7 @@ hp_detect() {
         # settings, recorded (the VCPs); brightness = VCP 0x10.
         HP_TYPE=edgelit HP_FPGA=no
         HP_SERIAL="${DISPLAY_SERIAL:-$(hp_cfg .hdr_profile.serial_label)}"
-        HP_EST="about 45 minutes (20 min warm-up)"
+        HP_EST="about 70 minutes (20 min warm-up, R/G/B channel sweeps)"
         HP_SETTINGS="$HP_STATE_DIR/display-settings.json"
         mkdir -p "$HP_STATE_DIR" 2>/dev/null
         if ! hp_hdmi_settings "$HP_SETTINGS"; then

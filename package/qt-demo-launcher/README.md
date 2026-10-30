@@ -482,9 +482,14 @@ on exit.
 - Only one process may own the DDC bus, so the runner stops a running als-dimmer for the session and
   restarts it after.
 
-Tests: gamut, the full-field grey ramp (its code 0 is the full-screen black) and the window sweep
-(flat on a monitor without dynamic contrast; it is kept as the peak table). Warm-up is 20 min by
-time, settled on the i1's white (no bltemp), about 45 min in all.
+Tests: gamut, the full-field grey ramp (its code 0 is the full-screen black), the same 33 codes on
+each channel alone (`gamma-r`, `gamma-g`, `gamma-b`: `code,0,0` ..., ~8 min each) and the window
+sweep (flat on a monitor without dynamic contrast; it is kept as the peak table). The channel sweeps
+give the profile its measured per-channel ramps (`tone_response.per_channel.source: measured`,
+anchored to the grey ramp) and its primaries at the drive levels content uses: on the RTK monitor
+blue's chromaticity at code 255 differs from mid codes, and the saturated blues read +5 % without them.
+The runner adds them itself for edgelit. Warm-up is 20 min by time, settled on the i1's white (no
+bltemp), about 70 min in all.
 
 **The worker** runs `run-display-profile.sh` as root (`systemd-run --unit=display-profile`) with the
 options of the two real profiles: OLED `--display-type=oled --backlight=100 --warmup-min=20`; dimming
