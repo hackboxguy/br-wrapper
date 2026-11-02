@@ -45,7 +45,9 @@ public slots:
     void previousImage();
     QString getCurrentImage() const;
     QString listImages() const;
+    Q_INVOKABLE void setDisplayedImage(const QString &filePath);
     Q_INVOKABLE void copyCurrentImageToUsb();
+    Q_INVOKABLE void copyImageToUsb(const QString &imagePath);
 
 signals:
     void picturesDirectoryChanged();
@@ -65,6 +67,10 @@ private:
     int m_currentIndex;
     int m_imageCount;
     QStringList m_imageList;
+    // Path QML is actually showing. The QML FolderListModel refreshes on its
+    // own while m_imageList is a snapshot, so an index into m_imageList can
+    // name a different (e.g. another display's) report than the one on screen.
+    QString m_displayedImage;
     NetworkInterface *m_networkInterface;
     QProcess *m_usbCopyProcess;
     bool m_usbCopyBusy;

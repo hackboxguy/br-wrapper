@@ -12,6 +12,33 @@ ApplicationWindow {
     visibility: ApplicationWindow.FullScreen
 
     property int currentImageIndex: 0
+    // Path of the image on screen; the controller copies this file to USB.
+    // Empty while a "display" request is unresolved, so a copy cannot pick
+    // whatever image sits at the stale index.
+    property string currentImagePath: pendingDisplayPath === "" && folderModel.count > 0
+                                      && currentImageIndex < folderModel.count
+                                      ? folderModel.get(currentImageIndex, "filePath") : ""
+    // A "display" request that arrived before the model listed the file.
+    property string pendingDisplayPath: ""
+
+    onCurrentImagePathChanged: {
+        if (typeof galleryController !== 'undefined') {
+            galleryController.setDisplayedImage(currentImagePath)
+        }
+    }
+
+    function showImagePath(filePath) {
+        for (var i = 0; i < folderModel.count; i++) {
+            if (folderModel.get(i, "filePath") === filePath) {
+                pendingDisplayPath = ""
+                currentImageIndex = i
+                galleryController.setCurrentIndex(i)
+                return true
+            }
+        }
+        pendingDisplayPath = filePath
+        return false
+    }
     property bool uiVisible: true
     property bool isSlideshow: slideshowMode || false
     property bool slideshowPaused: false
@@ -31,6 +58,17 @@ ApplicationWindow {
             // Notify controller of image count changes
             if (typeof galleryController !== 'undefined') {
                 galleryController.setImageCount(count)
+            }
+            if (pendingDisplayPath !== "") {
+                showImagePath(pendingDisplayPath)
+            }
+            if (currentImageIndex >= count && count > 0) {
+                currentImageIndex = count - 1
+            }
+        }
+        onStatusChanged: {
+            if (status === FolderListModel.Ready && pendingDisplayPath !== "") {
+                showImagePath(pendingDisplayPath)
             }
         }
     }
@@ -53,13 +91,8 @@ ApplicationWindow {
         }
 
         function onDisplayImageRequested(filePath) {
-            // Find and display the requested image
-            for (var i = 0; i < folderModel.count; i++) {
-                if (folderModel.get(i, "filePath") === filePath) {
-                    currentImageIndex = i
-                    break
-                }
-            }
+            // Resolved by path; retried once the model lists the file
+            showImagePath(filePath)
         }
 
         function onUsbCopyStatusChanged() {
@@ -442,7 +475,7 @@ ApplicationWindow {
 
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: Qt.quit()
+                    onClicked: quitGallery()
                 }
             }
 
@@ -475,8 +508,7 @@ ApplicationWindow {
                     anchors.fill: parent
                     enabled: !galleryController.usbCopyBusy
                     onClicked: {
-                        galleryController.currentIndex = currentImageIndex
-                        galleryController.copyCurrentImageToUsb()
+                        galleryController.copyImageToUsb(currentImagePath)
                         showUITemporarily()
                     }
                 }
@@ -726,5 +758,17 @@ ApplicationWindow {
         }
     }
 
-    Keys.onEscapePressed: Qt.quit()
+    // Quitting mid-copy would stop the copy script before it syncs and
+    // unmounts the stick, so wait for it to finish.
+    function quitGallery() {
+        if (typeof galleryController !== 'undefined' && galleryController.usbCopyBusy) {
+            usbCopyStatusText = "Copying to USB, please wait..."
+            uiVisible = true
+            usbCopyStatusTimer.restart()
+            return
+        }
+        Qt.quit()
+    }
+
+    Keys.onEscapePressed: quitGallery()
 }

@@ -203,6 +203,17 @@ unmount_usb_stick() {
     return 0
 }
 
+# Interrupted (gallery exit, launcher stop): flush and release the stick
+# instead of leaving it mounted with unwritten data.
+on_signal() {
+    trap - HUP INT TERM
+    sync
+    unmount_usb_stick
+    print_error "USB copy interrupted"
+    exit 1
+}
+trap on_signal HUP INT TERM
+
 main() {
     image_path="${1:-}"
 

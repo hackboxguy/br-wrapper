@@ -24,9 +24,13 @@ GalleryController::~GalleryController()
 {
     if (m_usbCopyProcess) {
         if (m_usbCopyProcess->state() != QProcess::NotRunning) {
-            m_usbCopyProcess->terminate();
-            if (!m_usbCopyProcess->waitForFinished(1000)) {
-                m_usbCopyProcess->kill();
+            // Let the copy finish its sync/unmount; on SIGTERM the script
+            // still syncs and unmounts before exiting.
+            if (!m_usbCopyProcess->waitForFinished(30000)) {
+                m_usbCopyProcess->terminate();
+                if (!m_usbCopyProcess->waitForFinished(10000)) {
+                    m_usbCopyProcess->kill();
+                }
             }
         }
     }
@@ -107,8 +111,19 @@ void GalleryController::previousImage()
     qDebug() << "Previous image requested";
 }
 
+void GalleryController::setDisplayedImage(const QString &filePath)
+{
+    if (m_displayedImage != filePath) {
+        m_displayedImage = filePath;
+        qDebug() << "Displayed image:" << m_displayedImage;
+    }
+}
+
 QString GalleryController::getCurrentImage() const
 {
+    if (!m_displayedImage.isEmpty()) {
+        return m_displayedImage;
+    }
     if (m_imageCount > 0 && m_currentIndex >= 0 && m_currentIndex < m_imageList.size()) {
         return m_imageList[m_currentIndex];
     }
@@ -139,6 +154,11 @@ QString GalleryController::compactProcessOutput(const QString &output) const
 
 void GalleryController::copyCurrentImageToUsb()
 {
+    copyImageToUsb(getCurrentImage());
+}
+
+void GalleryController::copyImageToUsb(const QString &imagePath)
+{
     if (m_usbCopyBusy) {
         setUsbCopyStatus("Copy already running");
         return;
@@ -146,7 +166,7 @@ void GalleryController::copyCurrentImageToUsb()
 
     setUsbCopyStatus("");
 
-    QString currentImage = getCurrentImage();
+    const QString currentImage = imagePath;
     if (currentImage.isEmpty()) {
         setUsbCopyStatus("No image selected");
         return;
@@ -298,25 +318,26 @@ void GalleryController::handleNetworkCommand(const QString &command)
             // Relative filename - search in current directory
             fullPath = QDir(m_picturesDirectory).filePath(filePath);
         }
+        // Same spelling as FolderListModel's filePath, which QML compares to
+        fullPath = QDir::cleanPath(fullPath);
 
-        // Find the image in our list
-        int index = m_imageList.indexOf(fullPath);
-        if (index >= 0) {
-            setCurrentIndex(index);
-            emit displayImageRequested(fullPath);
-            m_networkInterface->sendResponse("OK");
-        } else {
-            // Image not in list - try to add it
-            if (QFileInfo::exists(fullPath)) {
-                m_imageList.append(fullPath);
-                setCurrentIndex(m_imageList.size() - 1);
-                setImageCount(m_imageList.size());
-                emit displayImageRequested(fullPath);
-                m_networkInterface->sendResponse("OK");
-            } else {
-                m_networkInterface->sendResponse("ERROR: Image not found");
-            }
+        if (!QFileInfo(fullPath).isFile()) {
+            m_networkInterface->sendResponse("ERROR: Image not found");
+            return;
         }
+
+        // QML resolves the path in its own FolderListModel and reports the
+        // index back; an index computed from m_imageList could point at a
+        // different file. A file outside the current directory can only be
+        // shown by switching the gallery to its directory.
+        const QString imageDir = QFileInfo(fullPath).absolutePath();
+        if (QDir(imageDir) != QDir(m_picturesDirectory)) {
+            setPicturesDirectory(imageDir);
+        } else if (!m_imageList.contains(fullPath)) {
+            updateImageList();
+        }
+        emit displayImageRequested(fullPath);
+        m_networkInterface->sendResponse("OK");
     } else if (cmd == "get-image") {
         QString currentImage = getCurrentImage();
         if (currentImage.isEmpty()) {
