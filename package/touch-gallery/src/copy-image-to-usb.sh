@@ -7,6 +7,7 @@ USB_MOUNT_POINT="${USB_MOUNT_POINT:-/tmp/micropanel-usb}"
 USB_REPORT_DIR="${USB_REPORT_DIR:-display-reports}"
 USB_MOUNTED_BY_SCRIPT=0
 USB_MOUNT_PATH=""
+USB_MOUNT_ERROR="Failed to mount USB"
 
 SUDO_CMD=""
 if [ "$(id -u)" -ne 0 ]; then
@@ -162,6 +163,8 @@ mount_usb_stick() {
     # is removed and reinserted.
     if is_device_mounted "$device"; then
         if ! unmount_if_mounted "$device"; then
+            # e.g. a file browser or media app still has the stick open
+            USB_MOUNT_ERROR="USB in use by another app. Close it and retry"
             return 1
         fi
     fi
@@ -233,7 +236,7 @@ main() {
     fi
 
     if ! mount_usb_stick "$usb_device"; then
-        print_error "Failed to mount USB"
+        print_error "$USB_MOUNT_ERROR"
         return 1
     fi
     mount_point="$USB_MOUNT_PATH"

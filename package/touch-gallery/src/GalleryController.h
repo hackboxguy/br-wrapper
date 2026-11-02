@@ -29,10 +29,12 @@ public:
     void setPicturesDirectory(const QString &directory);
 
     int currentIndex() const { return m_currentIndex; }
-    void setCurrentIndex(int index);
+    // Invokable: main.qml calls these as functions; without it every call
+    // threw a TypeError and the controller's index/count went stale.
+    Q_INVOKABLE void setCurrentIndex(int index);
 
     int imageCount() const { return m_imageCount; }
-    void setImageCount(int count);
+    Q_INVOKABLE void setImageCount(int count);
 
     bool usbCopyBusy() const { return m_usbCopyBusy; }
     QString usbCopyStatus() const { return m_usbCopyStatus; }

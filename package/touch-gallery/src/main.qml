@@ -20,24 +20,57 @@ ApplicationWindow {
                                       ? folderModel.get(currentImageIndex, "filePath") : ""
     // A "display" request that arrived before the model listed the file.
     property string pendingDisplayPath: ""
+    // The file the operator is looking at. FolderListModel is index-based, so
+    // a report added or removed while the gallery is open would otherwise put
+    // a different report under the same index without anyone noticing.
+    property string shownPath: ""
+    property int knownCount: 0
 
     onCurrentImagePathChanged: {
         if (typeof galleryController !== 'undefined') {
             galleryController.setDisplayedImage(currentImagePath)
         }
+        // Navigation moves shownPath; a shift caused by the model resizing
+        // (count not yet seen by onCountChanged) is undone there instead.
+        if (currentImagePath !== "" && folderModel.count === knownCount) {
+            shownPath = currentImagePath
+        }
+    }
+
+    function findImage(filePath) {
+        for (var i = 0; i < folderModel.count; i++) {
+            if (folderModel.get(i, "filePath") === filePath) {
+                return i
+            }
+        }
+        return -1
+    }
+
+    function selectIndex(i) {
+        currentImageIndex = i
+        if (typeof galleryController !== 'undefined') {
+            galleryController.setCurrentIndex(i)
+        }
     }
 
     function showImagePath(filePath) {
-        for (var i = 0; i < folderModel.count; i++) {
-            if (folderModel.get(i, "filePath") === filePath) {
-                pendingDisplayPath = ""
-                currentImageIndex = i
-                galleryController.setCurrentIndex(i)
-                return true
-            }
+        var i = findImage(filePath)
+        if (i >= 0) {
+            pendingDisplayPath = ""
+            shownPath = filePath
+            selectIndex(i)
+            return true
         }
         pendingDisplayPath = filePath
+        pendingDisplayTimer.restart()
         return false
+    }
+
+    // A requested file that never shows up must not block copying forever.
+    Timer {
+        id: pendingDisplayTimer
+        interval: 5000
+        onTriggered: pendingDisplayPath = ""
     }
     property bool uiVisible: true
     property bool isSlideshow: slideshowMode || false
@@ -55,15 +88,26 @@ ApplicationWindow {
         sortField: FolderListModel.Name
 
         onCountChanged: {
+            knownCount = count
             // Notify controller of image count changes
             if (typeof galleryController !== 'undefined') {
                 galleryController.setImageCount(count)
             }
             if (pendingDisplayPath !== "") {
                 showImagePath(pendingDisplayPath)
+                return
             }
-            if (currentImageIndex >= count && count > 0) {
-                currentImageIndex = count - 1
+            // Stay on the same file when reports are added or removed
+            var i = shownPath !== "" ? findImage(shownPath) : -1
+            if (i >= 0) {
+                if (i !== currentImageIndex) {
+                    selectIndex(i)
+                }
+            } else if (currentImageIndex >= count && count > 0) {
+                selectIndex(count - 1)
+            }
+            if (count > 0 && currentImageIndex < count) {
+                shownPath = folderModel.get(currentImageIndex, "filePath")
             }
         }
         onStatusChanged: {
