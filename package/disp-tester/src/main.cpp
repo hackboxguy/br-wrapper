@@ -233,6 +233,12 @@ int main(int argc, char *argv[])
                                             "pattern");
     parser.addOption(initialPatternOption);
 
+    QCommandLineOption panelSizeOption(QStringList() << "panel-size-mm",
+                                       "The panel's active area in mm, e.g. 345.3x194.3: the default size of "
+                                       "sensor-outline and whiteboxmm (true size when navigated to).",
+                                       "WxH");
+    parser.addOption(panelSizeOption);
+
     QCommandLineOption initialMetadataStatusOption(QStringList() << "initial-metadata-status",
                                                    "Initial metadata visibility: autohide, enable, or disable.",
                                                    "status");
@@ -306,6 +312,16 @@ int main(int argc, char *argv[])
     patternController.setNavigationHelpVisible(!parser.isSet(hideNavigationHelpOption));
     patternController.setUserInteractionEnabled(!parser.isSet(disableUserInteractionOption));
     patternController.setExitDisabledWhileChildActionActive(parser.isSet(disableExitWhileChildActiveOption));
+
+    if (parser.isSet(panelSizeOption)) {
+        const QStringList size = parser.value(panelSizeOption).toLower().split('x');
+        bool wOk = false, hOk = false;
+        const double w = size.size() == 2 ? size[0].toDouble(&wOk) : 0;
+        const double h = size.size() == 2 ? size[1].toDouble(&hOk) : 0;
+        if (!wOk || !hOk || !patternController.setPanelSizeMM(w, h)) {
+            qWarning() << "Invalid panel size" << parser.value(panelSizeOption) << "- expected WxH in mm (10-2000)";
+        }
+    }
 
     QString initialPattern = parser.value(initialPatternOption).trimmed().toLower();
     if (!initialPattern.isEmpty() && !patternController.applyPatternSpec(initialPattern)) {

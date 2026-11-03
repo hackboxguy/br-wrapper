@@ -284,7 +284,13 @@ config has no size.
 ./launcher-client --srv=127.0.0.1:8082 --command=pattern \
   --command-arg="sensor-outline width-mm 323 height-mm 186 at 960 540" # lens on pixel 960,540
 disp-tester --initial-pattern "sensor-outline width-mm 376 height-mm 212"
+disp-tester --panel-size-mm 376x212   # default size: in the swipe list, and "pattern sensor-outline" alone
 ```
+
+- The launcher's Pattern Generator tile starts disp-tester through `pattern-generator.sh` with
+  `--panel-size-mm` from the framework config: the active area, else `physical.diagonal_inch` and the
+  framebuffer resolution (square pixels; the 15.6" 0OD: 345.4 x 194.3 mm). The outline is the last
+  pattern in the swipe list; without a size it shows a hint instead of a wrongly sized drawing.
 
 - Drawing: body 37 x 65 mm with flat ends (60 % of the width), full width around the lens, a 30 mm
   bezel ring, the 20 mm lens with a crosshair, the cable boss at the top: the sensor as it hangs on a
@@ -295,3 +301,27 @@ disp-tester --initial-pattern "sensor-outline width-mm 376 height-mm 212"
 - The lens sits 32.1 mm from the non-cable end: the sensor locator found the i1's measuring aperture
   there with the body on the outline (OLED-IB: placed on it, 0.7 mm / 4.8 px from the centre).
 - `get-pattern` returns `sensor-outline`; `get sensor-outline width-mm|height-mm|at` the parameters.
+
+## `moving-whitebox` — a moving white box (local-dimming halo tracking)
+
+A square box on black that sweeps across the panel at a steady speed, so the backlight's response
+shows: the halo trailing or leading the box, zones stepping on and off at their boundaries. In the
+swipe list after `whiteboxmm`; defaults 20 mm box, 34 mm/s, horizontal along the middle row.
+
+```bash
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox"
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox size 20"       # mm
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox speed 100"     # mm/s, 0 = still
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox direction diagonal"
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox level 128"     # grey 0-255
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox pause"         # / resume
+./launcher-client --srv=127.0.0.1:8082 --command=get-param --command-arg="moving-whitebox speed"
+```
+
+- One parameter per command; the settings persist while disp-tester runs.
+- Size and speed in mm: px per mm per axis from `--panel-size-mm` (the Pattern Generator tile passes
+  it), so the box is square and the speed the same on every panel; without it 6 px/mm.
+- `horizontal` sweeps the middle row edge to edge and back, `vertical` the middle column, `diagonal`
+  bounces off all four edges at the given speed along the path. Changing size, speed or direction
+  restarts the sweep from the left/top edge.
+- Moved by the Qt animation clock (vsync-locked), not a timer: no frame-rate jitter in the motion.

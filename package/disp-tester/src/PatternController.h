@@ -100,6 +100,7 @@ public slots:
     void setBox(double areaPct, int sidePx, int cx, int cy, const QColor &box, const QColor &bg);
     void setChecker(int cols, int rows, const QColor &a, const QColor &b);
     void setSensorOutline(double widthMM, double heightMM, int cx, int cy);
+    bool setPanelSizeMM(double widthMM, double heightMM);   // --panel-size-mm: default size of the mm patterns
     QString applyPatternCommand(const QStringList &parts);   // "pattern ..." -> "OK" / "ERROR: ..."
     bool applyPatternSpec(const QString &spec);             // "<name> [parameters]", e.g. --initial-pattern
     QString getResolution();

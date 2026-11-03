@@ -14,5 +14,6 @@
         <file>patterns/Checker.qml</file>
         <file>patterns/EdgeRuler.qml</file>
         <file>patterns/SensorOutline.qml</file>
+        <file>patterns/MovingWhiteBox.qml</file>
     </qresource>
 </RCC>

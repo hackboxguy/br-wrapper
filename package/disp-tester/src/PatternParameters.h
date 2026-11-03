@@ -64,6 +64,17 @@ struct PatternParameters {
     double outlineWidthMM = 0.0, outlineHeightMM = 0.0;
     int outlineCx = -1, outlineCy = -1;
 
+    // Moving white box ("pattern moving-whitebox size <mm>|speed <mm/s>|direction <d>|level <0-255>|
+    // pause|resume"): local-dimming halo tracking, a square box on black sweeping across the zones
+    double movingBoxSizeMM = 20.0;           // side in mm (5-300)
+    double movingBoxSpeedMM = 34.0;          // mm per second (0 = still, up to 1000)
+    QString movingBoxDirection = "horizontal"; // horizontal/vertical/diagonal (bouncing off the edges)
+    int movingBoxLevel = 255;                // grey level of the box
+    bool movingBoxPaused = false;
+
+    // The panel's active area (--panel-size-mm), 0 = unknown: px per mm of the mm-sized patterns
+    double panelWidthMM = 0.0, panelHeightMM = 0.0;
+
     QVariantMap toVariantMap() const {
         QVariantMap map;
         map["ballSize"] = ballSize;
@@ -110,6 +121,13 @@ struct PatternParameters {
         map["outlineHeightMM"] = outlineHeightMM;
         map["outlineCx"] = outlineCx;
         map["outlineCy"] = outlineCy;
+        map["movingBoxSizeMM"] = movingBoxSizeMM;
+        map["movingBoxSpeedMM"] = movingBoxSpeedMM;
+        map["movingBoxDirection"] = movingBoxDirection;
+        map["movingBoxLevel"] = movingBoxLevel;
+        map["movingBoxPaused"] = movingBoxPaused;
+        map["panelWidthMM"] = panelWidthMM;
+        map["panelHeightMM"] = panelHeightMM;
         return map;
     }
 };

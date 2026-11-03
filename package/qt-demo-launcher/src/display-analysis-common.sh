@@ -211,16 +211,37 @@ da_alert() {
     da_send set-metadata-text "disp-tester: $1\\nExit and start again" >/dev/null
 }
 
-# sensor_outline_spec <model>: "sensor-outline width-mm W height-mm H" from the framework config's
-# physical.active_width_mm / active_height_mm (disp-tester draws the i1 Display Pro at true size);
-# fails when the config has no size
+# panel_size_mm <model>: "W H", the panel's active area in mm: the framework config's
+# physical.active_width_mm / active_height_mm; else physical.diagonal_inch split by the framebuffer
+# resolution, square pixels assumed (15.6" 2560x1440: 345.4 x 194.3 mm, within ~1 mm of a datasheet).
+# No diagonal fallback with a config "frame" block: the framebuffer then spans more than this panel.
+# Fails when neither is known.
+panel_size_mm() {
+    ps_cfg="$FRAMEWORK_DIR/config/$1.json"
+    [ -f "$ps_cfg" ] && command -v jq >/dev/null 2>&1 || return 1
+    ps_w="$(jq -r '.physical.active_width_mm // empty' "$ps_cfg" 2>/dev/null)"
+    ps_h="$(jq -r '.physical.active_height_mm // empty' "$ps_cfg" 2>/dev/null)"
+    if [ -n "$ps_w" ] && [ -n "$ps_h" ]; then
+        echo "$ps_w $ps_h"
+        return 0
+    fi
+    ps_d="$(jq -r 'if .frame == null then .physical.diagonal_inch // empty else empty end' "$ps_cfg" 2>/dev/null)"
+    [ -n "$ps_d" ] || return 1
+    ps_res="$(detect_display_resolution)" || return 1
+    echo "$ps_res" | awk -F x -v d="$ps_d" '
+        $1 > 0 && $2 > 0 && d > 0 {
+            px = sqrt($1 * $1 + $2 * $2)
+            printf "%.1f %.1f\n", d * 25.4 * $1 / px, d * 25.4 * $2 / px
+            ok = 1
+        }
+        END { exit ok ? 0 : 1 }'
+}
+
+# sensor_outline_spec <model>: "sensor-outline width-mm W height-mm H" from panel_size_mm (disp-tester
+# draws the i1 Display Pro at true size); fails when the panel size is unknown
 sensor_outline_spec() {
-    so_cfg="$FRAMEWORK_DIR/config/$1.json"
-    [ -f "$so_cfg" ] && command -v jq >/dev/null 2>&1 || return 1
-    so_w="$(jq -r '.physical.active_width_mm // empty' "$so_cfg" 2>/dev/null)"
-    so_h="$(jq -r '.physical.active_height_mm // empty' "$so_cfg" 2>/dev/null)"
-    [ -n "$so_w" ] && [ -n "$so_h" ] || return 1
-    echo "sensor-outline width-mm $so_w height-mm $so_h"
+    so_size="$(panel_size_mm "$1")" || return 1
+    echo "sensor-outline width-mm ${so_size% *} height-mm ${so_size#* }"
 }
 
 # placement_pattern <model>: the sensor outline, or a white box of 10 % of the screen area when the

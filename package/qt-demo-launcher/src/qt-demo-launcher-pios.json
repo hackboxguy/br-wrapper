@@ -560,7 +560,7 @@
         "text": "Pattern Generator",
         "subtitle": "Solid, ramp & geometry patterns",
         "icon": "/usr/share/qt-apps/icons/pattern-generator.svg",
-        "program": "/usr/bin/disp-tester",
+        "program": "/usr/share/qt-apps/pattern-generator.sh",
         "arguments": [],
         "working_directory": "/tmp",
         "position": {

@@ -48,7 +48,7 @@ PatternController::PatternController(QObject *parent)
     m_patterns << "grayscale-ramp" << "ansi-checker" << "colorbar" << "white" << "black"
                << "red" << "green" << "blue" << "cyan" << "magenta" << "yellow"
                << "zone-boundary-grid" << "blooming-detection" << "cross-dimming" << "whitebox"
-               << "whiteboxmm" << "edge-ruler";
+               << "whiteboxmm" << "moving-whitebox" << "edge-ruler" << "sensor-outline";
     m_currentPattern = m_patterns[0];
 }
 
@@ -491,12 +491,34 @@ void PatternController::setSensorOutline(double widthMM, double heightMM, int cx
     m_parameters.outlineCy = cy;
     m_showCustomColor = false;
     m_currentPattern = "sensor-outline";
+    m_currentIndex = m_patterns.indexOf(m_currentPattern);   // a swipe goes on from here
 
     qDebug() << "Sensor outline set: active area" << widthMM << "x" << heightMM << "mm, lens at" << cx << cy;
 
     emit patternParamsChanged();
     emit showCustomColorChanged();
     emit currentPatternChanged();
+}
+
+// The panel's active area (--panel-size-mm): the default size of the mm patterns, so sensor-outline,
+// whiteboxmm and moving-whitebox are drawn at true size when navigated to (sensor-outline also when
+// sent without width-mm/height-mm).
+bool PatternController::setPanelSizeMM(double widthMM, double heightMM)
+{
+    if (widthMM < 10 || widthMM > 2000 || heightMM < 10 || heightMM > 2000) {
+        return false;
+    }
+    m_parameters.panelWidthMM = widthMM;
+    m_parameters.panelHeightMM = heightMM;
+    m_parameters.outlineWidthMM = widthMM;
+    m_parameters.outlineHeightMM = heightMM;
+    m_parameters.whiteboxmmPhysWidthMM = widthMM;
+    m_parameters.whiteboxmmPhysHeightMM = heightMM;
+
+    qDebug() << "Panel size:" << widthMM << "x" << heightMM << "mm";
+
+    emit patternParamsChanged();
+    return true;
 }
 
 void PatternController::setChecker(int cols, int rows, const QColor &a, const QColor &b)
@@ -792,8 +814,9 @@ QString PatternController::applyPatternCommand(const QStringList &parts)
             return "ERROR: usage: pattern checker <cols 1-64> <rows 1-64> [<r> <g> <b> <r> <g> <b>]";
         }
     } else if (pattern == "sensor-outline") {
-        // sensor-outline width-mm <W> height-mm <H> [at <x> <y>]: the i1 Display Pro's outline at true
-        // size (W x H = the panel's active area, mm -> px per axis as whiteboxmm), lens centre at x,y
+        // sensor-outline [width-mm <W> height-mm <H>] [at <x> <y>]: the i1 Display Pro's outline at true
+        // size (W x H = the panel's active area, mm -> px per axis as whiteboxmm; default --panel-size-mm),
+        // lens centre at x,y
         double w = 0, h = 0;
         int cx = -1, cy = -1;
         bool ok = true;
@@ -816,8 +839,13 @@ QString PatternController::applyPatternCommand(const QStringList &parts)
                 ok = false;
             }
         }
+        if (w <= 0 && h <= 0) {
+            w = m_parameters.panelWidthMM;
+            h = m_parameters.panelHeightMM;
+        }
         if (!ok || w <= 0 || h <= 0) {
-            return "ERROR: usage: pattern sensor-outline width-mm <W> height-mm <H> [at <x> <y>]";
+            return "ERROR: usage: pattern sensor-outline width-mm <W> height-mm <H> [at <x> <y>]"
+                   " (width-mm/height-mm optional with --panel-size-mm)";
         }
         setSensorOutline(w, h, cx, cy);
         return "OK";
@@ -1070,6 +1098,13 @@ void PatternController::updatePattern(const QString &pattern)
 
 bool PatternController::setPatternParameter(const QString &pattern, const QString &param, const QStringList &values)
 {
+    if (pattern == "moving-whitebox" && (param == "pause" || param == "resume")) {
+        m_parameters.movingBoxPaused = (param == "pause");
+        emit patternParamsChanged();
+        qDebug() << "Parameter updated:" << pattern << param;
+        return true;
+    }
+
     if (values.isEmpty()) return false;
 
     bool changed = false;
@@ -1101,6 +1136,25 @@ bool PatternController::setPatternParameter(const QString &pattern, const QStrin
         } else if (param == "resume") {
             m_parameters.ballPaused = false;
             changed = true;
+        }
+    } else if (pattern == "moving-whitebox") {
+        bool ok = false;
+        const double v = values[0].toDouble(&ok);
+        if (param == "size" && ok && v >= 5 && v <= 300) {
+            m_parameters.movingBoxSizeMM = v;
+            changed = true;
+        } else if (param == "speed" && ok && v >= 0 && v <= 1000) {
+            m_parameters.movingBoxSpeedMM = v;
+            changed = true;
+        } else if (param == "level" && ok && v >= 0 && v <= 255 && v == int(v)) {
+            m_parameters.movingBoxLevel = int(v);
+            changed = true;
+        } else if (param == "direction") {
+            QString dir = values[0].toLower();
+            if (dir == "horizontal" || dir == "vertical" || dir == "diagonal") {
+                m_parameters.movingBoxDirection = dir;
+                changed = true;
+            }
         }
     } else if (pattern == "starfield") {
         if (param == "density" && !values[0].isEmpty()) {
@@ -1252,6 +1306,12 @@ QString PatternController::getPatternParameter(const QString &pattern, const QSt
         if (param == "speed") return QString::number(m_parameters.ballSpeed);
         if (param == "direction") return m_parameters.ballDirection;
         if (param == "paused") return m_parameters.ballPaused ? "true" : "false";
+    } else if (pattern == "moving-whitebox") {
+        if (param == "size") return QString::number(m_parameters.movingBoxSizeMM);
+        if (param == "speed") return QString::number(m_parameters.movingBoxSpeedMM);
+        if (param == "direction") return m_parameters.movingBoxDirection;
+        if (param == "level") return QString::number(m_parameters.movingBoxLevel);
+        if (param == "paused") return m_parameters.movingBoxPaused ? "true" : "false";
     } else if (pattern == "starfield") {
         if (param == "density") return QString::number(m_parameters.starfieldDensity);
         if (param == "seed") return QString::number(m_parameters.starfieldSeed);

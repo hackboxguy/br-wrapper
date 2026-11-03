@@ -80,6 +80,8 @@ Window {
                     return "qrc:/patterns/Box.qml"
                 case "checker":
                     return "qrc:/patterns/Checker.qml"
+                case "moving-whitebox":
+                    return "qrc:/patterns/MovingWhiteBox.qml"
                 case "edge-ruler":
                     return "qrc:/patterns/EdgeRuler.qml"
                 case "sensor-outline":
@@ -176,10 +178,8 @@ Window {
             Text {
                 anchors.centerIn: parent
                 text: {
-                    var patterns = ["grayscale-ramp", "ansi-checker", "colorbar","white", "black",
-                                   "red", "green", "blue", "cyan", "magenta", "yellow",
-                                   "zone-boundary-grid", "blooming-detection", "cross-dimming", "whitebox",
-                                   "whiteboxmm", "edge-ruler"];
+                    // the controller's navigation list (m_patterns), not a copy that can drift
+                    var patterns = patternController.listPatterns().split(",");
                     var currentIndex = patterns.indexOf(patternController.currentPattern) + 1;
                     var totalPatterns = patterns.length;
                     return currentIndex + "/" + totalPatterns;

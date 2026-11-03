@@ -2,7 +2,7 @@ import QtQuick 2.12
 
 // The i1 Display Pro's outline at true size, for placing the sensor before a measurement: the
 // operator lays the sensor on the drawing instead of guessing the centre of a white box.
-// Network: pattern sensor-outline width-mm <W> height-mm <H> [at <x> <y>]
+// Network: pattern sensor-outline [width-mm <W> height-mm <H>] [at <x> <y>] (default: --panel-size-mm)
 //   W x H = the panel's active area in mm (the framework config's physical.active_*_mm); px per mm per
 //   axis as whiteboxmm, so the drawing is the sensor's size on any panel and resolution. The lens is
 //   centred on the screen centre (or pixel x,y).
@@ -104,6 +104,7 @@ PatternBase {
         visible: !valid
         color: "#808080"
         font.pixelSize: 24
-        text: "sensor-outline: set width-mm and height-mm"
+        horizontalAlignment: Text.AlignHCenter
+        text: "sensor-outline: panel size unknown\nset width-mm and height-mm (or disp-tester --panel-size-mm)"
     }
 }
