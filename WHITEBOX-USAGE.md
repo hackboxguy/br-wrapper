@@ -1,0 +1,327 @@
+# WhiteBox Pattern - Usage Guide
+
+The whitebox pattern supports three sizing modes for flexible colorimeter measurements across different display sizes.
+
+## Command Syntax
+
+```bash
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="MODE"
+```
+
+## Sizing Modes
+
+### 1. Percent Mode (Default)
+Box size as percentage of smaller screen dimension (1-50%).
+
+**Syntax:**
+```bash
+--command-arg="whitebox percent VALUE"
+--command-arg="whitebox size VALUE"      # Alias for backward compatibility
+```
+
+**Examples:**
+```bash
+# 5% box (very small)
+--command-arg="whitebox percent 5"
+
+# 10% box (default)
+--command-arg="whitebox"
+--command-arg="whitebox percent 10"
+
+# 25% box (larger)
+--command-arg="whitebox size 25"
+```
+
+**Use case:** Quick visual tests, consistent relative coverage across displays
+
+---
+
+### 2. Pixels Mode
+Absolute pixel size (1-2000 pixels square).
+
+**Syntax:**
+```bash
+--command-arg="whitebox pixels VALUE"
+```
+
+**Examples:**
+```bash
+# 100×100 pixel box
+--command-arg="whitebox pixels 100"
+
+# 200×200 pixel box
+--command-arg="whitebox pixels 200"
+
+# 500×500 pixel box
+--command-arg="whitebox pixels 500"
+```
+
+**Use case:** When you know exact pixel requirements for your display
+
+---
+
+### 3. Millimeter Mode
+Physical size in millimeters with display diagonal specification.
+
+**Syntax:**
+```bash
+--command-arg="whitebox mm SIZE diagonal-inch DIAGONAL"
+```
+
+**Examples:**
+```bash
+# 50mm × 50mm box on 15.6" display
+--command-arg="whitebox mm 50 diagonal-inch 15.6"
+
+# 30mm × 30mm box on 27" display
+--command-arg="whitebox mm 30 diagonal-inch 27"
+
+# 100mm × 100mm box on 35.6" display
+--command-arg="whitebox mm 100 diagonal-inch 35.6"
+```
+
+**Use case:** Professional colorimeter measurements requiring consistent physical size
+
+---
+
+---
+
+## `whiteboxmm` — Absolute Physical Size (separate pattern)
+
+A dedicated pattern for accurate physical measurements. Unlike `whitebox mm`
+(which derives physical size from a diagonal and assumes square pixels), this
+takes the **active-area width and height in mm directly** from the panel
+datasheet and computes pixels-per-mm independently per axis — so the box is
+physically square even on non-square-pixel panels.
+
+**Syntax:**
+```bash
+--command-arg="whiteboxmm SIZE_MM width-mm WIDTH_MM height-mm HEIGHT_MM [verbose]"
+# optional leading "size" keyword is also accepted:
+--command-arg="whiteboxmm size SIZE_MM width-mm WIDTH_MM height-mm HEIGHT_MM [verbose]"
+```
+
+`SIZE_MM` (the box side length) is **required** — a command with only
+`width-mm`/`height-mm` and no size is rejected.
+
+**Example — 50 mm box on a 12.3" 1920×720 panel (active area ≈ 292 × 109.5 mm):**
+```bash
+./launcher-client --srv=127.0.0.1:8082 --command=pattern \
+  --command-arg="whiteboxmm 50 width-mm 292 height-mm 109.5"
+```
+
+**Verbose readout.** By default only the white box is drawn (nothing else is
+lit, ideal for measurement). Add the optional `verbose` argument (it may appear
+anywhere in the command) to show a dim top-left readout of the requested mm,
+the resulting pixel dimensions, and the per-axis px/mm — handy for confirming
+the size without a ruler:
+```bash
+./launcher-client --srv=127.0.0.1:8082 --command=pattern \
+  --command-arg="whiteboxmm 50 width-mm 292 height-mm 109.5 verbose"
+```
+Re-sending the command without `verbose` turns the readout back off.
+
+**Validation limits:** SIZE_MM 1–500, width-mm / height-mm 10–2000, and
+SIZE_MM must not exceed either physical dimension. Out-of-range input returns
+`ERROR: Invalid parameter` (the legacy `whitebox` command silently ignores bad
+values while still replying `OK`).
+
+**Read back the applied values:**
+```bash
+--command=get --command-arg="whiteboxmm size"
+--command=get --command-arg="whiteboxmm width-mm"
+--command=get --command-arg="whiteboxmm height-mm"
+--command=get --command-arg="whiteboxmm verbose"
+```
+
+The existing `whitebox` command (percent / pixels / mm modes) is unchanged.
+
+---
+
+## Display Size Reference
+
+Physical box sizes for common configurations:
+
+### 50mm × 50mm Box Examples
+
+| Display Size | Resolution | Command |
+|--------------|------------|---------|
+| 10.1" | 1920×1200 | `whitebox mm 50 diagonal-inch 10.1` |
+| 12.3" | 1920×1080 | `whitebox mm 50 diagonal-inch 12.3` |
+| 14.6" | 1920×1080 | `whitebox mm 50 diagonal-inch 14.6` |
+| 15.6" | 1920×1080 | `whitebox mm 50 diagonal-inch 15.6` |
+| 17.3" | 1920×1080 | `whitebox mm 50 diagonal-inch 17.3` |
+| 27.0" | 2560×1440 | `whitebox mm 50 diagonal-inch 27` |
+| 35.6" | 3840×2160 | `whitebox mm 50 diagonal-inch 35.6` |
+
+### Calculated Physical Sizes
+
+For 10% box (percent mode) on your displays:
+
+| Display | Resolution | 10% Box Pixels | Approx Physical Size |
+|---------|------------|----------------|---------------------|
+| 10.1" 16:10 | 1920×1200 | 192×192 | ~42mm × 42mm |
+| 12.3" 16:9  | 1920×1080 | 108×108 | ~30mm × 30mm |
+| 15.6" 16:9  | 1920×1080 | 108×108 | ~38mm × 38mm |
+| 27.0" 16:9  | 2560×1440 | 144×144 | ~65mm × 65mm |
+| 35.6" 16:9  | 3840×2160 | 216×216 | ~87mm × 87mm |
+
+---
+
+## Complete Command Examples
+
+### Testing 15.6" Display with Multiple Sizes
+
+```bash
+# Start pattern-generator app first
+./launcher-client --srv=127.0.0.1:8081 --command=start-app --command-arg=pattern-generator
+sleep 2
+
+# Test different sizes
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="whitebox mm 30 diagonal-inch 15.6"
+sleep 3
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="whitebox mm 50 diagonal-inch 15.6"
+sleep 3
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="whitebox mm 100 diagonal-inch 15.6"
+```
+
+### Switching Between Modes
+
+```bash
+# Start with percent mode
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="whitebox percent 10"
+
+# Switch to pixels mode
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="whitebox pixels 150"
+
+# Switch to mm mode
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="whitebox mm 50 diagonal-inch 15.6"
+
+# Back to percent mode
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="whitebox size 15"
+```
+
+---
+
+## Technical Details
+
+### Physical Size Calculation
+
+When using `mm` mode with `diagonal-inch`, the system:
+
+1. Calculates aspect ratio from screen resolution
+2. Determines physical width/height from diagonal using Pythagorean theorem
+3. Converts inches to millimeters (1 inch = 25.4mm)
+4. Calculates pixels-per-mm ratio
+5. Converts requested mm size to pixels
+
+**Formula:**
+```
+height_inches = diagonal_inches / sqrt(aspect² + 1)
+width_inches = height_inches × aspect
+pixels_per_mm = screen_height_pixels / (height_inches × 25.4)
+box_size_pixels = box_size_mm × pixels_per_mm
+```
+
+### Crosshair Indicator
+
+A dim white crosshair (opacity 0.05) appears when box size < 200 pixels to help with precise positioning for small boxes.
+
+### Validation Limits
+
+- **Percent mode:** 1-50%
+- **Pixels mode:** 1-2000 pixels
+- **MM mode:** 1-500mm
+- **Diagonal:** 5-100 inches
+
+---
+
+## Query Current Settings
+
+```bash
+# Get current mode
+./launcher-client --srv=127.0.0.1:8082 --command=get --command-arg="whitebox mode"
+
+# Get current values
+./launcher-client --srv=127.0.0.1:8082 --command=get --command-arg="whitebox size"
+./launcher-client --srv=127.0.0.1:8082 --command=get --command-arg="whitebox pixels"
+./launcher-client --srv=127.0.0.1:8082 --command=get --command-arg="whitebox mm"
+./launcher-client --srv=127.0.0.1:8082 --command=get --command-arg="whitebox diagonal-inch"
+```
+
+---
+
+## Troubleshooting
+
+**Box appears incorrect size in mm mode:**
+- Verify diagonal-inch value matches your actual display size
+- Check that display resolution is correctly detected
+- Remember: Diagonal is measured corner-to-corner of active display area
+
+**Box too small/large:**
+- Percent mode: Adjust percentage (1-50)
+- Pixels mode: Calculate desired pixels manually
+- MM mode: Verify diagonal-inch parameter
+
+**Need exact colorimeter aperture matching:**
+- Measure your colorimeter's aperture diameter (typically 8-12mm)
+- Use mm mode with measured diagonal: `whitebox mm 10 diagonal-inch 15.6`
+- Fine-tune mm value to match your colorimeter's spot size
+
+---
+
+## `sensor-outline` — the i1 Display Pro at true size (placement)
+
+Not a box to measure on: the sensor's outline, so the operator puts the i1 on the drawing instead of
+guessing the centre of a white box. The launcher's measurement gates (HDR Display Profile, Analyze
+Color Gamut, Local-Dimming APL) show it with the active area from the display-test-framework config
+(`physical.active_width_mm` / `active_height_mm`) and fall back to `whitebox percent 10` when the
+config has no size.
+
+```bash
+./launcher-client --srv=127.0.0.1:8082 --command=pattern \
+  --command-arg="sensor-outline width-mm 376 height-mm 212"            # lens on the screen centre
+./launcher-client --srv=127.0.0.1:8082 --command=pattern \
+  --command-arg="sensor-outline width-mm 323 height-mm 186 at 960 540" # lens on pixel 960,540
+disp-tester --initial-pattern "sensor-outline width-mm 376 height-mm 212"
+disp-tester --panel-size-mm 376x212   # default size: in the swipe list, and "pattern sensor-outline" alone
+```
+
+- The launcher's Pattern Generator tile starts disp-tester through `pattern-generator.sh` with
+  `--panel-size-mm` from the framework config: the active area, else `physical.diagonal_inch` and the
+  framebuffer resolution (square pixels; the 15.6" 0OD: 345.4 x 194.3 mm). The outline is the last
+  pattern in the swipe list; without a size it shows a hint instead of a wrongly sized drawing.
+
+- Drawing: body 37 x 65 mm with flat ends (60 % of the width), full width around the lens, a 30 mm
+  bezel ring, the 20 mm lens with a crosshair, the cable boss at the top: the sensor as it hangs on a
+  display, cable up. 3 px mid-grey (128) lines on black, so a prompt left for minutes changes neither
+  an OLED's ABL nor a panel's warm-up.
+- px per mm per axis as `whiteboxmm`: the drawing is the sensor's size on any panel and resolution.
+  Check with a ruler: the lens circle is 20 mm (OLED-IB, 376 x 212 mm: 20 mm, 2026-10-28).
+- The lens sits 32.1 mm from the non-cable end: the sensor locator found the i1's measuring aperture
+  there with the body on the outline (OLED-IB: placed on it, 0.7 mm / 4.8 px from the centre).
+- `get-pattern` returns `sensor-outline`; `get sensor-outline width-mm|height-mm|at` the parameters.
+
+## `moving-whitebox` — a moving white box (local-dimming halo tracking)
+
+A square box on black that sweeps across the panel at a steady speed, so the backlight's response
+shows: the halo trailing or leading the box, zones stepping on and off at their boundaries. In the
+swipe list after `whiteboxmm`; defaults 20 mm box, 34 mm/s, horizontal along the middle row.
+
+```bash
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox"
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox size 20"       # mm
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox speed 100"     # mm/s, 0 = still
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox direction diagonal"
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox level 128"     # grey 0-255
+./launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg="moving-whitebox pause"         # / resume
+./launcher-client --srv=127.0.0.1:8082 --command=get --command-arg="moving-whitebox speed"
+```
+
+- One parameter per command; the settings persist while disp-tester runs.
+- Size and speed in mm: px per mm per axis from `--panel-size-mm` (the Pattern Generator tile passes
+  it), so the box is square and the speed the same on every panel; without it 6 px/mm.
+- `horizontal` sweeps the middle row edge to edge and back, `vertical` the middle column, `diagonal`
+  bounces off all four edges at the given speed along the path. Changing size, speed or direction
+  restarts the sweep from the left/top edge.
+- Moved by the Qt animation clock (vsync-locked), not a timer: no frame-rate jitter in the motion.
