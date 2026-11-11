@@ -15,6 +15,39 @@ Sources: `dual-video-player.c` (options, setup), `mirror.c` (playlist presenter)
 (two-file presenter, commits, statistics), `item.c` (pipelines), `drm.c` (outputs, planes, vblank
 grid), `probe.c`, `playlist.c`, `input.c` (touch, EXIT button), `sync.c` (network sync).
 
+## Control socket (`--control`)
+
+While it plays, the player listens on a Unix socket, `/tmp/dual-video-player.sock` by
+default (`--control=PATH`, `--control=none` for no socket; owner and group only). One
+command per connection, one line each way; the Stream Deck's Player keys use it
+(streamdeck-ctrl `screens/display-control/scripts/player-ctl.sh`):
+
+```bash
+echo pause      | socat - UNIX-CONNECT:/tmp/dual-video-player.sock   # ok paused
+echo "seek -10" | socat - UNIX-CONNECT:/tmp/dual-video-player.sock   # ok seek -10
+echo status     | socat - UNIX-CONNECT:/tmp/dual-video-player.sock
+# {"player":"dual-video-player","mode":"playlist","state":"playing","item":1,"items":3,
+#  "file":"a.mp4","position":14.281,"duration":120.003}
+```
+
+| Command | What it does |
+|---|---|
+| `pause` / `resume` / `toggle` | freeze on the frame on screen (the EXIT button still works) / go on from it |
+| `seek +S` / `seek -S` | jump S seconds; presses that arrive before the presenter takes them add up |
+| `seek S` | jump to S seconds into the video on screen |
+| `stop` | stop playback like the EXIT button (exit code 0: USB Media returns to its app) |
+| `status` | JSON: `mode` (two-file, playlist, sync), `state` (starting, playing, paused), `item`/`items` (playlist, from 1), `file`, `position`, `duration` (s) |
+
+- **Two-file mode**: one flushing, accurate seek on the shared pipeline, so both files
+  land on the same frame; it decodes from the keyframe before the target (0.6-3.5 s on a
+  1080p60 clip with sparse keyframes). Past the end it starts again from 0.
+- **Playlist mode**: seeks stay within the video on screen and go to the nearest
+  keyframe (quick); before its start = its start, past its end = the next item. On an
+  image, `+` moves to the next item and `-` back to the previous one; a pause holds the
+  image's remaining time.
+- **`--sync`**: only `stop` and `status`; pause and seek answer
+  `error not supported with --sync` (both rigs would have to agree on the moment; to do).
+
 ## Playlist sync between two rigs (`--sync`)
 
 Two rigs side by side (the shootout: the HDR10+-processed clip on one, "SDR today" on the other)

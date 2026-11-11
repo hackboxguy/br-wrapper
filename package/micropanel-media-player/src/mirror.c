@@ -317,33 +317,187 @@ static gint64 now_idx(const struct output *m)
  * Keep what is on screen until master vblank @until (the next item's
  * slot). Re-commits on popup changes, returns early on stop or removal.
  */
+/* wait up to @ms on the wake fd (popup, stop, control request) */
+static void wait_wake(struct mirror *mr, int ms)
+{
+	struct pollfd pfd = { .fd = mr->p->wake_fd, .events = POLLIN };
+	if (poll(&pfd, 1, ms) > 0) {
+		uint64_t v;
+		if (read(mr->p->wake_fd, &v, sizeof(v)) < 0)
+			v = 0;
+	}
+}
+
+/* the EXIT button came or went since @popup: show the same frame with(out) it */
+static gboolean popup_check(struct mirror *mr, int *popup)
+{
+	int now_popup = g_atomic_int_get(&mr->p->popup_on);
+	if (now_popup == *popup || stopping(mr))
+		return TRUE;
+	*popup = now_popup;
+	struct frame f = mr->shown;
+	/* re-commit at the next vblank (not a late frame: nothing was due) */
+	mr->last_target = MAX(mr->last_target, now_idx(mr->m));
+	return show(mr, &f, mr->last_target + 1, FALSE) >= 0;
+}
+
+/* a pause or seek from the control socket is waiting (not with --sync) */
+static gboolean control_request(struct mirror *mr)
+{
+	return !mr->sync && (control_paused(mr->p) || control_seek_pending(mr->p));
+}
+
 static void hold_until(struct mirror *mr, gint64 until)
 {
 	struct output *m = mr->m;
 	int popup = g_atomic_int_get(&mr->p->popup_on);
 	while (!stopping(mr) && mount_present(mr)) {
 		skip_failed_next(mr);
+		if (control_request(mr))
+			return;
 		gint64 at = m->last_ts + (until - 1 - m->last_idx) * m->period;   /* commit point for @until */
 		gint64 left = at - mono_ns();
 		if (left <= 0)
 			return;
-		struct pollfd pfd = { .fd = mr->p->wake_fd, .events = POLLIN };
-		int ms = (int)MIN(left / GST_MSECOND + 1, MOUNT_CHECK_NS / GST_MSECOND);
-		if (poll(&pfd, 1, ms) > 0) {
-			uint64_t v;
-			if (read(mr->p->wake_fd, &v, sizeof(v)) < 0)
-				v = 0;
-		}
-		int now_popup = g_atomic_int_get(&mr->p->popup_on);
-		if (now_popup != popup && !stopping(mr)) {
-			popup = now_popup;
-			struct frame f = mr->shown;
-			/* re-commit at the next vblank (not a late frame: nothing was due) */
-			mr->last_target = MAX(mr->last_target, now_idx(m));
-			if (show(mr, &f, mr->last_target + 1, FALSE) < 0)
-				return;
-		}
+		wait_wake(mr, (int)MIN(left / GST_MSECOND + 1, MOUNT_CHECK_NS / GST_MSECOND));
+		if (!popup_check(mr, &popup))
+			return;
 	}
+}
+
+/* paused from the control socket: keep the frame on screen until resumed,
+ * a seek request comes in, or stop */
+static void wait_paused(struct mirror *mr, const struct item *it, gint64 pos, gint64 dur)
+{
+	struct player *p = mr->p;
+	int popup = g_atomic_int_get(&p->popup_on);
+	gboolean said = FALSE;
+	while (control_paused(p) && !control_seek_pending(p) && !stopping(mr) && mount_present(mr)) {
+		if (!said)
+			g_print("dual-video-player: control: item %d paused at %.1f s\n", it->index + 1, pos / 1e9);
+		said = TRUE;
+		control_publish(p, "paused", it->index, (int)mr->n, it->mi.file, pos, dur);
+		skip_failed_next(mr);
+		wait_wake(mr, 200);
+		if (!popup_check(mr, &popup))
+			return;
+	}
+}
+
+/* prepare the item at @index as the next one instead of the prefetched one */
+static void replace_next(struct mirror *mr, int index)
+{
+	if (mr->next) {
+		/* the worker runs jobs in order: a preparation still running ends first */
+		queue_job(mr, JOB_FREE, mr->next, NULL);
+		mr->next = NULL;
+	}
+	struct item *it = g_new0(struct item, 1);
+	it->index = index;
+	it->state = ITEM_PREPARING;
+	mr->next = it;
+	queue_prepare(mr, it);
+}
+
+/* an image on screen: its slot, paused or cut short from the control socket */
+static void image_hold(struct mirror *mr, struct item *it)
+{
+	struct player *p = mr->p;
+	control_publish(p, "playing", it->index, (int)mr->n, it->mi.file, 0, mr->image_ns);
+	while (!stopping(mr) && mount_present(mr)) {
+		hold_until(mr, mr->next_target);
+		if (stopping(mr) || mr->sync)
+			return;
+		if (control_seek_pending(p)) {
+			gint64 rel = control_drop_seek(p);
+			if (rel < 0) {
+				int prev = it->index - 1;
+				if (prev < 0)
+					prev = p->pl->loop ? (int)mr->n - 1 : 0;
+				g_print("dual-video-player: control: back to item %d\n", prev + 1);
+				replace_next(mr, prev);
+			} else {
+				g_print("dual-video-player: control: on to the next item\n");
+			}
+			mr->next_target = now_idx(mr->m) + 1;
+			return;
+		}
+		if (control_paused(p)) {
+			gint64 left = MAX(1, mr->next_target - now_idx(mr->m));
+			wait_paused(mr, it, 0, mr->image_ns);
+			mr->next_target = now_idx(mr->m) + left;
+			if (!control_seek_pending(p))
+				g_print("dual-video-player: control: playing\n");
+			control_publish(p, "playing", it->index, (int)mr->n, it->mi.file, 0, mr->image_ns);
+			continue;
+		}
+		return;   /* its time is up */
+	}
+}
+
+enum { CTL_GO_ON, CTL_NEXT };
+
+/*
+ * A video playing in playlist mode, control socket: seeks within the item
+ * (flushing, to the keyframe nearest the target: quick, one file on screen),
+ * a pause holds the frame on screen. @pos: the position of the
+ * frame on screen (from the item's first frame). Sets *rebase when the frame
+ * timing must restart at the next vblank. CTL_NEXT: seek past the end.
+ */
+static int video_control(struct mirror *mr, struct item *it, gint64 *pos, gboolean *rebase)
+{
+	struct player *p = mr->p;
+	gint64 dur = it->mi.duration_ns;
+	while (!stopping(mr) && mount_present(mr)) {
+		gint64 t;
+		if (control_take_seek(p, *pos, &t)) {
+			*rebase = TRUE;
+			t = MAX(0, t);
+			if (dur > 0 && t > dur - GST_SECOND) {
+				g_print("dual-video-player: control: seek past the end of item %d: next item\n",
+					it->index + 1);
+				return CTL_NEXT;
+			}
+			it->skip_first = FALSE;
+			/* to the nearest keyframe: an accurate seek decodes from the keyframe
+			 * before the target and took 0.6-3.5 s on a 1080p60 clip */
+			if (!gst_element_seek(it->pipeline, 1.0, GST_FORMAT_TIME,
+					      GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT |
+					      GST_SEEK_FLAG_SNAP_NEAREST, GST_SEEK_TYPE_SET,
+					      it->first_pts + t, GST_SEEK_TYPE_NONE, 0)) {
+				g_printerr("dual-video-player: control: seek in item %d failed\n", it->index + 1);
+				continue;
+			}
+			g_print("dual-video-player: control: item %d seek to %.1f s\n", it->index + 1, t / 1e9);
+			*pos = t;
+			if (control_paused(p)) {
+				/* frozen: show where the seek landed */
+				GstSample *s = item_pull(it, 3 * GST_SECOND);
+				struct frame f;
+				if (s && make_frame(it, s, &f) &&
+				    show(mr, &f, MAX(mr->last_target, now_idx(mr->m)) + 1, FALSE) >= 0) {
+					GstBuffer *b = gst_sample_get_buffer(s);
+					if (GST_BUFFER_PTS_IS_VALID(b))
+						*pos = (gint64)GST_BUFFER_PTS(b) - it->first_pts;
+					if (mr->shown_sample)
+						gst_sample_unref(mr->shown_sample);
+					mr->shown_sample = it->mi.decode == DECODE_HW ? s : NULL;
+					if (!mr->shown_sample)
+						gst_sample_unref(s);
+				} else if (s) {
+					gst_sample_unref(s);
+				}
+			}
+		}
+		if (!control_paused(p))
+			return CTL_GO_ON;
+		*rebase = TRUE;
+		wait_paused(mr, it, *pos, dur);
+		if (!control_paused(p) && !control_seek_pending(p))
+			g_print("dual-video-player: control: item %d playing from %.1f s\n", it->index + 1,
+				*pos / 1e9);
+	}
+	return CTL_GO_ON;
 }
 
 static void stats_begin(struct mirror *mr)
@@ -447,7 +601,7 @@ static void play_item(struct mirror *mr, struct item *it, struct item **old)
 		gint64 n = MAX(1, llround((double)mr->image_ns / mr->m->period));
 		mr->next_target = start + n;
 		mr->item_end = start;   /* re-commits for the EXIT button do not move it */
-		hold_until(mr, mr->next_target);
+		image_hold(mr, it);
 		return;
 	}
 
@@ -455,8 +609,18 @@ static void play_item(struct mirror *mr, struct item *it, struct item **old)
 	unsigned frames = 1;
 	gint64 frame_ns = it->mi.fps_n > 0 ? GST_SECOND * it->mi.fps_d / it->mi.fps_n : 40 * GST_MSECOND;
 	gint64 last_seen = mono_ns();
+	gint64 pos = 0;
+	gboolean rebase = FALSE;
+	control_publish(mr->p, "playing", it->index, (int)mr->n, it->mi.file, 0, it->mi.duration_ns);
 	while (!stopping(mr) && mount_present(mr)) {
 		skip_failed_next(mr);
+		if (control_request(mr)) {
+			if (video_control(mr, it, &pos, &rebase) == CTL_NEXT)
+				break;
+			last_seen = mono_ns();
+			if (stopping(mr))
+				break;
+		}
 		GstSample *s = item_pull(it, 200 * GST_MSECOND);
 		if (!s) {
 			if (it->eos)
@@ -477,6 +641,11 @@ static void play_item(struct mirror *mr, struct item *it, struct item **old)
 		gint64 pts = GST_BUFFER_PTS_IS_VALID(b) ? (gint64)GST_BUFFER_PTS(b) - it->first_pts : 0;
 		if (GST_BUFFER_DURATION_IS_VALID(b))
 			frame_ns = (gint64)GST_BUFFER_DURATION(b);
+		if (rebase) {
+			/* after a pause or a seek: this frame at the next vblank but one */
+			start = MAX(mr->last_target, now_idx(mr->m)) + 2 - llround((double)pts / mr->m->period);
+			rebase = FALSE;
+		}
 		gint64 target = start + llround((double)pts / mr->m->period);
 		if (!make_frame(it, s, &f)) {
 			gst_sample_unref(s);
@@ -487,6 +656,10 @@ static void play_item(struct mirror *mr, struct item *it, struct item **old)
 			break;
 		}
 		frames++;
+		pos = pts;
+		if (frames % 8 == 0)
+			control_publish(mr->p, "playing", it->index, (int)mr->n, it->mi.file, pos,
+					it->mi.duration_ns);
 		if (mr->shown_sample)
 			gst_sample_unref(mr->shown_sample);
 		if (it->mi.decode == DECODE_HW)

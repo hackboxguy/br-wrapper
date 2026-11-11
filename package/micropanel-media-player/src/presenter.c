@@ -159,6 +159,104 @@ void disable_planes(struct player *p)
 	drmModeAtomicFree(req);
 }
 
+static gint64 sample_pts(GstSample *s)
+{
+	GstBuffer *b = s ? gst_sample_get_buffer(s) : NULL;
+	return b && GST_BUFFER_PTS_IS_VALID(b) ? (gint64)GST_BUFFER_PTS(b) : -1;
+}
+
+/* wait for the next frame of every stream after a seek (paused: to show it) */
+static gboolean pull_all(struct player *p, GstSample **next, GstClockTime timeout)
+{
+	for (int i = 0; i < p->nout; i++)
+		while (!next[i] && !g_atomic_int_get(&p->stop)) {
+			next[i] = gst_app_sink_try_pull_sample(p->sink[i], timeout);
+			if (!next[i])
+				return FALSE;
+		}
+	return !g_atomic_int_get(&p->stop);
+}
+
+/*
+ * Two-file mode, control socket: hold the frames on screen while paused and
+ * carry out seeks (both files in one flushing, accurate seek on the shared
+ * pipeline, so frame N stays paired; it decodes from the keyframe before the
+ * target, 0.6-3.5 s on a 1080p60 clip). Returns TRUE when the frame timing must restart
+ * from the next vblank (after a pause or a seek).
+ */
+static gboolean twofile_control(struct player *p, GstSample **shown, GstSample **next, gint64 *pos,
+				gint64 dur)
+{
+	gboolean changed = FALSE;
+	int popup = g_atomic_int_get(&p->popup_on);
+	while (!g_atomic_int_get(&p->stop)) {
+		gint64 t;
+		if (control_take_seek(p, *pos, &t)) {
+			t = MAX(0, t);
+			if (dur > 0 && t > dur - GST_SECOND)
+				t = 0;   /* past the end: from the start, as the loop would */
+			for (int i = 0; i < 2; i++)
+				if (next[i]) {
+					gst_sample_unref(next[i]);
+					next[i] = NULL;
+				}
+			GstSeekFlags fl = GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE;
+			if (p->looping)
+				fl |= GST_SEEK_FLAG_SEGMENT;
+			if (!gst_element_seek(p->pipeline, 1.0, GST_FORMAT_TIME, fl, GST_SEEK_TYPE_SET, t,
+					      GST_SEEK_TYPE_NONE, 0))
+				g_printerr("dual-video-player: control: seek to %.1f s failed\n", t / 1e9);
+			else
+				g_print("dual-video-player: control: seek to %.1f s\n", t / 1e9);
+			*pos = t;
+			changed = TRUE;
+			if (control_paused(p) && pull_all(p, next, 3 * GST_SECOND)) {
+				/* frozen: show where the seek landed */
+				uint32_t fb[2] = { 0, 0 };
+				GstVideoInfo vi[2];
+				gboolean ok = TRUE;
+				for (int i = 0; i < p->nout; i++)
+					ok &= (fb[i] = sample_fb(next[i], &vi[i])) != 0;
+				if (ok && !commit(p, fb, vi))
+					for (int i = 0; i < p->nout; i++) {
+						if (shown[i])
+							gst_sample_unref(shown[i]);
+						shown[i] = next[i];
+						next[i] = NULL;
+					}
+				*pos = MAX(0, sample_pts(shown[0]));
+			}
+		}
+		if (!control_paused(p))
+			break;
+		if (!changed)
+			g_print("dual-video-player: control: paused at %.1f s\n", *pos / 1e9);
+		changed = TRUE;
+		control_publish(p, "paused", -1, 0, NULL, *pos, dur);
+		struct pollfd pfd = { .fd = p->wake_fd, .events = POLLIN };
+		if (poll(&pfd, 1, 200) > 0) {
+			uint64_t v;
+			if (read(p->wake_fd, &v, sizeof(v)) < 0)
+				v = 0;
+		}
+		int now_popup = g_atomic_int_get(&p->popup_on);
+		if (now_popup != popup && shown[0]) {
+			/* the EXIT button came or went: show the same frames with it */
+			popup = now_popup;
+			uint32_t fb[2] = { 0, 0 };
+			GstVideoInfo vi[2];
+			gboolean ok = TRUE;
+			for (int i = 0; i < p->nout; i++)
+				ok &= shown[i] && (fb[i] = sample_fb(shown[i], &vi[i])) != 0;
+			if (ok)
+				commit(p, fb, vi);
+		}
+	}
+	if (changed && !control_paused(p))
+		g_print("dual-video-player: control: playing from %.1f s\n", *pos / 1e9);
+	return changed;
+}
+
 gpointer presenter(gpointer data)
 {
 	struct player *p = data;
@@ -168,10 +266,17 @@ gpointer presenter(gpointer data)
 	guint64 k = 0;
 	gint64 n0 = -1, last_target = -1;
 	double ratio = 1e9 / m->period / p->fps;   /* master vblanks per frame */
+	gint64 pos = 0, dur = 0;
+	gboolean rebase = FALSE;
+	gst_element_query_duration(p->pipeline, GST_FORMAT_TIME, &dur);
 
 	while (!g_atomic_int_get(&p->stop)) {
 		uint32_t fb[2] = { 0, 0 };
 		gboolean eos = FALSE;
+		if ((control_paused(p) || control_seek_pending(p)) && n0 >= 0)
+			rebase |= twofile_control(p, shown, next, &pos, dur);
+		if (g_atomic_int_get(&p->stop))
+			break;
 		for (int i = 0; i < p->nout && !g_atomic_int_get(&p->stop); i++) {
 			while (!next[i] && !g_atomic_int_get(&p->stop)) {
 				next[i] = gst_app_sink_try_pull_sample(p->sink[i], 100 * GST_MSECOND);
@@ -196,6 +301,13 @@ gpointer presenter(gpointer data)
 			for (int i = 0; i < p->nout; i++)
 				sync_vblank(p->fd, &p->out[i]);
 			n0 = m->last_idx + 2;
+		}
+		if (rebase) {
+			/* after a pause or a seek: the next frame at the next vblank but one */
+			gint64 now_v = m->last_idx + (mono_ns() - m->last_ts) / m->period;
+			n0 = now_v + 2 - llround((double)k * ratio);
+			last_target = -1;
+			rebase = FALSE;
 		}
 		gint64 target = n0 + llround((double)k * ratio);
 		if (last_target >= 0 && target <= last_target)
@@ -229,6 +341,8 @@ gpointer presenter(gpointer data)
 			goto done;
 		}
 		last_target = target;
+		pos = MAX(0, sample_pts(next[0]));
+		control_publish(p, "playing", -1, 0, NULL, pos, dur);
 		/* previous frames are off screen now: give them back to the decoder */
 		for (int i = 0; i < p->nout; i++) {
 			if (shown[i])

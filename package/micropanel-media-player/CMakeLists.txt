@@ -20,7 +20,7 @@ if(GST_FOUND)
     add_executable(dual-video-player src/dual-video-player.c src/drm.c src/input.c
                                      src/presenter.c src/probe.c
                                      src/item.c src/playlist.c src/mirror.c
-                                     src/sync.c)
+                                     src/sync.c src/control.c)
     target_include_directories(dual-video-player PRIVATE ${GST_INCLUDE_DIRS})
     target_link_libraries(dual-video-player PRIVATE ${GST_LIBRARIES} m)
     install(TARGETS dual-video-player

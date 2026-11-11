@@ -153,7 +153,24 @@ struct player {
 	uint32_t popup_fb;
 	gint popup_on;            /* set by the input handler, read by the presenter */
 	guint popup_timer;
+
+	/* control socket (control.c): requests from the main loop ... */
+	const char *ctl_path;
+	int ctl_fd;
+	guint ctl_src;
+	gint want_pause;          /* atomic */
+	GMutex ctl_lock;          /* guards the seek request and the published state */
+	gboolean seek_pending;
+	gint64 seek_rel_ns;       /* relative request (sum of the presses) */
+	gint64 seek_abs_ns;       /* absolute request, -1: none */
+	/* ... and what the presenter shows */
+	char st_state[16];        /* starting, playing, paused, stopped */
+	int st_item, st_items;    /* playlist index (-1: two-file mode), length */
+	char st_file[256];
+	gint64 st_pos_ns, st_dur_ns;
 };
+
+#define CONTROL_DEFAULT "/tmp/dual-video-player.sock"
 
 /* one grabbed input device */
 struct indev {
@@ -273,6 +290,17 @@ gboolean on_input(gint fd, GIOCondition cond, gpointer data);
 void watch_inputs(struct player *p);
 void draw_popup(uint32_t *px, int stride, int w, int h);
 void setup_popup(struct player *p);
+
+/* control.c: the control socket */
+void control_init(struct player *p);
+void control_start(struct player *p, const char *path);
+void control_stop(struct player *p);
+gboolean control_paused(struct player *p);
+gboolean control_take_seek(struct player *p, gint64 pos, gint64 *target);
+gint64 control_drop_seek(struct player *p);
+gboolean control_seek_pending(struct player *p);
+void control_publish(struct player *p, const char *state, int item, int items, const char *file,
+		     gint64 pos, gint64 dur);
 
 /* presenter.c: pacing, atomic commits, statistics */
 void on_flip(int fd, unsigned seq, unsigned sec, unsigned usec, unsigned crtc_id, void *data);

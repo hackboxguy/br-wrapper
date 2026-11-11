@@ -86,7 +86,9 @@ static void usage(const char *prog)
 		"  --sync-clock-test=S no display: run the clock only, S seconds; the client prints\n"
 		"                      a CLOCK line per ping and CLOCKSTATS\n"
 		"  --refresh=auto|keep|HZ  display refresh: auto = integer multiple of the\n"
-		"                      video frame rate if offered (default), keep = as is\n",
+		"                      video frame rate if offered (default), keep = as is\n"
+		"  --control=PATH|none control socket (default " CONTROL_DEFAULT "):\n"
+		"                      pause, resume, toggle, seek [+-]S, stop, status (see control.c)\n",
 		prog, prog);
 }
 
@@ -153,7 +155,8 @@ static gchar *mount_point_of(const char *dir)
 
 /* playlist mode: --playlist FILE [--list] (see usage) */
 static int run_playlist(struct player *p, const char *file, const char *root, int list, char *card,
-			size_t card_len, const char *c1, const char *c2, const char *refresh)
+			size_t card_len, const char *c1, const char *c2, const char *refresh,
+			const char *control_path)
 {
 	GError *err = NULL;
 	struct playlist *pl = playlist_load(file, root, &err);
@@ -236,12 +239,15 @@ static int run_playlist(struct player *p, const char *file, const char *root, in
 	p->loop = g_main_loop_new(NULL, FALSE);
 	g_unix_signal_add(SIGINT, on_signal, p);
 	g_unix_signal_add(SIGTERM, on_signal, p);
+	control_publish(p, "starting", -1, (int)pl->items->len, NULL, 0, 0);
+	control_start(p, control_path);
 	if (p->sync)
 		sync_start(p->sync);
 	p->thread = g_thread_new("presenter", mirror_presenter, p);
 	p->started = g_get_monotonic_time();
 	watch_inputs(p);
 	g_main_loop_run(p->loop);
+	control_stop(p);
 	g_atomic_int_set(&p->stop, 1);
 	player_wake(p);
 	g_thread_join(p->thread);
@@ -378,6 +384,7 @@ int main(int argc, char **argv)
 	gboolean refresh_given = FALSE;
 	const char *sync_mode = NULL, *sync_peer = NULL, *sync_iface = NULL, *sync_log = NULL;
 	int sync_port = 0, sync_wait = 0, clock_test = 0;
+	const char *control_path = CONTROL_DEFAULT;
 
 	/* Every playlist item brings new GStreamer streaming threads; with glibc's
 	 * default of up to 8 arenas per core each may get its own arena, which keeps
@@ -387,6 +394,7 @@ int main(int argc, char **argv)
 	mallopt(M_ARENA_MAX, 2);
 	gst_init(&argc, &argv);
 	p.wake_fd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+	control_init(&p);
 
 	/* --probe FILE...: classify, print one line per file, no display needed */
 	if (argc > 1 && !strcmp(argv[1], "--probe")) {
@@ -436,6 +444,8 @@ int main(int argc, char **argv)
 			sync_port = atoi(argv[i] + 12);
 		else if (!strncmp(argv[i], "--sync-wait=", 12))
 			sync_wait = atoi(argv[i] + 12);
+		else if (!strncmp(argv[i], "--control=", 10))
+			control_path = argv[i] + 10;
 		else if (!strncmp(argv[i], "--sync-log=", 11))
 			sync_log = argv[i] + 11;
 		else if (!strncmp(argv[i], "--sync-clock-test=", 18))
@@ -473,7 +483,7 @@ int main(int argc, char **argv)
 	}
 	if (playlist)
 		return run_playlist(&p, playlist, root, list, card, sizeof(card), c1, c2,
-				    refresh_given ? refresh : "keep");
+				    refresh_given ? refresh : "keep", control_path);
 	if (nfiles != 2) {
 		usage(argv[0]);
 		return 2;
@@ -610,13 +620,17 @@ int main(int argc, char **argv)
 	if (p.looping && !seek_start(&p, TRUE))
 		g_printerr("dual-video-player: segment seek failed, looping via EOS\n");
 	gst_element_set_state(p.pipeline, GST_STATE_PLAYING);
+	control_publish(&p, "starting", -1, 0, files[0], 0, 0);
+	control_start(&p, control_path);
 	p.thread = g_thread_new("presenter", presenter, &p);
 	p.started = g_get_monotonic_time();
 	watch_inputs(&p);
 
 	g_main_loop_run(p.loop);
 
+	control_stop(&p);
 	g_atomic_int_set(&p.stop, 1);
+	player_wake(&p);
 	g_thread_join(p.thread);
 	print_stats(&p);
 	gst_element_set_state(p.pipeline, GST_STATE_NULL);
