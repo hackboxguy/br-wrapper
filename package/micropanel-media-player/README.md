@@ -35,8 +35,9 @@ echo status     | socat - UNIX-CONNECT:/tmp/dual-video-player.sock
 | `pause` / `resume` / `toggle` | freeze on the frame on screen (the EXIT button still works) / go on from it |
 | `seek +S` / `seek -S` | jump S seconds; presses that arrive before the presenter takes them add up |
 | `seek S` | jump to S seconds into the video on screen |
+| `loop on` / `off` / `toggle` | two-file mode: loop the files (on by default; off = play to the end and exit 0); playlist mode: repeat the item on screen (off by default; a video starts again, an image stays) |
 | `stop` | stop playback like the EXIT button (exit code 0: USB Media returns to its app) |
-| `status` | JSON: `mode` (two-file, playlist, sync), `state` (starting, playing, paused), `item`/`items` (playlist, from 1), `file`, `position`, `duration` (s) |
+| `status` | JSON: `mode` (two-file, playlist, sync), `state` (starting, playing, paused), `loop`, `item`/`items` (playlist, from 1), `file`, `position`, `duration` (s) |
 
 - **Two-file mode**: one flushing, accurate seek on the shared pipeline, so both files
   land on the same frame; it decodes from the keyframe before the target (0.6-3.5 s on a
@@ -45,7 +46,7 @@ echo status     | socat - UNIX-CONNECT:/tmp/dual-video-player.sock
   keyframe (quick); before its start = its start, past its end = the next item. On an
   image, `+` moves to the next item and `-` back to the previous one; a pause holds the
   image's remaining time.
-- **`--sync`**: only `stop` and `status`; pause and seek answer
+- **`--sync`**: only `stop` and `status`; pause, seek and loop answer
   `error not supported with --sync` (both rigs would have to agree on the moment; to do).
 
 ## Playlist sync between two rigs (`--sync`)

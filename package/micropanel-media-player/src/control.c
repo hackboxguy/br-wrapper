@@ -12,12 +12,15 @@
  *                             its end = the next item); on an image + = next
  *                             item, - = previous item
  *   seek S                    jump to S seconds into the video on screen
+ *   loop on | off | toggle    two-file mode: loop the files (on by default; off:
+ *                             play to the end and stop); playlist mode: repeat
+ *                             the item on screen (off by default; an image stays)
  *   stop                      stop playback, like the EXIT button (exit code 0)
- *   status                    one line of JSON: player, mode, state, item, items,
- *                             file, position, duration (seconds)
+ *   status                    one line of JSON: player, mode, state, loop, item,
+ *                             items, file, position, duration (seconds)
  *
  * The reply is "ok ..." or "error <reason>" (status: the JSON). Pause and
- * seek are not offered with --sync: the two players would have to agree on
+ * seek (and loop) are not offered with --sync: the two players would have to agree on
  * the moment over the network (not done yet).
  *
  * The main loop owns the socket; the presenter thread takes the requests at
@@ -60,8 +63,9 @@ static void status_json(struct player *p, GString *out)
 	const char *mode = p->sync ? "sync" : p->pl ? "playlist" : "two-file";
 	g_string_append_printf(out,
 			       "{\"player\":\"dual-video-player\",\"mode\":\"%s\",\"state\":\"%s\","
-			       "\"item\":%d,\"items\":%d,\"file\":\"%s\",\"position\":%.3f,\"duration\":%.3f}",
-			       mode, p->st_state, p->st_item + 1, p->st_items, file,
+			       "\"loop\":%s,\"item\":%d,\"items\":%d,\"file\":\"%s\",\"position\":%.3f,"
+			       "\"duration\":%.3f}",
+			       mode, p->st_state, control_loop(p) ? "true" : "false", p->st_item + 1, p->st_items, file,
 			       p->st_pos_ns / 1e9, p->st_dur_ns / 1e9);
 	g_free(file);
 	g_mutex_unlock(&p->ctl_lock);
@@ -74,7 +78,7 @@ static void handle(struct player *p, gchar *line, GString *out)
 	const char *cmd = w[0] ? w[0] : "";
 	const char *arg = w[0] && w[1] ? w[1] : NULL;
 	gboolean timed = !strcmp(cmd, "pause") || !strcmp(cmd, "resume") ||
-			 !strcmp(cmd, "toggle") || !strcmp(cmd, "seek");
+			 !strcmp(cmd, "toggle") || !strcmp(cmd, "seek") || !strcmp(cmd, "loop");
 
 	if (timed && p->sync) {
 		g_string_append(out, "error not supported with --sync");
@@ -90,6 +94,16 @@ static void handle(struct player *p, gchar *line, GString *out)
 		g_atomic_int_set(&p->want_pause, want);
 		player_wake(p);
 		g_string_append_printf(out, "ok %s", want ? "paused" : "playing");
+	} else if (!strcmp(cmd, "loop") && arg &&
+		   (!strcmp(arg, "on") || !strcmp(arg, "off") || !strcmp(arg, "toggle"))) {
+		int on = !strcmp(arg, "on") ? 1 : !strcmp(arg, "off") ? 0 : !control_loop(p);
+		if (p->pl)
+			g_atomic_int_set(&p->repeat_item, on);
+		else
+			g_atomic_int_set(&p->looping, on);
+		g_print("dual-video-player: control: loop %s\n", on ? "on" : "off");
+		player_wake(p);
+		g_string_append_printf(out, "ok loop %s", on ? "on" : "off");
 	} else if (!strcmp(cmd, "seek") && arg) {
 		char *end = NULL;
 		double s = g_ascii_strtod(arg, &end);
@@ -118,7 +132,7 @@ static void handle(struct player *p, gchar *line, GString *out)
 			}
 		}
 	} else {
-		g_string_append(out, "error unknown command (pause, resume, toggle, seek S, stop, status)");
+		g_string_append(out, "error unknown command (pause, resume, toggle, seek S, loop on|off|toggle, stop, status)");
 	}
 	g_strfreev(w);
 }
@@ -220,6 +234,12 @@ void control_stop(struct player *p)
 	close(p->ctl_fd);
 	p->ctl_fd = -1;
 	unlink(p->ctl_path);
+}
+
+/* is the playback looping: the files (two-file mode) or the item on screen (playlist) */
+gboolean control_loop(struct player *p)
+{
+	return p->pl ? g_atomic_int_get(&p->repeat_item) != 0 : g_atomic_int_get(&p->looping) != 0;
 }
 
 gboolean control_paused(struct player *p)

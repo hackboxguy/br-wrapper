@@ -431,6 +431,11 @@ static void image_hold(struct mirror *mr, struct item *it)
 			control_publish(p, "playing", it->index, (int)mr->n, it->mi.file, 0, mr->image_ns);
 			continue;
 		}
+		if (!mr->sync && g_atomic_int_get(&p->repeat_item)) {
+			/* loop on (control socket): the image stays for another slot */
+			mr->next_target = now_idx(mr->m) + MAX(1, llround((double)mr->image_ns / mr->m->period));
+			continue;
+		}
 		return;   /* its time is up */
 	}
 }
@@ -623,6 +628,19 @@ static void play_item(struct mirror *mr, struct item *it, struct item **old)
 		}
 		GstSample *s = item_pull(it, 200 * GST_MSECOND);
 		if (!s) {
+			if (it->eos && !mr->sync && g_atomic_int_get(&mr->p->repeat_item) &&
+			    gst_element_seek(it->pipeline, 1.0, GST_FORMAT_TIME,
+					     GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT, GST_SEEK_TYPE_SET,
+					     it->first_pts, GST_SEEK_TYPE_NONE, 0)) {
+				/* loop on (control socket): this video again, its first frame
+				 * one frame after its last */
+				g_print("dual-video-player: item %d again (loop)\n", it->index + 1);
+				it->eos = FALSE;
+				it->skip_first = FALSE;
+				start = mr->last_target + MAX(1, llround((double)frame_ns / mr->m->period));
+				last_seen = mono_ns();
+				continue;
+			}
 			if (it->eos)
 				break;
 			if (it->why[0]) {

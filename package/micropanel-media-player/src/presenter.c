@@ -280,13 +280,33 @@ gpointer presenter(gpointer data)
 		for (int i = 0; i < p->nout && !g_atomic_int_get(&p->stop); i++) {
 			while (!next[i] && !g_atomic_int_get(&p->stop)) {
 				next[i] = gst_app_sink_try_pull_sample(p->sink[i], 100 * GST_MSECOND);
-				if (!next[i] && gst_app_sink_is_eos(p->sink[i])) {
+				/* the end: EOS (--once), or nothing more after a segment end
+				 * that found the loop switched off (if it is on again by
+				 * now, the restart below takes over) */
+				if (!next[i] && (gst_app_sink_is_eos(p->sink[i]) ||
+						 g_atomic_int_get(&p->segment_done))) {
 					eos = TRUE;
 					break;
 				}
 			}
 			if (eos)
 				break;
+		}
+		if (eos && g_atomic_int_get(&p->looping) && !g_atomic_int_get(&p->stop)) {
+			/* loop switched (back) on at the very end: from the start again */
+			for (int i = 0; i < 2; i++)
+				if (next[i]) {
+					gst_sample_unref(next[i]);
+					next[i] = NULL;
+				}
+			g_atomic_int_set(&p->segment_done, 0);
+			if (gst_element_seek(p->pipeline, 1.0, GST_FORMAT_TIME,
+					     GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_ACCURATE | GST_SEEK_FLAG_SEGMENT,
+					     GST_SEEK_TYPE_SET, 0, GST_SEEK_TYPE_NONE, 0)) {
+				g_print("dual-video-player: loop (restarted)\n");
+				rebase = TRUE;
+				continue;
+			}
 		}
 		if (eos || g_atomic_int_get(&p->stop))
 			break;

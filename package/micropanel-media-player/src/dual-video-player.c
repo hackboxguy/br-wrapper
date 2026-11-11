@@ -293,6 +293,12 @@ static gboolean on_bus(GstBus *bus, GstMessage *msg, gpointer data)
 		break;
 	}
 	case GST_MESSAGE_SEGMENT_DONE:
+		if (!g_atomic_int_get(&p->looping)) {
+			/* loop switched off (control socket): the presenter shows the
+			 * frames still queued, then stops */
+			g_atomic_int_set(&p->segment_done, 1);
+			break;
+		}
 		/* both files demuxed to the end: queue both again from 0 (no gap) */
 		g_print("dual-video-player: loop %u\n", ++p->loops);
 		print_stats(p);
@@ -303,7 +309,7 @@ static gboolean on_bus(GstBus *bus, GstMessage *msg, gpointer data)
 		}
 		break;
 	case GST_MESSAGE_EOS:
-		if (p->looping && seek_start(p, TRUE))
+		if (g_atomic_int_get(&p->looping) && seek_start(p, TRUE))
 			break;  /* fallback if a segment seek was not honoured */
 		/* --once: the presenter drains the appsinks and stops at their EOS */
 		break;

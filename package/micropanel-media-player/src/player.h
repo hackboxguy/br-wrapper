@@ -159,6 +159,8 @@ struct player {
 	int ctl_fd;
 	guint ctl_src;
 	gint want_pause;          /* atomic */
+	gint repeat_item;         /* atomic, playlist mode: the item on screen plays again */
+	gint segment_done;        /* atomic, two-file mode: demuxed to the end with looping off */
 	GMutex ctl_lock;          /* guards the seek request and the published state */
 	gboolean seek_pending;
 	gint64 seek_rel_ns;       /* relative request (sum of the presses) */
@@ -296,6 +298,7 @@ void control_init(struct player *p);
 void control_start(struct player *p, const char *path);
 void control_stop(struct player *p);
 gboolean control_paused(struct player *p);
+gboolean control_loop(struct player *p);
 gboolean control_take_seek(struct player *p, gint64 pos, gint64 *target);
 gint64 control_drop_seek(struct player *p);
 gboolean control_seek_pending(struct player *p);
