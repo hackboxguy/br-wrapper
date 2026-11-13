@@ -361,6 +361,19 @@ pat_ref() {
             black) echo "abs 0 0.3 - -" ;;
             *)     echo "" ;;
         esac ;;
+    12.3-nq1*)
+        # 12.3" NQ1 (nq1v1.1, FPGA dimmer2048) on the dual-display Pi4 rig, measured
+        # on a lit boot 2026-11-13: white 1229 nits, red/green/blue 0.201/0.724/0.076
+        # of white. Ratio windows are +-20 % around those; green and blue sit
+        # outside the 15.6" set below (green x 0.288, blue 0.076 of white).
+        case "$1" in
+            white) echo "abs $PASS_NITS 100000 0.3079 0.3279" ;;
+            red)   echo "ratio 0.160 0.241 0.6622 0.3157" ;;
+            green) echo "ratio 0.579 0.868 0.2880 0.6661" ;;
+            blue)  echo "ratio 0.061 0.091 0.1534 0.0572" ;;
+            black) echo "abs 0 0.3 - -" ;;
+            *)     echo "" ;;
+        esac ;;
     *)
         # 15.6" 2K5 and anything else that measures like it.
         case "$1" in
@@ -380,7 +393,7 @@ detect_panel() {
     local t
     t=$(rsh 40 "$MICROBIN/pi-config-txt.sh --configspath=$MICROSHARE/configs/ --input=/boot/firmware/config.txt 2>/dev/null | tr -d '[:space:]'")
     case "$t" in
-        ots-oled-17|15.6-2k5|12.3-nq1|14.6-2k5|17.3-3k|27|12.3|14.6-fhd|3x-qvue)
+        ots-oled-17|15.6-2k5|12.3-nq1|12.3-nq1v*|14.6-2k5|17.3-3k|27|12.3|14.6-fhd|3x-qvue)
             PANEL=$t ;;
         *)
             say "  WARNING: could not read the display type (got '${t:-empty}'), using the 15.6-2k5 reference set"
