@@ -22,7 +22,13 @@ SECONDARY_PORT = 9001
 MIN_NITS = 20.0
 NITS_STEP = 5.0
 CONNECT_TIMEOUT_SECONDS = 1.0
-STARTUP_WAIT_SECONDS = 15.0
+# als-dimmer is parked by dip-switch-resolution.sh while the RH850 re-inits the
+# 983 (soft DIP) and only restarted after the drivers are back, ~20 s into boot.
+STARTUP_WAIT_SECONDS = 40.0
+# The ATtiny85 dongle sits in its USB bootloader for a few seconds after power-up and
+# enumerates as i2c-tiny-usb only then - about a second after this service runs at boot.
+DONGLE_WAIT_SECONDS = 20.0
+I2C_ADAPTERS_PATH = "/sys/bus/i2c/devices"
 
 
 def log(message):
@@ -119,6 +125,35 @@ def i2c_tiny_usb_present():
     return False
 
 
+def i2c_tiny_usb_bus_ready():
+    try:
+        adapters = os.listdir(I2C_ADAPTERS_PATH)
+    except OSError:
+        return False
+    for adapter in adapters:
+        if not adapter.startswith("i2c-"):
+            continue   # client devices (e.g. 1-0050) live here too
+        name = read_sysfs_text(os.path.join(I2C_ADAPTERS_PATH, adapter, "name"))
+        if name and name.startswith("i2c-tiny-usb"):
+            return True
+    return False
+
+
+def wait_for_i2c_tiny_usb():
+    """True once the dongle is on USB and its I2C bus is registered (waits for a late dongle)."""
+    deadline = time.monotonic() + DONGLE_WAIT_SECONDS
+    logged = False
+    while True:
+        if i2c_tiny_usb_present() and i2c_tiny_usb_bus_ready():
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        if not logged:
+            log(f"waiting up to {DONGLE_WAIT_SECONDS:.0f}s for the i2c-tiny-usb controller")
+            logged = True
+        time.sleep(0.25)
+
+
 def call_json(port, command, params=None):
     request = {"version": "1.0", "command": command}
     if params:
@@ -194,7 +229,7 @@ def read_current_nits(port):
 
 
 def restore_dual_display(state):
-    if not i2c_tiny_usb_present():
+    if not wait_for_i2c_tiny_usb():
         log("i2c-tiny-usb controller not detected; skipping restore")
         return
 
