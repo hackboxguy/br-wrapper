@@ -1,5 +1,6 @@
 #include <QGuiApplication>
 #include <QQmlApplicationEngine>
+#include <QQmlComponent>
 #include <QQmlContext>
 #include <QCommandLineParser>
 #include <QDebug>
@@ -270,6 +271,12 @@ int main(int argc, char *argv[])
                                                   "color");
     parser.addOption(initialMetadataColorOption);
 
+    QCommandLineOption noMirrorOption(QStringList() << "no-mirror",
+                                      "Show the patterns on the first display only. By default a second "
+                                      "connected display (eglfs/KMS: the Pi's HDMI2) shows the same pattern "
+                                      "without the controls; DISP_TESTER_MIRROR=0 also turns this off.");
+    parser.addOption(noMirrorOption);
+
     QCommandLineOption i2cOption(QStringList() << "i" << "i2c",
                                  "FPGA I2C bus device (default: /dev/i2c-1)",
                                  "i2c", "/dev/i2c-1");
@@ -440,6 +447,42 @@ int main(int argc, char *argv[])
         QObject::connect(window, &QQuickWindow::sceneGraphInitialized, &app, reportSurface, Qt::QueuedConnection);
     }
 
+    /*
+     * Second display. On linuxfb the kernel's fbdev emulation already shows the one framebuffer on
+     * every connected HDMI output, but on eglfs/KMS (selectPlatform) each output is its own
+     * QScreen and an output without a window stays black. Give the other screen a window of its
+     * own with the same pattern - as the cluster's --mirror-screen does - rather than Qt's
+     * QT_QPA_EGLFS_KMS_CONFIG "clones", which freeze on the Pi's two CRTCs (see cluster-v2.sh).
+     */
+    QQuickWindow *mirrorWindow = nullptr;
+    if (!parser.isSet(noMirrorOption) && qgetenv("DISP_TESTER_MIRROR") != "0") {
+        QScreen *mainScreen = window ? window->screen() : app.primaryScreen();
+        QScreen *otherScreen = nullptr;
+        for (QScreen *candidate : app.screens()) {
+            if (candidate != mainScreen) {
+                otherScreen = candidate;
+                break;
+            }
+        }
+        if (otherScreen) {
+            QQmlComponent mirrorComponent(&engine, QUrl(QStringLiteral("qrc:/MirrorWindow.qml")));
+            QObject *mirrorObject = mirrorComponent.create();
+            mirrorWindow = qobject_cast<QQuickWindow *>(mirrorObject);
+            if (mirrorWindow) {
+                mirrorWindow->setScreen(otherScreen);
+                mirrorWindow->setGeometry(otherScreen->geometry());
+                mirrorWindow->showFullScreen();
+                qDebug() << "Second display:" << otherScreen->name()
+                         << otherScreen->size().width() << "x" << otherScreen->size().height()
+                         << "shows the same pattern";
+            } else {
+                delete mirrorObject;
+                qWarning() << "Second display" << otherScreen->name() << "left blank:"
+                           << mirrorComponent.errorString();
+            }
+        }
+    }
+
     QString childScript = parser.value(scriptOption);
     if (!childScript.isEmpty()) {
         if (!networkStarted) {
@@ -453,6 +496,8 @@ int main(int argc, char *argv[])
     }
 
     int result = app.exec();
+
+    delete mirrorWindow;
 
     if (signalPipe[0] >= 0) {
         close(signalPipe[0]);
