@@ -85,6 +85,7 @@ private:
     bool saveStateFile() const;
     void scheduleStateSave();
     void clearStateFile() const;
+    void writeDisabledStateFile() const;
     bool detectHardwareAvailability() const;
     void startAsyncBrightnessSend(double nits);
     void startAsyncBrightnessSendToPort(int port);
@@ -123,6 +124,7 @@ private:
     QTcpSocket *m_asyncSocket;
     QByteArray m_asyncReadBuffer;
     bool m_sendInFlight;
+    bool m_defaultEnablePending;
     bool m_exitFlushed;
     int m_asyncPort;
     double m_inFlightNits;

@@ -41,28 +41,35 @@ def ensure_state_dir():
     os.chmod(STATE_DIR, 0o755)
 
 
+class DualModeDisabled(Exception):
+    """The user turned dual-display mode off in disp-settings."""
+
+
 def load_state():
+    """Return the saved state, None when there is none, or raise DualModeDisabled.
+
+    No saved state means the user never turned dual mode off, so the caller
+    enables it by default when the i2c-tiny-usb dongle is present.
+    """
     ensure_state_dir()
     if not os.path.exists(STATE_FILE):
-        log("no saved dual-display state; nothing to restore")
         return None
 
     with open(STATE_FILE, "r", encoding="utf-8") as state_file:
         state = json.load(state_file)
 
     if not state.get("enabled", True):
-        log("saved dual-display state is disabled; nothing to restore")
-        return None
+        raise DualModeDisabled()
 
     try:
         nits = float(state["last_nits"])
     except (KeyError, TypeError, ValueError):
         log("saved dual-display state has no valid last_nits; skipping restore")
-        return None
+        raise DualModeDisabled()
 
     if not math.isfinite(nits):
         log("saved dual-display state has non-finite last_nits; skipping restore")
-        return None
+        raise DualModeDisabled()
 
     state["last_nits"] = nits
     return state
@@ -175,6 +182,17 @@ def rounded_nits(nits, max_nits):
     return min(max(rounded, lower), max_nits)
 
 
+def read_current_nits(port):
+    try:
+        nits = float(call_json(port, "get_absolute_brightness")["nits"])
+    except (OSError, RuntimeError, KeyError, TypeError, ValueError,
+            json.JSONDecodeError):
+        return None
+    if not math.isfinite(nits) or nits <= 0:
+        return None
+    return nits
+
+
 def restore_dual_display(state):
     if not i2c_tiny_usb_present():
         log("i2c-tiny-usb controller not detected; skipping restore")
@@ -184,8 +202,19 @@ def restore_dual_display(state):
     start_secondary_service()
 
     log("waiting for als-dimmer ports")
-    wait_for_port(PRIMARY_PORT)
+    primary_status = wait_for_port(PRIMARY_PORT)
     wait_for_port(SECONDARY_PORT)
+
+    if state is None:
+        # Default-on: remember the primary's mode so turning dual mode off in
+        # disp-settings hands the NQ1 back the way it was, and start both panels
+        # at the primary's present light level instead of jumping.
+        log("no saved dual-display state; enabling dual mode by default")
+        state = {
+            "restore_primary_mode": primary_status.get("mode") or "manual",
+            "restore_primary_brightness": int(primary_status.get("brightness", 50)),
+            "last_nits": read_current_nits(PRIMARY_PORT),
+        }
 
     log("setting both instances to manual mode")
     call_json(PRIMARY_PORT, "set_mode", {"mode": "manual"})
@@ -194,7 +223,10 @@ def restore_dual_display(state):
     primary_max = read_max_nits(PRIMARY_PORT)
     secondary_max = read_max_nits(SECONDARY_PORT)
     shared_max = min(primary_max, secondary_max)
-    target_nits = rounded_nits(state["last_nits"], shared_max)
+    last_nits = state["last_nits"]
+    if last_nits is None:
+        last_nits = shared_max / 2.0
+    target_nits = rounded_nits(last_nits, shared_max)
 
     log(f"restoring dual-display brightness to {target_nits:.1f} nits")
     call_json(PRIMARY_PORT, "set_absolute_brightness", {"nits": target_nits})
@@ -209,8 +241,10 @@ def restore_dual_display(state):
 
 def main():
     try:
-        state = load_state()
-        if state is None:
+        try:
+            state = load_state()
+        except DualModeDisabled:
+            log("dual-display mode is turned off; nothing to restore")
             return 0
         restore_dual_display(state)
         log("restore complete")

@@ -316,6 +316,16 @@ bool blockingReadMaxBrightness(int port, double *maxNits, QString *error)
     return true;
 }
 
+bool blockingReadAbsoluteBrightness(int port, double *nits)
+{
+    QJsonObject data;
+    QString ignored;
+    if (!blockingCallJson(port, "get_absolute_brightness", QJsonObject(), &data, &ignored)) {
+        return false;
+    }
+    return readNitsValue(data, nits);
+}
+
 bool blockingSendAbsoluteBrightness(int port, double nits, QString *error)
 {
     QJsonObject params;
@@ -393,7 +403,14 @@ ModeOperationResult runEnableOperation(QString primaryMode, int primaryBrightnes
         return result;
     }
 
-    double initialNits = roundedNitsForRange(sharedMax / 2.0, minNits, sharedMax, nitsStep);
+    // Start both panels at the primary's present light level, so turning dual mode on
+    // (by hand, or by default when the dongle shows up) does not visibly jump the NQ1.
+    // Half the shared range is the fallback when the primary cannot report nits.
+    double primaryNits = 0.0;
+    if (!blockingReadAbsoluteBrightness(kPrimaryPort, &primaryNits) || primaryNits <= 0.0) {
+        primaryNits = sharedMax / 2.0;
+    }
+    double initialNits = roundedNitsForRange(primaryNits, minNits, sharedMax, nitsStep);
     if (!blockingSendAbsoluteBrightnessToBoth(initialNits, &error)) {
         blockingRunServiceAction("stop", nullptr);
         blockingRestorePrimary(result.restoreMode, result.restoreBrightness,
@@ -454,6 +471,7 @@ DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     , m_asyncTimeout(new QTimer(this))
     , m_asyncSocket(nullptr)
     , m_sendInFlight(false)
+    , m_defaultEnablePending(false)
     , m_exitFlushed(false)
     , m_asyncPort(0)
     , m_inFlightNits(0.0)
@@ -462,9 +480,10 @@ DualDisplayAbsoluteController::DualDisplayAbsoluteController(QObject *parent)
     int restoreBrightness = 50;
     double savedNits = 0.0;
     bool stateEnabled = false;
-    m_loadingSavedState =
-        loadStateFile(&restoreMode, &restoreBrightness, &savedNits, &stateEnabled) &&
-        stateEnabled;
+    // No state file means the user never turned dual mode off, so it comes up on by
+    // default whenever the i2c-tiny-usb dongle is present (see adoptSavedState).
+    bool hasState = loadStateFile(&restoreMode, &restoreBrightness, &savedNits, &stateEnabled);
+    m_loadingSavedState = hasState ? stateEnabled : detectHardwareAvailability();
 
     m_brightnessThrottle->setInterval(kBrightnessThrottleMs);
     m_brightnessThrottle->setSingleShot(true);
@@ -565,7 +584,9 @@ void DualDisplayAbsoluteController::setEnabled(bool enabled, const QString &prim
                 m_hasRestoreState = false;
                 setEnabledState(false);
                 setTargetActive(false);
-                clearStateFile();
+                // Dual mode is on by default when the dongle is present, so an explicit
+                // "off" has to be stored, not just the "on" state deleted.
+                writeDisabledStateFile();
                 setStatusText("Dual absolute mode off");
                 m_exitFlushed = true;
                 setBusy(false);
@@ -1004,6 +1025,30 @@ void DualDisplayAbsoluteController::flushStateSave()
     saveStateFile();
 }
 
+void DualDisplayAbsoluteController::writeDisabledStateFile() const
+{
+    QJsonObject object;
+    object["version"] = 1;
+    object["enabled"] = false;
+    object["last_nits"] = m_pendingNits;
+    object["min_nits"] = m_minNits;
+    object["restore_primary_mode"] = m_restorePrimaryMode;
+    object["restore_primary_brightness"] = m_restorePrimaryBrightness;
+
+    if (ensureStateDirectory() && writeDualDisplayStateFile(kStateFilePath, object)) {
+        if (QFile::exists(kSessionStateFilePath) && !QFile::remove(kSessionStateFilePath)) {
+            qWarning() << "DualDisplayAbsoluteController: Failed to remove session state file"
+                       << kSessionStateFilePath;
+        }
+        return;
+    }
+
+    if (!writeDualDisplayStateFile(kSessionStateFilePath, object)) {
+        qWarning() << "DualDisplayAbsoluteController: Failed to write disabled state"
+                   << kSessionStateFilePath;
+    }
+}
+
 void DualDisplayAbsoluteController::clearStateFile() const
 {
     bool persistentRemoveFailed = false;
@@ -1066,7 +1111,7 @@ void DualDisplayAbsoluteController::refreshHardwareAvailability()
     bool available = detectHardwareAvailability();
     bool wasAvailable = m_hardwareAvailable;
     setHardwareAvailable(available);
-    if (available && !wasAvailable && !m_active && !m_busy) {
+    if (available && (!wasAvailable || m_defaultEnablePending) && !m_active && !m_busy) {
         QTimer::singleShot(0, this, &DualDisplayAbsoluteController::adoptSavedState);
     }
 }
@@ -1081,9 +1126,38 @@ void DualDisplayAbsoluteController::adoptSavedState()
     int restoreBrightness = 50;
     double savedNits = 0.0;
     bool stateEnabled = false;
-    if (!loadStateFile(&restoreMode, &restoreBrightness, &savedNits, &stateEnabled) ||
-        !stateEnabled) {
+    bool hasState = loadStateFile(&restoreMode, &restoreBrightness, &savedNits, &stateEnabled);
+    if (hasState && !stateEnabled) {
+        // The user turned dual mode off; that choice sticks until they turn it back on.
+        m_defaultEnablePending = false;
         setLoadingSavedState(false);
+        return;
+    }
+
+    if (!hasState) {
+        // Never configured: default to dual mode when the dongle is present.
+        if (!m_hardwareAvailable) {
+            setLoadingSavedState(false);
+            return;
+        }
+
+        QJsonObject primaryStatus;
+        QString error;
+        if (!readStatus(kPrimaryPort, &primaryStatus, &error)) {
+            // The primary als-dimmer is not up yet (e.g. early in boot); retry from the
+            // hardware poll timer instead of giving up for this session.
+            qWarning() << "DualDisplayAbsoluteController: Default dual mode deferred:" << error;
+            m_defaultEnablePending = true;
+            setLoadingSavedState(false);
+            return;
+        }
+
+        m_defaultEnablePending = false;
+        setLoadingSavedState(false);
+        qDebug() << "DualDisplayAbsoluteController: i2c-tiny-usb dongle present and no saved"
+                 << "choice; enabling dual display mode by default";
+        setEnabled(true, primaryStatus.value("mode").toString("manual"),
+                   primaryStatus.value("brightness").toInt(50));
         return;
     }
 
