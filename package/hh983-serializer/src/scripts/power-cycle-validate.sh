@@ -279,21 +279,47 @@ wait_for_uptime() {
 # harness then measured the desktop while believing it was measuring patterns.
 # Every reading came back around 5 nits and looked exactly like a black panel.
 # Stop first, then start, and confirm what is actually running.
+#
+# The first start-app after a cold boot does not always take: on 4 of 12 boots
+# (2026-11-13, NQ1 rig) the launcher answered "Connection reset by peer" or
+# reported nothing running 7 s later. Two of those boots measured the launcher
+# screen (1.6 nits) and were reported as black screens with the panel fine.
+# So retry, and count the app as up only once its pattern server on 8082
+# answers a command -- that is what the measurements depend on.
+PATTERN_START_TRIES=4
+running_app() {
+    rsh 60 "$MICROBIN/launcher-client --command=get-running-app 2>/dev/null" | tail -1
+}
+pattern_server_ok() {
+    [ "$(rsh 30 "$MICROBIN/launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg=white 2>/dev/null" | tail -1)" = "OK" ]
+}
 start_pattern_app() {
-    local running
-    running=$(rsh 60 "$MICROBIN/launcher-client --command=get-running-app" 2>/dev/null)
-    if [ "$running" != "pattern-generator" ]; then
+    local running try=1 t
+    while [ "$try" -le "$PATTERN_START_TRIES" ]; do
+        running=$(running_app)
+        if [ "$running" = "pattern-generator" ] && pattern_server_ok; then
+            [ "$try" -gt 1 ] && say "  pattern generator up on try $try"
+            return 0
+        fi
+        say "  pattern generator not up (launcher says '${running:-nothing}'), start try $try of $PATTERN_START_TRIES"
         rsh 60 "$MICROBIN/launcher-client --command=stop-app" >/dev/null 2>&1
         sleep 5
         rsh 90 "$MICROBIN/launcher-client --command=start-app --command-arg=pattern-generator" >/dev/null 2>&1
-        sleep 7
-        running=$(rsh 60 "$MICROBIN/launcher-client --command=get-running-app" 2>/dev/null)
+        t=0
+        while [ "$t" -lt 20 ]; do
+            sleep 2
+            t=$((t + 2))
+            [ "$(running_app)" = "pattern-generator" ] && pattern_server_ok && break
+        done
+        try=$((try + 1))
+    done
+    running=$(running_app)
+    if [ "$running" = "pattern-generator" ] && pattern_server_ok; then
+        say "  pattern generator up after the last try"
+        return 0
     fi
-    if [ "$running" != "pattern-generator" ]; then
-        say "  WARNING: pattern generator is not running (launcher says '${running:-nothing}')"
-        return 1
-    fi
-    return 0
+    say "  WARNING: pattern generator would not start (launcher says '${running:-nothing}')"
+    return 1
 }
 
 stop_pattern() { rsh 60 "$MICROBIN/launcher-client --command=stop-app" >/dev/null; }
@@ -397,8 +423,11 @@ detect_panel() {
             PANEL=$t ;;
         *)
             say "  WARNING: could not read the display type (got '${t:-empty}'), using the 15.6-2k5 reference set"
-            PANEL=15.6-2k5 ;;
+            PANEL=15.6-2k5
+            PANEL_GUESSED=1
+            return 1 ;;
     esac
+    PANEL_GUESSED=0
 }
 
 # White luminance of the current verdict, the denominator for every ratio.
@@ -412,6 +441,11 @@ establish_white_ref() {
     local out y cx cy
     WHITE_REF=""
     out=$(measure_pattern white)
+    if [ "$out" = "NOCMD" ]; then
+        SEQ_LOG="$SEQ_LOG white-ref=NO-PATTERN-CMD"
+        SEQ_HARNESS_ERR=1
+        return 1
+    fi
     y=$(echo  "$out" | awk '{print $1}')
     cx=$(echo "$out" | awk '{print $2}')
     cy=$(echo "$out" | awk '{print $3}')
@@ -445,15 +479,20 @@ establish_white_ref() {
 # Measure whatever is on the glass right now.  Echoes "<Y> <x> <y>".
 measure_only() {
     rsh 150 "cd $MEASDIR; \
-             timeout 60 ./measure-display.sh --sensor-only=yes --quiet=yes | grep ',SENSOR,' | tail -1 | \
+             timeout 60 ./measure-display.sh --sensor-only=yes --quiet=yes 2>/dev/null | grep ',SENSOR,' | tail -1 | \
              awk -F, '{print \$6, \$9, \$10}'"
 }
 
 # Set one pattern, let it settle, measure it.  Echoes "<Y> <x> <y>".
+#
+# Echoes "NOCMD" instead when the pattern generator does not answer the command:
+# whatever is on the glass then is not the pattern, and the launcher-client's
+# error text on stderr used to land in the reading ("Y=Error: x=Failed ...").
 measure_pattern() {
-    rsh 150 "$MICROBIN/launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg=$1 >/dev/null; \
+    rsh 150 "r=\$($MICROBIN/launcher-client --srv=127.0.0.1:8082 --command=pattern --command-arg=$1 2>/dev/null | tail -1); \
+             [ \"\$r\" = OK ] || { echo NOCMD; exit 0; }; \
              sleep $SETTLE; cd $MEASDIR; \
-             timeout 60 ./measure-display.sh --sensor-only=yes --quiet=yes | grep ',SENSOR,' | tail -1 | \
+             timeout 60 ./measure-display.sh --sensor-only=yes --quiet=yes 2>/dev/null | grep ',SENSOR,' | tail -1 | \
              awk -F, '{print \$6, \$9, \$10}'"
 }
 
@@ -500,9 +539,18 @@ is_number() { case "$1" in ''|*[!0-9.]*) return 1 ;; *) return 0 ;; esac; }
 # answer?  Then the verdict says nothing about the panel and the caller must not
 # call it a black screen.
 SEQ_SENSOR_ERR=0
+# Did any step fail because the pattern generator did not take the command?
+# Then the glass was not showing the pattern either, and it is the harness that
+# failed, not the panel.
+SEQ_HARNESS_ERR=0
 
 check_one() {
     local label=$1 ref=$2 out=$3 y cx cy
+    if [ "$out" = "NOCMD" ]; then
+        SEQ_LOG="$SEQ_LOG ${label}=NO-PATTERN-CMD"
+        SEQ_HARNESS_ERR=1
+        return 1
+    fi
     y=$(echo  "$out" | awk '{print $1}')
     cx=$(echo "$out" | awk '{print $2}')
     cy=$(echo "$out" | awk '{print $3}')
@@ -554,6 +602,7 @@ check_hold() {
     colour=$(printf '%s\n' red green blue | shuf -n 1)
     SEQ_LOG=""
     SEQ_SENSOR_ERR=0
+    SEQ_HARNESS_ERR=0
     establish_white_ref || return 1
     check_one "$colour" "$colour" "$(measure_pattern "$colour")" || rc=1
     sleep "$HOLD_SECS"
@@ -567,6 +616,7 @@ check_sequence() {
     local p rc=0
     SEQ_LOG=""
     SEQ_SENSOR_ERR=0
+    SEQ_HARNESS_ERR=0
     establish_white_ref || return 1
     for p in $1; do
         check_one "$p" "$p" "$(measure_pattern "$p")" || rc=1
@@ -748,6 +798,11 @@ fi
 say "log: $LOG"
 logf "# cycle,timestamp,uptime_s,wedge_count,boot_wedge_count,dmesg_wedge_lines,boot_htotal,wedged_at_boot,recovery,ioc_1008,ioc_1009,measured_sequence,result"
 
+# A rig that is switched off when the run starts cannot be asked: the guess is
+# then replaced by the real type once the first cycle has booted it. On
+# 2026-11-14 the NQ1 rig started unpowered, was judged against the 15.6"
+# reference set, and its correct blue and green failed the first cycle.
+PANEL_GUESSED=0
 if [ -z "$PANEL" ]; then
     detect_panel
 fi
@@ -757,6 +812,21 @@ if [ "$(tasmota Power)" = "" ]; then
     say "Tasmota at $TASMOTA does not answer - aborting before touching anything"
     exit 2
 fi
+
+# A cycle the harness could not judge (pattern generator would not start or
+# stopped taking commands) is power-cycled again rather than called a black
+# screen; MAX_SKIPS of them in one run stop it, as the harness itself is broken.
+MAX_SKIPS=3
+skips=0
+skip_cycle() {
+    skips=$((skips + 1))
+    logf "$cycle,$(date -Is),,,,,,,,,,\"$1\",SKIP-HARNESS"
+    say "  cycle $cycle SKIPPED ($skips of $MAX_SKIPS allowed): $1 -- says nothing about the panel, power-cycling again"
+    if [ "$skips" -ge "$MAX_SKIPS" ]; then
+        say "!!! $skips cycles could not be judged; stopping -- fix the test harness, the panel was not judged"
+        exit 3
+    fi
+}
 
 cycle=1
 while [ "$cycle" -le "$CYCLES" ]; do
@@ -776,8 +846,14 @@ while [ "$cycle" -le "$CYCLES" ]; do
         exit 1
     fi
     wait_for_uptime
+    if [ "$PANEL_GUESSED" = "1" ] && detect_panel; then
+        say "  panel reference set now: $PANEL (read from the booted rig)"
+    fi
 
-    start_pattern_app
+    if ! start_pattern_app; then
+        skip_cycle "pattern generator would not start"
+        continue
+    fi
     if [ "$VERDICT_MODE" = "hold" ]; then
         seq_list="hold-one-colour"
         check_hold; seq_rc=$?
@@ -803,6 +879,20 @@ while [ "$cycle" -le "$CYCLES" ]; do
         exit 1
     fi
 
+    if [ "$seq_rc" != "0" ] && [ "$SEQ_HARNESS_ERR" = "1" ]; then
+        say "  pattern generator stopped taking commands ($flat); restarting it and re-running the verdict once"
+        if start_pattern_app; then
+            if [ "$VERDICT_MODE" = "hold" ]; then check_hold; seq_rc=$?
+            else check_sequence "$seq_list"; seq_rc=$?; fi
+            flat=$SEQ_LOG
+        else
+            SEQ_HARNESS_ERR=1
+        fi
+        if [ "$seq_rc" != "0" ] && [ "$SEQ_HARNESS_ERR" = "1" ]; then
+            skip_cycle "pattern generator not taking commands:$flat"
+            continue
+        fi
+    fi
     if [ "$seq_rc" != "0" ] && [ "$SEQ_SENSOR_ERR" = "1" ]; then
         say "  colorimeter did not answer; re-running the verdict once"
         if [ "$VERDICT_MODE" = "hold" ]; then check_hold; seq_rc=$?
@@ -889,6 +979,6 @@ while [ "$cycle" -le "$CYCLES" ]; do
 done
 
 say ""
-say "=== $CYCLES/$CYCLES cycles passed, dtg_wedge_count 0 at the end of every one"
+say "=== $CYCLES/$CYCLES cycles passed, dtg_wedge_count 0 at the end of every one ($skips harness skip(s) re-run)"
 say "rig left on the desktop with the pattern generator stopped"
 exit 0
