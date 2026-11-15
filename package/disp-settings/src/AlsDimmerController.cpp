@@ -185,6 +185,13 @@ void AlsDimmerController::parseResponse(const QByteArray &data)
         return;
     }
 
+    // Privacy light: the set_privacy_level / get_privacy_status reply (get_status carries it too,
+    // handled with the rest of the status below)
+    if (responseData.contains("privacy") && !responseData.contains("lux")) {
+        handlePrivacy(responseData["privacy"].toObject());
+        return;
+    }
+
     // Check what kind of response this is
     if (responseData.contains("lux")) {
         // This is a status response
@@ -264,6 +271,9 @@ void AlsDimmerController::handleStatusResponse(const QJsonObject &data)
         }
     }
 
+    // Privacy light; an als-dimmer that does not report it has none to offer
+    handlePrivacy(data["privacy"].toObject());
+
     // Update zone
     if (data.contains("zone")) {
         QString newZone = data["zone"].toString();
@@ -311,6 +321,35 @@ void AlsDimmerController::setLdDynamic(bool enabled)
     params["enabled"] = enabled;
     cmd["params"] = params;
     sendCommand(cmd);
+}
+
+void AlsDimmerController::setPrivacyLevel(int level, bool persist)
+{
+    if (!m_connected || !m_privacyAvailable) return;
+    QJsonObject cmd;
+    cmd["version"] = "1.0";
+    cmd["command"] = "set_privacy_level";
+    QJsonObject params;
+    params["level"] = qBound(0, level, 100);
+    params["persist"] = persist;
+    cmd["params"] = params;
+    sendCommand(cmd);
+}
+
+void AlsDimmerController::handlePrivacy(const QJsonObject &privacy)
+{
+    const bool available = privacy["available"].toBool(false);
+    const int level = privacy["level"].toInt(0);
+    const bool running = privacy["running"].toBool(false);
+    const bool reachable = privacy["reachable"].toBool(false);
+    if (available != m_privacyAvailable || level != m_privacyLevel ||
+        running != m_privacyRunning || reachable != m_privacyReachable) {
+        m_privacyAvailable = available;
+        m_privacyLevel = level;
+        m_privacyRunning = running;
+        m_privacyReachable = reachable;
+        emit privacyChanged();
+    }
 }
 
 void AlsDimmerController::handleLdStatus(const QJsonObject &data)

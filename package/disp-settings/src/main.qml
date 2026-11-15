@@ -68,6 +68,10 @@ Window {
 
     // Adaptive layout: three columns on wide screens (aspect ratio > 2.0)
     property bool wideScreen: Screen.width / Screen.height > 2.0
+    // Firmware versions as chips instead of rows: always on wide screens (three columns leave
+    // the middle one too short), and wherever the privacy-light slider takes a row of the
+    // Panel features card (otherwise Firmware and Touch run past the bottom on two columns).
+    readonly property bool compactFirmware: wideScreen || alsDimmer.privacyAvailable
 
     function withAlpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
 
@@ -1033,7 +1037,8 @@ Window {
                     // local_dimming_profiles). Off = one fixed neutral profile.
                     FeatureTile {
                         visible: alsDimmer.ldAvailable
-                        Layout.columnSpan: 2
+                        // Wide (1920x720) screens pair it with the privacy light to save a row
+                        Layout.columnSpan: wideScreen && alsDimmer.privacyAvailable ? 1 : 2
                         title: "Dynamic dimming"
                         icon: "dimming"
                         tint: "#38BDF8"
@@ -1045,6 +1050,162 @@ Window {
                                 ? "Follows ambient light · " + ldProfileName(alsDimmer.ldProfile)
                                 : "Off · fixed profile"
                         onToggled: alsDimmer.setLdDynamic(checked)
+                    }
+                    // Privacy light level (display IOC 0x66 0x0202, held and saved by als-dimmer).
+                    // Only on displays that have the light; the Privacy tile above stays reserved
+                    // for the FPGA's on/off switch. Full row normally; on wide screens with
+                    // Dynamic dimming it takes the other half of that row (compact: title and
+                    // value on top, the slider below).
+                    Rectangle {
+                        id: privacyRow
+                        visible: alsDimmer.privacyAvailable
+                        readonly property bool compact: wideScreen && alsDimmer.ldAvailable
+                        Layout.columnSpan: compact ? 1 : 2
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 62 * s
+                        radius: 14 * s
+                        color: t.tile
+                        border.color: privacySlider.pressed ? withAlpha("#A78BFA", 0.6) : t.border
+                        Behavior on border.color { ColorAnimation { duration: 200 } }
+
+                        readonly property bool live: alsDimmer.connected
+                        readonly property real textX: privacyBadge.x + privacyBadge.width + 10 * s
+                        // The finger owns the value while dragging and briefly after release
+                        property bool holdValue: false
+                        property int lastSent: -1
+
+                        Timer {   // ~10 writes/s while dragging; als-dimmer applies them without saving
+                            interval: 100
+                            repeat: true
+                            running: privacySlider.pressed
+                            onTriggered: {
+                                var v = Math.round(privacySlider.value)
+                                if (v !== privacyRow.lastSent) {
+                                    privacyRow.lastSent = v
+                                    alsDimmer.setPrivacyLevel(v, false)
+                                }
+                            }
+                        }
+                        Timer {
+                            id: privacyHoldTimer
+                            interval: 1500
+                            onTriggered: privacyRow.holdValue = false
+                        }
+
+                        Rectangle {
+                            id: privacyBadge
+                            x: 10 * s; anchors.verticalCenter: parent.verticalCenter
+                            width: 38 * s; height: width; radius: 10 * s
+                            color: withAlpha("#A78BFA", privacyRow.live ? 0.18 : 0.07)
+                            Image {
+                                anchors.centerIn: parent
+                                width: parent.width * 0.62; height: width
+                                sourceSize: Qt.size(width, height)
+                                source: "qrc:/icons/privacy.svg"
+                                opacity: privacyRow.live ? 1.0 : 0.35
+                            }
+                        }
+                        Column {
+                            id: privacyText
+                            x: privacyRow.textX
+                            y: privacyRow.compact ? 7 * s : (parent.height - height) / 2
+                            width: privacyRow.compact ? privacyValue.x - x - 6 * s : 128 * s
+                            spacing: 1 * s
+                            Text {
+                                width: parent.width; elide: Text.ElideRight
+                                text: "Privacy light"
+                                color: privacyRow.live ? t.text : t.sub
+                                font.family: t.font; font.pixelSize: 16 * s; font.weight: Font.DemiBold
+                            }
+                            Text {
+                                visible: !privacyRow.compact
+                                width: parent.width; elide: Text.ElideRight
+                                text: !privacyRow.live ? "Service offline"
+                                      : !alsDimmer.privacyReachable ? "Display not answering"
+                                      : !alsDimmer.privacyRunning ? "Off (display off)"
+                                      : Math.round(privacySlider.value) === 0 ? "Off" : "On"
+                                color: privacyRow.live && alsDimmer.privacyRunning && Math.round(privacySlider.value) > 0
+                                       ? "#A78BFA" : t.dim
+                                font.family: t.font; font.pixelSize: 14 * s
+                            }
+                        }
+                        Text {
+                            id: privacyValue
+                            x: parent.width - width - 14 * s
+                            y: privacyRow.compact ? 7 * s : (parent.height - height) / 2
+                            width: 58 * s
+                            horizontalAlignment: Text.AlignRight
+                            // Compact has no status line: say "off" here when the display is off
+                            text: privacyRow.compact && privacyRow.live && !alsDimmer.privacyRunning
+                                  ? "off" : Math.round(privacySlider.value) + "%"
+                            color: privacyRow.live ? t.text : t.sub
+                            font.family: t.font
+                            font.pixelSize: (privacyRow.compact ? 16 : 20) * s
+                            font.weight: Font.DemiBold
+                        }
+                        Slider {
+                            id: privacySlider
+                            // Compact: under the title, from the badge to the right edge
+                            x: privacyRow.compact ? privacyRow.textX - leftPadding : privacyText.x + privacyText.width + 4 * s
+                            width: privacyRow.compact ? parent.width - x - 4 * s : privacyValue.x - x - 4 * s
+                            height: (privacyRow.compact ? 30 : 48) * s   // touch target
+                            y: privacyRow.compact ? parent.height - height - 2 * s : (parent.height - height) / 2
+                            from: 0; to: 100; stepSize: 1
+                            enabled: privacyRow.live
+                            padding: 0
+                            leftPadding: (privacyRow.compact ? 13 : 16) * s
+                            rightPadding: leftPadding
+
+                            Binding {
+                                target: privacySlider
+                                property: "value"
+                                value: alsDimmer.privacyLevel
+                                when: !privacySlider.pressed && !privacyRow.holdValue
+                            }
+
+                            background: Rectangle {
+                                x: privacySlider.leftPadding
+                                y: privacySlider.topPadding + privacySlider.availableHeight / 2 - height / 2
+                                width: privacySlider.availableWidth
+                                height: (privacyRow.compact ? 8 : 10) * s
+                                radius: height / 2
+                                color: "#2A3448"
+                                Rectangle {
+                                    width: Math.max(parent.height, privacySlider.visualPosition * parent.width)
+                                    height: parent.height
+                                    radius: height / 2
+                                    opacity: privacySlider.enabled ? 1.0 : 0.35
+                                    gradient: Gradient {
+                                        orientation: Gradient.Horizontal
+                                        GradientStop { position: 0.0; color: "#6D28D9" }
+                                        GradientStop { position: 1.0; color: "#A78BFA" }
+                                    }
+                                }
+                            }
+                            handle: Rectangle {
+                                x: privacySlider.leftPadding + privacySlider.visualPosition * privacySlider.availableWidth - width / 2
+                                y: privacySlider.topPadding + privacySlider.availableHeight / 2 - height / 2
+                                width: (privacyRow.compact ? 26 : 34) * s; height: width; radius: width / 2
+                                color: "#FFFFFF"
+                                border.color: privacySlider.enabled ? "#A78BFA" : t.dim
+                                border.width: (privacyRow.compact ? 3 : 4) * s
+                                scale: privacySlider.pressed ? 1.12 : 1.0
+                                Behavior on scale { NumberAnimation { duration: 120 } }
+                            }
+
+                            onPressedChanged: {
+                                if (pressed) {
+                                    privacyRow.holdValue = true
+                                    privacyHoldTimer.stop()
+                                } else {
+                                    // Release: apply and save (the one write that reaches /data)
+                                    var v = Math.round(value)
+                                    privacyRow.lastSent = v
+                                    alsDimmer.setPrivacyLevel(v, true)
+                                    privacyHoldTimer.restart()
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -1098,18 +1259,42 @@ Window {
                 width: board.w1
                 height: wideScreen ? board.height - featuresCard.height - board.gap : implicitHeight
 
+                // Compact form (compactFirmware): the versions as chips
+                Flow {
+                    visible: compactFirmware
+                    width: parent.width
+                    spacing: 6 * s
+                    Chip { label: "OS " + (osVersion !== "" ? osVersion : "—"); tint: t.accent; lit: true }
+                    Chip { label: "Apps " + (swVersion !== "" ? swVersion : "—"); tint: t.accent; lit: true }
+                    Chip {
+                        visible: mcu.available
+                        label: "IOC " + (mcu.firmwareVersion !== "" ? mcu.firmwareVersion : "—")
+                               + (mcu.activeSlot !== "" ? " · " + mcu.activeSlot : "")
+                        tint: mcu.versionAlert ? t.bad : t.ok
+                        lit: true
+                    }
+                    Chip {
+                        visible: hh983.available
+                        label: "983HH " + (hh983.firmwareVersion !== "" ? hh983.firmwareVersion : "—")
+                               + (hh983.activeSlot !== "" ? " · " + hh983.activeSlot : "")
+                        tint: hh983.versionAlert ? t.bad : t.ok
+                        lit: true
+                    }
+                }
                 VersionRow {
+                    visible: !compactFirmware
                     name: "OS image"
                     version: osVersion
                     date: osBuildDate.substring(0, 10)
                 }
                 VersionRow {
+                    visible: !compactFirmware
                     name: "Applications"
                     version: swVersion
                     date: swBuildDate.substring(0, 10)
                 }
                 VersionRow {
-                    visible: mcu.available
+                    visible: mcu.available && !compactFirmware
                     name: "Display controller"
                     version: mcu.firmwareVersion
                     slot: mcu.activeSlot
@@ -1119,7 +1304,7 @@ Window {
                     alertReason: mcu.versionAlertReason
                 }
                 VersionRow {
-                    visible: hh983.available
+                    visible: hh983.available && !compactFirmware
                     name: "983HH serializer"
                     version: hh983.firmwareVersion
                     slot: hh983.activeSlot

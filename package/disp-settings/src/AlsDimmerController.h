@@ -40,6 +40,13 @@ class AlsDimmerController : public QObject
     Q_PROPERTY(double thermalStartC READ thermalStartC NOTIFY ldStatusChanged)
     Q_PROPERTY(bool backlightTempValid READ backlightTempValid NOTIFY ldStatusChanged)
     Q_PROPERTY(double backlightTempC READ backlightTempC NOTIFY ldStatusChanged)
+    // Privacy light on the display IOC (0x66 0x0202/0x0203, S4 display_manager_s4 v01.12+), held by
+    // als-dimmer and reported in get_status as "privacy". privacyAvailable stays false with an
+    // als-dimmer that does not report it and on displays without the light.
+    Q_PROPERTY(bool privacyAvailable READ privacyAvailable NOTIFY privacyChanged)
+    Q_PROPERTY(int privacyLevel READ privacyLevel NOTIFY privacyChanged)
+    Q_PROPERTY(bool privacyRunning READ privacyRunning NOTIFY privacyChanged)
+    Q_PROPERTY(bool privacyReachable READ privacyReachable NOTIFY privacyChanged)
 
 public:
     explicit AlsDimmerController(QObject *parent = nullptr);
@@ -56,6 +63,10 @@ public:
     bool adaptiveEnabled() const { return m_mode == "auto"; }
     bool connected() const { return m_connected; }
     bool ldAvailable() const { return m_ldAvailable; }
+    bool privacyAvailable() const { return m_privacyAvailable; }
+    int privacyLevel() const { return m_privacyLevel; }
+    bool privacyRunning() const { return m_privacyRunning; }
+    bool privacyReachable() const { return m_privacyReachable; }
     bool ldDynamicEnabled() const { return m_ldDynamicEnabled; }
     QString ldProfile() const { return m_ldProfile; }
     bool ldSettled() const { return m_ldSettled; }
@@ -83,6 +94,8 @@ public slots:
     Q_INVOKABLE void adjustBrightness(int delta);
     Q_INVOKABLE void reconnect();
     Q_INVOKABLE void setLdDynamic(bool enabled);
+    // persist=false while a slider is dragged (applied, not saved); true on release
+    Q_INVOKABLE void setPrivacyLevel(int level, bool persist = true);
 
 signals:
     void brightnessChanged();
@@ -92,6 +105,7 @@ signals:
     void zoneChanged();
     void connectedChanged();
     void ldStatusChanged();
+    void privacyChanged();
     void errorOccurred(const QString &error);
 
 private slots:
@@ -109,6 +123,7 @@ private:
     void handleStatusResponse(const QJsonObject &data);
     void handleConfigResponse(const QJsonObject &data);
     void handleLdStatus(const QJsonObject &data);
+    void handlePrivacy(const QJsonObject &privacy);
 
     QLocalSocket *m_socket;
     QTimer *m_pollTimer;
@@ -131,6 +146,10 @@ private:
     bool m_ldStatusSupported = true;   // false once als-dimmer answered "Unknown command type"
     int m_pollCount = 0;
     bool m_ldAvailable = false;
+    bool m_privacyAvailable = false;
+    int m_privacyLevel = 0;
+    bool m_privacyRunning = false;
+    bool m_privacyReachable = false;
     bool m_ldDynamicEnabled = false;
     QString m_ldProfile;
     bool m_ldSettled = false;
