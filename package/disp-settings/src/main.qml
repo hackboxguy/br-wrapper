@@ -72,6 +72,33 @@ Window {
     // the middle one too short), and wherever the privacy-light slider takes a row of the
     // Panel features card (otherwise Firmware and Touch run past the bottom on two columns).
     readonly property bool compactFirmware: wideScreen || alsDimmer.privacyAvailable
+    // 1920x720 (12.3"): the Firmware card is one header row, and the Panel features tiles get its
+    // height (bigger touch targets for the switches and the privacy-light slider)
+    readonly property bool bigTiles: wideScreen
+    // bigTiles: the tile rows share the Panel features card's free height (62..96 px at s = 1)
+    // Privacy | Local dimming, Pixel comp | Vision booster (or Local | Pixel, Vision booster), then
+    // one row for Dynamic dimming and/or the privacy light when either is there
+    readonly property int tileRows: 2 + (alsDimmer.ldAvailable || alsDimmer.privacyAvailable ? 1 : 0)
+    readonly property real tileH: {
+        if (!bigTiles) return 62 * s
+        var free = featuresCard.height - featuresCard.pad * 2 - featuresCard.headH - 12 * s
+                   - (ldChips.visible ? ldChips.height + 12 * s : 0) - 12 * s * (tileRows - 1)
+        return Math.max(62 * s, Math.min(96 * s, Math.floor(free / tileRows)))
+    }
+    // The Firmware chips in one list (the bigTiles header row repeats it)
+    readonly property var firmwareChips: {
+        var c = [{ label: "OS " + (osVersion !== "" ? osVersion : "—"), ok: false, alert: false },
+                 { label: "Apps " + (swVersion !== "" ? swVersion : "—"), ok: false, alert: false }]
+        if (mcu.available)
+            c.push({ label: "IOC " + (mcu.firmwareVersion !== "" ? mcu.firmwareVersion : "—")
+                            + (mcu.activeSlot !== "" ? " · " + mcu.activeSlot : ""),
+                     ok: true, alert: mcu.versionAlert })
+        if (hh983.available)
+            c.push({ label: "983HH " + (hh983.firmwareVersion !== "" ? hh983.firmwareVersion : "—")
+                            + (hh983.activeSlot !== "" ? " · " + hh983.activeSlot : ""),
+                     ok: true, alert: hh983.versionAlert })
+        return c
+    }
 
     function withAlpha(c, a) { return Qt.rgba(c.r, c.g, c.b, a) }
 
@@ -471,7 +498,7 @@ Window {
         property string note
         signal toggled(bool checked)
         Layout.fillWidth: true
-        Layout.preferredHeight: 62 * s
+        Layout.preferredHeight: tileH
         radius: 14 * s
         color: tileArea.pressed && available ? t.cardPressed : t.tile
         border.color: on && available ? withAlpha(tint, 0.6) : t.border
@@ -480,12 +507,20 @@ Window {
         // On top of the switch too, so every tap goes through here: the switch only shows
         // tile.on. (A self-toggling Switch drifted from the state on a fast double tap: Qt takes
         // the second tap as a double-click, flipped the knob and broke its binding, no click.)
+        // Touch bounce: the 12.3" panel can split one finger contact into two touches 25-50 ms
+        // apart (recorded on the rig); toggling on both cancelled the tap. A press within 150 ms
+        // of the last lift-off is the same tap.
         MouseArea {
             id: tileArea
             anchors.fill: parent
             z: 2
-            onClicked: if (tile.available) tile.toggled(!tile.on)
-            onDoubleClicked: if (tile.available) tile.toggled(!tile.on)
+            property double lastRelease: 0
+            property bool bounce: false
+            onPressed: bounce = Date.now() - lastRelease < 150
+            onReleased: lastRelease = Date.now()
+            onCanceled: lastRelease = Date.now()
+            onClicked: if (tile.available && !bounce) tile.toggled(!tile.on)
+            onDoubleClicked: if (tile.available && !bounce) tile.toggled(!tile.on)
         }
         Rectangle {
             id: tileBadge
@@ -525,6 +560,8 @@ Window {
             anchors.verticalCenter: parent.verticalCenter
             // A feature that cannot be switched shows why instead of a dead toggle
             visible: tile.available
+            // The whole tile is the touch target (tileArea), so the switch keeps its size and the
+            // title its width
             trackWidth: 58 * s; trackHeight: 34 * s
             onColor: tile.tint
             enabled: tile.available
@@ -986,7 +1023,7 @@ Window {
                 tint: "#A78BFA"
                 x: board.x1; y: 0
                 width: board.w1
-                height: implicitHeight
+                height: bigTiles ? board.height - firmwareCard.height - board.gap : implicitHeight
 
                 GridLayout {
                     width: parent.width
@@ -1068,7 +1105,7 @@ Window {
                         readonly property bool compact: wideScreen && alsDimmer.ldAvailable
                         Layout.columnSpan: compact ? 1 : 2
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 62 * s
+                        Layout.preferredHeight: tileH
                         radius: 14 * s
                         color: t.tile
                         border.color: privacySlider.pressed ? withAlpha("#A78BFA", 0.6) : t.border
@@ -1114,14 +1151,14 @@ Window {
                         Column {
                             id: privacyText
                             x: privacyRow.textX
-                            y: privacyRow.compact ? 7 * s : (parent.height - height) / 2
+                            y: privacyRow.compact ? 8 * s : (parent.height - height) / 2
                             width: privacyRow.compact ? privacyValue.x - x - 6 * s : 128 * s
                             spacing: 1 * s
                             Text {
                                 width: parent.width; elide: Text.ElideRight
                                 text: "Privacy light"
                                 color: privacyRow.live ? t.text : t.sub
-                                font.family: t.font; font.pixelSize: 16 * s; font.weight: Font.DemiBold
+                                font.family: t.font; font.pixelSize: (bigTiles ? 18 : 16) * s; font.weight: Font.DemiBold
                             }
                             Text {
                                 visible: !privacyRow.compact
@@ -1138,7 +1175,7 @@ Window {
                         Text {
                             id: privacyValue
                             x: parent.width - width - 14 * s
-                            y: privacyRow.compact ? 7 * s : (parent.height - height) / 2
+                            y: privacyRow.compact ? 8 * s : (parent.height - height) / 2
                             width: 58 * s
                             horizontalAlignment: Text.AlignRight
                             // Compact has no status line: say "off" here when the display is off
@@ -1146,7 +1183,7 @@ Window {
                                   ? "off" : Math.round(privacySlider.value) + "%"
                             color: privacyRow.live ? t.text : t.sub
                             font.family: t.font
-                            font.pixelSize: (privacyRow.compact ? 16 : 20) * s
+                            font.pixelSize: (privacyRow.compact ? (bigTiles ? 18 : 16) : 20) * s
                             font.weight: Font.DemiBold
                         }
                         Slider {
@@ -1154,12 +1191,12 @@ Window {
                             // Compact: under the title, from the badge to the right edge
                             x: privacyRow.compact ? privacyRow.textX - leftPadding : privacyText.x + privacyText.width + 4 * s
                             width: privacyRow.compact ? parent.width - x - 4 * s : privacyValue.x - x - 4 * s
-                            height: (privacyRow.compact ? 30 : 48) * s   // touch target
+                            height: (privacyRow.compact ? (bigTiles ? 44 : 30) : 48) * s   // touch target
                             y: privacyRow.compact ? parent.height - height - 2 * s : (parent.height - height) / 2
                             from: 0; to: 100; stepSize: 1
                             enabled: privacyRow.live
                             padding: 0
-                            leftPadding: (privacyRow.compact ? 13 : 16) * s
+                            leftPadding: (privacyRow.compact ? (bigTiles ? 17 : 13) : 16) * s
                             rightPadding: leftPadding
 
                             Binding {
@@ -1191,7 +1228,7 @@ Window {
                             handle: Rectangle {
                                 x: privacySlider.leftPadding + privacySlider.visualPosition * privacySlider.availableWidth - width / 2
                                 y: privacySlider.topPadding + privacySlider.availableHeight / 2 - height / 2
-                                width: (privacyRow.compact ? 26 : 34) * s; height: width; radius: width / 2
+                                width: (privacyRow.compact ? (bigTiles ? 34 : 26) : 34) * s; height: width; radius: width / 2
                                 color: "#FFFFFF"
                                 border.color: privacySlider.enabled ? "#A78BFA" : t.dim
                                 border.width: (privacyRow.compact ? 3 : 4) * s
@@ -1217,6 +1254,7 @@ Window {
 
                 // Live state of dynamic local dimming and the thermal limiter
                 Flow {
+                    id: ldChips
                     visible: alsDimmer.ldAvailable && alsDimmer.connected
                     width: parent.width
                     spacing: 6 * s
@@ -1263,11 +1301,21 @@ Window {
                 x: board.x1
                 y: featuresCard.height + board.gap
                 width: board.w1
-                height: wideScreen ? board.height - featuresCard.height - board.gap : implicitHeight
+                // bigTiles: one header row, the version chips beside the title
+                height: bigTiles ? 2 * pad + headH
+                        : wideScreen ? board.height - featuresCard.height - board.gap : implicitHeight
+                headerRight: Row {
+                    visible: bigTiles
+                    spacing: 6 * s
+                    Repeater {
+                        model: bigTiles ? firmwareChips : []
+                        Chip { label: modelData.label; tint: modelData.alert ? t.bad : (modelData.ok ? t.ok : t.accent); lit: true }
+                    }
+                }
 
                 // Compact form (compactFirmware): the versions as chips
                 Flow {
-                    visible: compactFirmware
+                    visible: compactFirmware && !bigTiles
                     width: parent.width
                     spacing: 6 * s
                     Chip { label: "OS " + (osVersion !== "" ? osVersion : "—"); tint: t.accent; lit: true }
