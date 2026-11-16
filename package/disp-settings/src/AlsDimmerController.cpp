@@ -11,6 +11,7 @@ AlsDimmerController::AlsDimmerController(QObject *parent)
     , m_pollTimer(new QTimer(this))
     , m_brightnessThrottle(new QTimer(this))
     , m_privacyModeThrottle(new QTimer(this))
+    , m_reconnectTimer(new QTimer(this))
     , m_socketPath(DEFAULT_ALS_DIMMER_SOCKET)
     , m_brightness(50)
     , m_pendingBrightness(50)
@@ -42,6 +43,10 @@ AlsDimmerController::AlsDimmerController(QObject *parent)
     m_privacyModeThrottle->setInterval(100);
     m_privacyModeThrottle->setSingleShot(true);
     connect(m_privacyModeThrottle, &QTimer::timeout, this, &AlsDimmerController::sendPendingPrivacyMode);
+
+    m_reconnectTimer->setInterval(2000);
+    m_reconnectTimer->setSingleShot(true);
+    connect(m_reconnectTimer, &QTimer::timeout, this, &AlsDimmerController::connectToService);
 }
 
 AlsDimmerController::~AlsDimmerController()
@@ -83,6 +88,7 @@ void AlsDimmerController::reconnect()
 void AlsDimmerController::onConnected()
 {
     qDebug() << "AlsDimmerController: Connected to als-dimmer service";
+    m_reconnectTimer->stop();
     m_connected = true;
     emit connectedChanged();
 
@@ -98,8 +104,8 @@ void AlsDimmerController::onDisconnected()
     m_pollTimer->stop();
     emit connectedChanged();
 
-    // Try to reconnect after 2 seconds
-    QTimer::singleShot(2000, this, &AlsDimmerController::connectToService);
+    // Try to reconnect every 2 seconds until it answers (onError re-arms a failed attempt)
+    m_reconnectTimer->start();
 }
 
 void AlsDimmerController::onError(QLocalSocket::LocalSocketError error)
@@ -122,7 +128,12 @@ void AlsDimmerController::onError(QLocalSocket::LocalSocketError error)
     qWarning() << "AlsDimmerController: Socket error:" << errorStr;
     emit errorOccurred(errorStr);
 
-    // Don't set connected to false here - onDisconnected will handle it
+    // A lost connection goes through onDisconnected. A connect attempt that failed (als-dimmer
+    // still starting: no socket yet, or refused) only lands here, so retry from here too.
+    // (The socket is not always in UnconnectedState yet when this fires, so don't test it.)
+    if (!m_connected) {
+        m_reconnectTimer->start();
+    }
 }
 
 void AlsDimmerController::onReadyRead()

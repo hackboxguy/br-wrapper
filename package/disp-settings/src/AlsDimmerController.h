@@ -171,6 +171,9 @@ private:
     bool m_privacyModeOn = false;
     bool m_privacyModeReachable = false;
     QTimer *m_privacyModeThrottle;
+    // Retries the connection every 2 s until als-dimmer answers (it restarts on updates, e.g.
+    // update-fpga.sh --activate; one retry could land before it is listening again)
+    QTimer *m_reconnectTimer;
     int m_privacyModePending = -1;     // -1 none, else the value to send when the throttle ends
     QElapsedTimer m_privacyModeHold;   // status replies don't move the tile for 1.5 s after a tap
     bool m_ldDynamicEnabled = false;
