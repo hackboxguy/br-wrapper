@@ -5,6 +5,7 @@
 #include <QLocalSocket>
 #include <QTimer>
 #include <QJsonObject>
+#include <QElapsedTimer>
 
 class AlsDimmerController : public QObject
 {
@@ -47,6 +48,13 @@ class AlsDimmerController : public QObject
     Q_PROPERTY(int privacyLevel READ privacyLevel NOTIFY privacyChanged)
     Q_PROPERTY(bool privacyRunning READ privacyRunning NOTIFY privacyChanged)
     Q_PROPERTY(bool privacyReachable READ privacyReachable NOTIFY privacyChanged)
+    // Privacy film on/off in the display FPGA (page-0 0x34 bit 0), held and saved by als-dimmer
+    // and reported in get_status as "privacy_mode". Available only where the FPGA image drives the
+    // film (als-dimmer decides: 0x1E, supported chip ID + version, OTA slot). privacyModeOn is
+    // what the FPGA reads back, not the saved choice.
+    Q_PROPERTY(bool privacyModeAvailable READ privacyModeAvailable NOTIFY privacyModeChanged)
+    Q_PROPERTY(bool privacyModeOn READ privacyModeOn NOTIFY privacyModeChanged)
+    Q_PROPERTY(bool privacyModeReachable READ privacyModeReachable NOTIFY privacyModeChanged)
 
 public:
     explicit AlsDimmerController(QObject *parent = nullptr);
@@ -67,6 +75,9 @@ public:
     int privacyLevel() const { return m_privacyLevel; }
     bool privacyRunning() const { return m_privacyRunning; }
     bool privacyReachable() const { return m_privacyReachable; }
+    bool privacyModeAvailable() const { return m_privacyModeAvailable; }
+    bool privacyModeOn() const { return m_privacyModeOn; }
+    bool privacyModeReachable() const { return m_privacyModeReachable; }
     bool ldDynamicEnabled() const { return m_ldDynamicEnabled; }
     QString ldProfile() const { return m_ldProfile; }
     bool ldSettled() const { return m_ldSettled; }
@@ -96,6 +107,9 @@ public slots:
     Q_INVOKABLE void setLdDynamic(bool enabled);
     // persist=false while a slider is dragged (applied, not saved); true on release
     Q_INVOKABLE void setPrivacyLevel(int level, bool persist = true);
+    // At most one write per 100 ms (each FPGA change finishes a 120 Hz period first); a tap
+    // inside that window is sent when it ends, so the last tap always wins
+    Q_INVOKABLE void setPrivacyMode(bool enabled);
 
 signals:
     void brightnessChanged();
@@ -106,6 +120,7 @@ signals:
     void connectedChanged();
     void ldStatusChanged();
     void privacyChanged();
+    void privacyModeChanged();
     void errorOccurred(const QString &error);
 
 private slots:
@@ -115,6 +130,7 @@ private slots:
     void onError(QLocalSocket::LocalSocketError error);
     void pollStatus();
     void processBrightnessUpdate();
+    void sendPendingPrivacyMode();
 
 private:
     void connectToService();
@@ -124,6 +140,7 @@ private:
     void handleConfigResponse(const QJsonObject &data);
     void handleLdStatus(const QJsonObject &data);
     void handlePrivacy(const QJsonObject &privacy);
+    void handlePrivacyMode(const QJsonObject &mode);
 
     QLocalSocket *m_socket;
     QTimer *m_pollTimer;
@@ -150,6 +167,12 @@ private:
     int m_privacyLevel = 0;
     bool m_privacyRunning = false;
     bool m_privacyReachable = false;
+    bool m_privacyModeAvailable = false;
+    bool m_privacyModeOn = false;
+    bool m_privacyModeReachable = false;
+    QTimer *m_privacyModeThrottle;
+    int m_privacyModePending = -1;     // -1 none, else the value to send when the throttle ends
+    QElapsedTimer m_privacyModeHold;   // status replies don't move the tile for 1.5 s after a tap
     bool m_ldDynamicEnabled = false;
     QString m_ldProfile;
     bool m_ldSettled = false;

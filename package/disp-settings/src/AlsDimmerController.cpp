@@ -10,6 +10,7 @@ AlsDimmerController::AlsDimmerController(QObject *parent)
     , m_socket(new QLocalSocket(this))
     , m_pollTimer(new QTimer(this))
     , m_brightnessThrottle(new QTimer(this))
+    , m_privacyModeThrottle(new QTimer(this))
     , m_socketPath(DEFAULT_ALS_DIMMER_SOCKET)
     , m_brightness(50)
     , m_pendingBrightness(50)
@@ -37,6 +38,10 @@ AlsDimmerController::AlsDimmerController(QObject *parent)
     m_brightnessThrottle->setInterval(100);
     m_brightnessThrottle->setSingleShot(true);
     connect(m_brightnessThrottle, &QTimer::timeout, this, &AlsDimmerController::processBrightnessUpdate);
+
+    m_privacyModeThrottle->setInterval(100);
+    m_privacyModeThrottle->setSingleShot(true);
+    connect(m_privacyModeThrottle, &QTimer::timeout, this, &AlsDimmerController::sendPendingPrivacyMode);
 }
 
 AlsDimmerController::~AlsDimmerController()
@@ -185,6 +190,12 @@ void AlsDimmerController::parseResponse(const QByteArray &data)
         return;
     }
 
+    // Privacy film: the set_privacy_mode / get_privacy_mode reply
+    if (responseData.contains("privacy_mode") && !responseData.contains("lux")) {
+        handlePrivacyMode(responseData["privacy_mode"].toObject());
+        return;
+    }
+
     // Privacy light: the set_privacy_level / get_privacy_status reply (get_status carries it too,
     // handled with the rest of the status below)
     if (responseData.contains("privacy") && !responseData.contains("lux")) {
@@ -273,6 +284,7 @@ void AlsDimmerController::handleStatusResponse(const QJsonObject &data)
 
     // Privacy light; an als-dimmer that does not report it has none to offer
     handlePrivacy(data["privacy"].toObject());
+    handlePrivacyMode(data["privacy_mode"].toObject());
 
     // Update zone
     if (data.contains("zone")) {
@@ -334,6 +346,56 @@ void AlsDimmerController::setPrivacyLevel(int level, bool persist)
     params["persist"] = persist;
     cmd["params"] = params;
     sendCommand(cmd);
+}
+
+void AlsDimmerController::setPrivacyMode(bool enabled)
+{
+    if (!m_connected || !m_privacyModeAvailable) return;
+    // Show the tap at once and keep it while the write is under way; status replies correct it
+    // after the hold if the FPGA did not take it
+    m_privacyModeHold.start();
+    if (m_privacyModeOn != enabled) {
+        m_privacyModeOn = enabled;
+        emit privacyModeChanged();
+    }
+    m_privacyModePending = enabled ? 1 : 0;
+    if (!m_privacyModeThrottle->isActive()) {
+        sendPendingPrivacyMode();
+    }
+}
+
+void AlsDimmerController::sendPendingPrivacyMode()
+{
+    if (m_privacyModePending < 0 || !m_connected) return;
+    const int value = m_privacyModePending;
+    m_privacyModePending = -1;
+    QJsonObject cmd;
+    cmd["version"] = "1.0";
+    cmd["command"] = "set_privacy_mode";
+    QJsonObject params;
+    params["enabled"] = value == 1;
+    cmd["params"] = params;
+    sendCommand(cmd);
+    m_privacyModeThrottle->start();
+}
+
+void AlsDimmerController::handlePrivacyMode(const QJsonObject &mode)
+{
+    // An als-dimmer without "privacy_mode" offers no switch
+    const bool available = mode["available"].toBool(false);
+    const bool reachable = mode["reachable"].toBool(false);
+    // The FPGA's read-back; the saved choice until the first read. Held after a tap.
+    const QJsonValue fpgaOn = mode["fpga_on"];
+    const bool held = m_privacyModeHold.isValid() && m_privacyModeHold.elapsed() < 1500;
+    const bool on = held ? m_privacyModeOn
+                         : (fpgaOn.isBool() ? fpgaOn.toBool() : mode["enabled"].toBool(false));
+    if (available != m_privacyModeAvailable || on != m_privacyModeOn ||
+        reachable != m_privacyModeReachable) {
+        m_privacyModeAvailable = available;
+        m_privacyModeOn = on;
+        m_privacyModeReachable = reachable;
+        emit privacyModeChanged();
+    }
 }
 
 void AlsDimmerController::handlePrivacy(const QJsonObject &privacy)

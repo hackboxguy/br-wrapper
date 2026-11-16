@@ -477,10 +477,15 @@ Window {
         border.color: on && available ? withAlpha(tint, 0.6) : t.border
         Behavior on border.color { ColorAnimation { duration: 200 } }
 
+        // On top of the switch too, so every tap goes through here: the switch only shows
+        // tile.on. (A self-toggling Switch drifted from the state on a fast double tap: Qt takes
+        // the second tap as a double-click, flipped the knob and broke its binding, no click.)
         MouseArea {
             id: tileArea
             anchors.fill: parent
+            z: 2
             onClicked: if (tile.available) tile.toggled(!tile.on)
+            onDoubleClicked: if (tile.available) tile.toggled(!tile.on)
         }
         Rectangle {
             id: tileBadge
@@ -523,12 +528,7 @@ Window {
             trackWidth: 58 * s; trackHeight: 34 * s
             onColor: tile.tint
             enabled: tile.available
-            onClicked: tile.toggled(checked)
-        }
-        Binding {
-            target: tileSwitch
-            property: "checked"
-            value: tile.on
+            checked: tile.on
         }
     }
 
@@ -994,14 +994,18 @@ Window {
                     columnSpacing: 12 * s
                     rowSpacing: 12 * s
 
+                    // Privacy film on/off (FPGA page-0 0x34, held and saved by als-dimmer). Shown
+                    // only where the FPGA image drives the film; shows the FPGA's read-back.
                     FeatureTile {
+                        visible: alsDimmer.privacyModeAvailable
                         title: "Privacy"
                         icon: "privacy"
                         tint: "#A78BFA"
-                        // TODO: Re-enable after testing: fpga.privacyMode / fpga.setPrivacyMode()
-                        on: false
-                        available: false
-                        note: "Disabled"
+                        on: alsDimmer.privacyModeOn
+                        available: alsDimmer.connected && alsDimmer.privacyModeReachable
+                        note: !alsDimmer.connected ? "Dimming service offline"
+                              : !alsDimmer.privacyModeReachable ? "FPGA not answering" : ""
+                        onToggled: alsDimmer.setPrivacyMode(checked)
                     }
                     FeatureTile {
                         title: "Local dimming"
@@ -1026,6 +1030,8 @@ Window {
                         onToggled: fpga.setPixelCompensation(checked)
                     }
                     FeatureTile {
+                        // Without the Privacy tile it would sit alone in its row
+                        Layout.columnSpan: alsDimmer.privacyModeAvailable ? 1 : 2
                         title: "Vision booster"
                         icon: "visionboost"
                         tint: t.warn
@@ -1052,8 +1058,8 @@ Window {
                         onToggled: alsDimmer.setLdDynamic(checked)
                     }
                     // Privacy light level (display IOC 0x66 0x0202, held and saved by als-dimmer).
-                    // Only on displays that have the light; the Privacy tile above stays reserved
-                    // for the FPGA's on/off switch. Full row normally; on wide screens with
+                    // Only on displays that have the light (the Privacy tile above is the FPGA's
+                    // on/off switch). Full row normally; on wide screens with
                     // Dynamic dimming it takes the other half of that row (compact: title and
                     // value on top, the slider below).
                     Rectangle {
