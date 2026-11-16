@@ -103,6 +103,13 @@ void AlsDimmerController::onDisconnected()
     m_connected = false;
     m_pollTimer->stop();
     emit connectedChanged();
+    // Forget the mode: the page re-syncs its brightness slider on the first mode it sees after
+    // connecting, and a reconnect to an unchanged mode would otherwise never trigger it (the
+    // slider then ignored every later brightness change, e.g. from the Stream Deck keys)
+    if (m_mode != "unknown") {
+        m_mode = "unknown";
+        emit modeChanged();
+    }
 
     // Try to reconnect every 2 seconds until it answers (onError re-arms a failed attempt)
     m_reconnectTimer->start();

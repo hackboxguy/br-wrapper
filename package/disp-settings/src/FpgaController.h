@@ -3,6 +3,8 @@
 
 #include <QObject>
 #include <QTimer>
+#include <QFileSystemWatcher>
+#include <QDateTime>
 #include <QString>
 #include <cstdint>
 
@@ -104,6 +106,11 @@ private:
     void parseBoardInfo(const uint8_t *data);
     void parseBuildTime(const uint8_t *data);
     void readToggleSettings(int fd);
+    // The shared LD/PC file changed (another app or a Stream Deck key switched LD/PC): read the
+    // two toggles now instead of at the next 5 s refresh
+    void onStateFileEvent();
+    void refreshToggles();
+    void watchStateFile();
 
 private:
     QString m_i2cBus;
@@ -128,6 +135,9 @@ private:
     bool m_connected;
 
     QTimer *m_refreshTimer;
+    QFileSystemWatcher *m_stateWatcher;
+    QTimer *m_toggleRefreshTimer;      // 150 ms debounce after a file event
+    QDateTime m_stateFileStamp;        // last seen mtime of the shared LD/PC file
 };
 
 #endif // FPGACONTROLLER_H

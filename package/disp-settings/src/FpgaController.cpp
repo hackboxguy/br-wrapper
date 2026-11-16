@@ -82,10 +82,21 @@ FpgaController::FpgaController(QObject *parent)
     , m_pixelCompEnabled(false)
     , m_connected(false)
     , m_refreshTimer(new QTimer(this))
+    , m_stateWatcher(new QFileSystemWatcher(this))
+    , m_toggleRefreshTimer(new QTimer(this))
 {
     // Refresh FPGA info periodically (every 5 seconds)
     connect(m_refreshTimer, &QTimer::timeout, this, &FpgaController::refresh);
     m_refreshTimer->setInterval(5000);
+
+    // LD/PC switched elsewhere (Stream Deck keys, cluster apps, gallery) is written to the shared
+    // state file; follow it at once. The writers replace the file whole (a rename), so watch its
+    // directory and re-add the file after every event.
+    m_toggleRefreshTimer->setInterval(150);
+    m_toggleRefreshTimer->setSingleShot(true);
+    connect(m_toggleRefreshTimer, &QTimer::timeout, this, &FpgaController::refreshToggles);
+    connect(m_stateWatcher, &QFileSystemWatcher::directoryChanged, this, &FpgaController::onStateFileEvent);
+    connect(m_stateWatcher, &QFileSystemWatcher::fileChanged, this, &FpgaController::onStateFileEvent);
 }
 
 FpgaController::~FpgaController()
@@ -120,6 +131,47 @@ void FpgaController::start()
              << "protocol override" << m_protocolOverride;
     refresh();
     m_refreshTimer->start();
+    watchStateFile();
+}
+
+void FpgaController::watchStateFile()
+{
+    const QString file = stateFilePath();
+    const QString dir = QFileInfo(file).absolutePath();
+    if (!m_stateWatcher->directories().contains(dir))
+        m_stateWatcher->addPath(dir);
+    if (QFileInfo::exists(file) && !m_stateWatcher->files().contains(file))
+        m_stateWatcher->addPath(file);
+    m_stateFileStamp = QFileInfo(file).lastModified();
+}
+
+void FpgaController::onStateFileEvent()
+{
+    // The directory may be /tmp (fallback), where unrelated files change too: act only when
+    // the state file itself has a new modification time.
+    const QString file = stateFilePath();
+    if (QFileInfo::exists(file) && !m_stateWatcher->files().contains(file))
+        m_stateWatcher->addPath(file);
+    const QDateTime stamp = QFileInfo(file).lastModified();
+    if (stamp == m_stateFileStamp)
+        return;
+    m_stateFileStamp = stamp;
+    m_toggleRefreshTimer->start();
+}
+
+void FpgaController::refreshToggles()
+{
+    if (m_protocol == Protocol::None)
+        return;
+    if (m_protocol == Protocol::Legacy) {
+        initializeLegacyState();   // the legacy registers are write-only: the file is the state
+        return;
+    }
+    const int fd = openI2c();
+    if (fd < 0)
+        return;
+    readToggleSettings(fd);
+    closeI2c(fd);
 }
 
 int FpgaController::openI2cAt(uint8_t address)
