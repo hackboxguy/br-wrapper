@@ -893,9 +893,12 @@ Window {
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: 10 * s
                         Chip {
-                            label: alsDimmer.connected ? alsDimmer.luxValue.toFixed(1) + " lux" : "— lux"
+                            // als-dimmer reports lux -1 when there is no sensor (none fitted,
+                            // or demoted to NullSensor after failing)
+                            readonly property bool hasLux: alsDimmer.connected && alsDimmer.luxValue >= 0
+                            label: hasLux ? alsDimmer.luxValue.toFixed(1) + " lux" : "-- lux"
                             tint: t.warn
-                            lit: alsDimmer.connected
+                            lit: hasLux
                         }
                         Chip {
                             label: alsDimmer.connected ? alsDimmer.zone : "—"

@@ -445,9 +445,15 @@ void FpgaController::parseFirmwareInfo(const uint8_t *data)
     // byte2 = binary type
     // byte3 = BCD version (0x01 = v01)
 
-    // Parse version (BCD)
-    uint8_t versionNum = bcdToDecimal(data[3]);
-    QString version = QString("v%1").arg(versionNum, 2, 10, QChar('0'));
+    // pixelpipe images carry RELEASE_ID = MM DD 00 VV with the image number
+    // in hex (0x8B), not BCD: decoding it as BCD showed "v91". Same rule as
+    // disptool --command=version.
+    QString version;
+    if (data[2] == 0x00 && !isValidBcd(data[3])) {
+        version = QString("0x%1").arg(QString::number(data[3], 16).toUpper().rightJustified(2, '0'));
+    } else {
+        version = QString("v%1").arg(bcdToDecimal(data[3]), 2, 10, QChar('0'));
+    }
     if (version != m_firmwareVersion) {
         m_firmwareVersion = version;
         emit firmwareVersionChanged();
