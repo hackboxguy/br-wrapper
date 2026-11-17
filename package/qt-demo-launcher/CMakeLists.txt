@@ -93,6 +93,7 @@ install(PROGRAMS
     src/pattern-generator.sh
     src/kodi-usb-common.sh
     src/dual-video.sh
+    src/quick-video.sh
     src/usb-media.sh
     src/usb-media-autostart.sh
     src/cluster-v2.sh

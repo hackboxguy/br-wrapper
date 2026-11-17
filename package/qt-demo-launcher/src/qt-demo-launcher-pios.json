@@ -1272,6 +1272,17 @@
         "hover_color": "#574878"
       },
       {
+        "id": "quick-video",
+        "enabled": true,
+        "visible": false,
+        "page": "_internal",
+        "text": "Quick Video",
+        "program": "/usr/share/qt-apps/quick-video.sh",
+        "available_command": "/usr/share/qt-apps/quick-video.sh --check",
+        "arguments": [],
+        "working_directory": "/tmp"
+      },
+      {
         "id": "usb-media-autostart",
         "enabled": true,
         "visible": false,

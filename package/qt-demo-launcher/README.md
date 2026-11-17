@@ -826,3 +826,26 @@ mp4, avi, mov, wmv, flv, webm, m4v, ts - keep one video per place. The rule is
 `find_usb_video` in `kodi-usb-common.sh`, which the Stream Deck's Default Ref Video key
 (streamdeck-ctrl, `launch-default-ref-video.sh`) sources too, so the two never differ.
 Host test: `sh tests/test-kodi-usb-video.sh`.
+
+## Quick Video (`quick-video.sh`, the Stream Deck's Quick Video key)
+
+A hidden entry (`quick-video`, page `_internal`): a video from the USB stick straight into
+`dual-video-player`, without Kodi. It plays about half a second after `start-app` (Kodi's Demo
+Video takes 7-8 s), the same picture on every HDMI output, looping. Video only: the player has
+no sound.
+
+- **Which video**: the stick's `Videos/` folder, then its top level, each sorted by name; the
+  Dual Video pair (`dual-player-video-1/2.mp4`) and dotfiles are left out. The player's own
+  `--probe` decides what plays (H.264/H.265 up to 2560x1600 on the Pi 4); anything else is
+  skipped. The image's `ref-video.mp4` (3840x1440) is too large for this player, so there is no
+  fallback: without a playable video on a stick the entry fails (the Demo Video tile and the
+  Default Ref Video key still play it through Kodi).
+- **Next video**: candidate N is played, N from `/tmp/quick-video.next` (read once, wraps
+  around, default 0); `/tmp/quick-video.current` holds `N<TAB>path<TAB>count` while it plays.
+  The Stream Deck key writes N+1 there and starts the entry again to step through the stick.
+- `quick-video.sh --check` (the `available_command`): exit 0 when the stick holds a video file
+  (no probe, cheap enough for a 3 s poll), else the reason. `--list`: the playable candidates.
+- The player gets a one-item playlist (`/tmp/quick-video-playlist.json`, `"loop": true`) with
+  `--root` set to the video's folder, so Pause, Seek, Loop and Stop work as for USB Media.
+
+Host test: `sh tests/test-quick-video.sh`.

@@ -51,6 +51,7 @@ sed -i "s|/usr/share/qt-apps/kodi-launcher.sh|$BASE_PATH/share/qt-apps/kodi-laun
 sed -i "s|/usr/share/qt-apps/kodi-slideshow.sh|$BASE_PATH/share/qt-apps/kodi-slideshow.sh|g" "$CONFIG_FILE"
 sed -i "s|/usr/share/qt-apps/kodi-video.sh|$BASE_PATH/share/qt-apps/kodi-video.sh|g" "$CONFIG_FILE"
 sed -i "s|/usr/share/qt-apps/dual-video.sh|$BASE_PATH/share/qt-apps/dual-video.sh|g" "$CONFIG_FILE"
+sed -i "s|/usr/share/qt-apps/quick-video.sh|$BASE_PATH/share/qt-apps/quick-video.sh|g" "$CONFIG_FILE"
 sed -i "s|/usr/share/qt-apps/usb-media.sh|$BASE_PATH/share/qt-apps/usb-media.sh|g" "$CONFIG_FILE"
 sed -i "s|/usr/share/qt-apps/cluster-launcher.sh|$BASE_PATH/share/qt-apps/cluster-launcher.sh|g" "$CONFIG_FILE"
 # Cluster Demo V2 (the qt-cluster-demo repo, in its own prefix): its tile script
