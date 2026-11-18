@@ -109,6 +109,15 @@ nc 192.168.1.100 8081
 echo "command" | nc -q 0 192.168.1.100 8081
 ```
 
+One command per connection, one reply line. Clients are served one at a
+time, in order: a connection that arrives while another is served waits its
+turn (a `stop-app` keeps the launcher busy for up to 5 s). A client that hangs
+up while it waits has given up, and its command is dropped rather than run
+late. So `nc -q 0` (hangs up at once) works while the launcher is idle, but
+for scripts use `launcher-client`, which waits for the reply (6 s by default,
+`--timeoutsec=N`). A connection that sends no command within 5 s is closed.
+Host test: `sh tests/test-network-interface.sh`.
+
 ### Available Commands
 
 #### `list-apps`
