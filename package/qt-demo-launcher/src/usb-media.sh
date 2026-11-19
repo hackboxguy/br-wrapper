@@ -44,6 +44,13 @@ PLAYER="$BIN_DIR/dual-video-player"
 [ -x "$PLAYER" ] || PLAYER="$(command -v dual-video-player)"
 APP="$BIN_DIR/usb-media-app"
 [ -x "$APP" ] || APP="$(command -v usb-media-app)"
+# 3x QVue: the realtime warp daemon (qvue-warpd) holds the display; the player
+# takes it itself (DRM master), so the warp is suspended around each playback
+# and resumed after it. The editor draws into fb0 and stays warped. Without the
+# daemon (every other display) the socket is absent and nothing is called.
+WARPCTL="$BIN_DIR/qvue-warpctl"
+[ -x "$WARPCTL" ] || WARPCTL="$(command -v qvue-warpctl)"
+WARP_SOCK="${QVUE_WARP_SOCKET:-/run/qvue-warp/ctl.sock}"
 TMP_PLAYLIST=/tmp/usb-media-playlist.json
 PLAYLIST_NAME=micropanel-playlist.json
 COUNTDOWN=${AUTOSTART_COUNTDOWN:-5}
@@ -102,12 +109,20 @@ run() {
     return "$rc"
 }
 
+warp() {   # warp suspend|resume
+    [ -n "$WARPCTL" ] && [ -S "$WARP_SOCK" ] || return 0
+    "$WARPCTL" --socket "$WARP_SOCK" --timeout 3 "$1" >/dev/null 2>&1 || true
+}
 play() {
+    warp suspend
     if [ -s "$TMP_PLAYLIST" ]; then
         run "$PLAYER" --playlist "$TMP_PLAYLIST" --root="$usb_root"
     else
         run "$PLAYER" --playlist "$usb_root/$PLAYLIST_NAME"
     fi
+    prc=$?
+    warp resume
+    return "$prc"
 }
 
 message_for() {

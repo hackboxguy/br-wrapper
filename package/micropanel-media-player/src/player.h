@@ -35,6 +35,9 @@ struct plane {
 	uint64_t range_val[2];    /* COLOR_RANGE values: limited, full */
 };
 
+/* how a video maps onto the 3x QVue's three panels when the warp is active */
+enum frame_layout { LAYOUT_AUTO, LAYOUT_FLAT, LAYOUT_STACKED };
+
 /* what one output shows: a framebuffer and how to place and colour it */
 struct frame {
 	uint32_t fb;
@@ -42,6 +45,10 @@ struct frame {
 	int par_n, par_d;         /* pixel aspect ratio */
 	int enc;                  /* -1: leave the plane alone; 0 601, 1 709, 2 2020 */
 	int range;                /* 0 limited, 1 full */
+	/* the warp (warp.c) renders from the decoded sample instead of fb */
+	GstSample *src;           /* borrowed; NULL: keep what the warp shows */
+	guint64 serial;           /* new picture = new serial; a re-commit keeps it */
+	int layout;               /* enum frame_layout */
 };
 
 /* a mappable dumb buffer framebuffer (images, software-decoded frames) */
@@ -112,6 +119,8 @@ struct item {
 	gint64 first_pts;
 	gboolean skip_first, eos, yuv;
 	int enc, range;           /* plane colour from the parser caps */
+	int layout;               /* enum frame_layout (playlist override) */
+	gboolean sysmem;          /* hw frames copied to system memory (warp upload path) */
 	struct dumbbuf *ring[ITEM_RING];
 	int ring_next;
 	char why[256];            /* why it failed */
@@ -148,6 +157,8 @@ struct player {
 
 	struct sync *sync;        /* --sync (playlist mode): due times from a shared clock */
 	FILE *sync_log;           /* --sync-log: one line per shown frame */
+
+	struct warp *warp;        /* 3x QVue realtime warp of the output (warp.c); NULL: planes */
 
 	struct plane popup;       /* EXIT button on display 1 (id 0: none) */
 	uint32_t popup_fb;
@@ -190,6 +201,7 @@ struct playlist {
 	int image_duration_s;
 	gboolean loop, autostart;
 	GPtrArray *items;         /* absolute paths */
+	GArray *layouts;          /* int (enum frame_layout) per item */
 };
 struct playlist *playlist_load(const char *file, const char *root, GError **err);
 void playlist_free(struct playlist *pl);
@@ -305,10 +317,30 @@ gboolean control_seek_pending(struct player *p);
 void control_publish(struct player *p, const char *state, int item, int items, const char *file,
 		     gint64 pos, gint64 dur);
 
+/* warp.c: the 3x QVue realtime warp done by the player itself (libqvuewarp).
+ * Decided once at start; when not active every path is the plane path. */
+struct warp_opts {
+	const char *mode;         /* "auto" (ask qvue-warpd), "on", "off" */
+	const char *dump;         /* test: read back frame dump_at as a 4500x298 PPM */
+	long dump_at;
+	const char *fail;         /* test: "start" or "mid" - force a warp failure */
+	int place[4];             /* test: x,y,w,h on the canvas for flat videos (w 0: fit) */
+};
+extern struct warp_opts g_warp_opts;
+extern gboolean g_warp_formats;   /* probe: accept warp-only formats (4500x298 H.264) */
+void warp_gate(struct player *p);
+gboolean warp_wants_sysmem(const struct media_info *mi, int layout);
+gboolean warp_active(const struct player *p);
+int warp_commit(struct player *p, const struct frame *f);
+int warp_prepare(struct player *p, const struct frame *f);
+gint64 warp_latest_ns(void);
+void warp_stop(struct player *p);
+guint64 frame_serial(void);
+
 /* presenter.c: pacing, atomic commits, statistics */
 void on_flip(int fd, unsigned seq, unsigned sec, unsigned usec, unsigned crtc_id, void *data);
 gint64 submit_time(struct player *p, gint64 v);
-int commit(struct player *p, const uint32_t *fb, const GstVideoInfo *vi);
+int commit(struct player *p, const uint32_t *fb, const GstVideoInfo *vi, GstSample *const *src);
 int commit_frames(struct player *p, const struct frame *const *f);
 void player_wake(struct player *p);
 void disable_planes(struct player *p);

@@ -60,6 +60,8 @@ message(STATUS "========================================")
 # These packages don't require Qt5
 add_subdirectory(package/disp-can-ctrl/src)
 add_subdirectory(package/hh983-serializer/src)
+# qvue-warp before the player: the player links libqvuewarp when it exists
+add_subdirectory(package/qvue-warp)
 add_subdirectory(package/micropanel-media-player)
 
 # Add Qt packages if Qt5 was found
@@ -166,6 +168,7 @@ message(STATUS "")
 message(STATUS "Configured packages:")
 message(STATUS "  - disp-can-ctrl (daemon)")
 message(STATUS "  - hh983-serializer (FPDLink initialization)")
+message(STATUS "  - qvue-warp (qvue-warpd realtime warp, if libdrm/gbm/egl/gles dev packages are present)")
 if(Qt5_FOUND)
     message(STATUS "  - qt-demo-launcher (Qt Widgets)")
     message(STATUS "  - qt-cluster-demo (Qt Quick)")

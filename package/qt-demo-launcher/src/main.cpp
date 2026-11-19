@@ -38,6 +38,7 @@
 #include <QMouseEvent>
 #include <QFontDatabase>
 #include <QPointer>
+#include <QLocalSocket>
 #include <cmath>
 #include <functional>
 #include <QVector>
@@ -63,6 +64,10 @@ struct ButtonConfig {
     QString targetPage;
     QString pageTitle;
     bool detached = false;
+    // "display": "drm" - the app takes the display itself (DRM master: Kodi,
+    // dual-video-player, eglfs). The launcher suspends the 3x QVue warp
+    // daemon (qvue-warpd) while it runs; absent = draws into fb0 (linuxfb).
+    bool displayDrm = false;
 
     // Position and size
     int row = 0;
@@ -1330,6 +1335,15 @@ private:
         } else if (cmd == "get-running-app") {
             QString runningApp = getRunningApp();
             m_networkInterface->sendResponse(runningApp);
+        } else if (cmd == "warp") {
+            // pass-through to the 3x QVue warp daemon
+            const QString sub = parts.size() == 2 ? parts[1].toLower() : QString();
+            if (sub != "on" && sub != "off" && sub != "toggle" && sub != "status") {
+                m_networkInterface->sendResponse("ERROR: usage: warp on|off|toggle|status");
+            } else {
+                const QString r = warpRequest(sub, 5000);
+                m_networkInterface->sendResponse(r.isEmpty() ? QStringLiteral("ERROR warp daemon not running") : r);
+            }
         }
 
 	// NEW COMMANDS FOR RUNTIME CONTROL:
@@ -1374,6 +1388,8 @@ private:
     NetworkInterface *m_networkInterface;
     QProcess *m_runningProcess;
     QString m_runningAppId;
+    bool m_warpSuspended = false;      // qvue-warpd was suspended for the running app
+    bool m_warpAbsentLogged = false;   // "no warp daemon" logged once
     QString m_currentPage;
     QStringList m_pageStack;
     QMap<QString, QString> m_pageTitles;
@@ -1805,6 +1821,10 @@ private:
         } else {
             qWarning() << "Failed to start network interface on port" << m_networkPort;
         }
+        // (qInfo: this build compiles qDebug out, QT_NO_DEBUG_OUTPUT)
+        // a previous launcher may have died while the warp was suspended for
+        // its app: give the display back to the warp (no-op if not suspended)
+        warpResume("launcher start");
     }
 
     void applyMainLayoutMetrics(QVBoxLayout *mainLayout)
@@ -1940,6 +1960,108 @@ private:
             appIds << config.id;
         }
         return appIds.join(",");
+    }
+
+    // ---- qvue-warpd, the 3x QVue realtime warp (br-wrapper package qvue-warp).
+    // Apps flagged "display": "drm" take the display themselves; the warp
+    // daemon must let go of it first (suspend) and takes it back after the
+    // app exits (resume). On every other display type there is no daemon:
+    // the socket is absent, nothing is sent and nothing waits.
+    static QString warpSocketPath()
+    {
+        const QByteArray env = qgetenv("QVUE_WARP_SOCKET");
+        return env.isEmpty() ? QStringLiteral("/run/qvue-warp/ctl.sock") : QString::fromLocal8Bit(env);
+    }
+
+    void warpNoDaemon(const QString &why)
+    {
+        if (!m_warpAbsentLogged)
+            qInfo() << "qvue-warp:" << why << "- display suspend/resume not used";
+        m_warpAbsentLogged = true;   // one line per launcher start
+    }
+
+    // One request, waiting up to timeoutMs for the reply line. Empty: no daemon.
+    QString warpRequest(const QString &request, int timeoutMs)
+    {
+        const QString path = warpSocketPath();
+        if (!QFileInfo::exists(path)) {
+            warpNoDaemon("no daemon socket " + path);
+            return QString();
+        }
+        QLocalSocket sock;
+        sock.connectToServer(path);
+        if (!sock.waitForConnected(300)) {
+            warpNoDaemon("daemon socket " + path + " does not answer (" + sock.errorString() + ")");
+            return QString();
+        }
+        sock.write((request + "\n").toUtf8());
+        sock.flush();
+        QByteArray reply;
+        QElapsedTimer t;
+        t.start();
+        while (!reply.contains('\n') && t.elapsed() < timeoutMs) {
+            if (!sock.waitForReadyRead(int(qMax<qint64>(1, timeoutMs - t.elapsed()))))
+                break;
+            reply += sock.readAll();
+        }
+        sock.abort();
+        const QString line = QString::fromUtf8(reply).section('\n', 0, 0).trimmed();
+        if (line.isEmpty())
+            qWarning() << "qvue-warp:" << request << "- no reply within" << timeoutMs << "ms";
+        return line;
+    }
+
+    // Before starting an app that takes the display: wait for the daemon to
+    // let go (it disables its planes and closes the card).
+    void warpSuspendFor(const QString &appId)
+    {
+        ButtonConfig cfg;
+        if (!findButton(appId, cfg, true) || !cfg.displayDrm)
+            return;
+        const QString r = warpRequest("suspend", 3000);
+        m_warpSuspended = r.startsWith("OK");
+        if (!r.isEmpty())
+            qInfo() << "qvue-warp: suspend for" << appId << ":" << r;
+    }
+
+    // After the app is gone; asynchronous, the daemon retries for a few
+    // seconds while the card is still held.
+    void warpResume(const QString &why)
+    {
+        const QString path = warpSocketPath();
+        if (!QFileInfo::exists(path))
+            return;
+        QLocalSocket *sock = new QLocalSocket(this);
+        connect(sock, &QLocalSocket::connected, sock, [sock]() { sock->write("resume\n"); });
+        connect(sock, &QLocalSocket::readyRead, sock, [sock, why]() {
+            if (!sock->canReadLine())
+                return;
+            qInfo() << "qvue-warp: resume (" << why << "):" << sock->readLine().trimmed();
+            sock->abort();
+            sock->deleteLater();
+        });
+#if QT_VERSION >= QT_VERSION_CHECK(5, 15, 0)
+        connect(sock, &QLocalSocket::errorOccurred, sock, [sock, why](QLocalSocket::LocalSocketError) {
+#else
+        connect(sock, QOverload<QLocalSocket::LocalSocketError>::of(&QLocalSocket::error), sock,
+                [sock, why](QLocalSocket::LocalSocketError) {
+#endif
+            if (sock->error() != QLocalSocket::PeerClosedError)
+                qWarning() << "qvue-warp: resume (" << why << ") failed:" << sock->errorString();
+            sock->deleteLater();
+        });
+        QTimer::singleShot(10000, sock, [sock]() { sock->abort(); sock->deleteLater(); });
+        sock->connectToServer(path);
+    }
+
+    // After every app exit, not only the flagged ones: a script that
+    // suspends the warp for a child of its own (usb-media.sh around
+    // dual-video-player) may have been killed before its resume. A resume
+    // while nothing is suspended changes nothing.
+    void warpResumeAfter(const QString &appId)
+    {
+        m_warpSuspended = false;
+        warpResume(appId + " exited");
     }
 
     bool startApp(const QString &appId)
@@ -2192,6 +2314,7 @@ private:
             btn.pageTitle = btnObj["page_title"].toString();
             btn.detached = btnObj["detached"].toBool(false)
                 || btnObj["launch_mode"].toString().toLower() == "detached";
+            btn.displayDrm = btnObj["display"].toString().toLower() == "drm";
 
             // Parse arguments array
             QJsonArray args = btnObj["arguments"].toArray();
@@ -2381,6 +2504,7 @@ private:
                     m_runningAppId = "";
                     m_runningProcess = nullptr;
                     proc->deleteLater();
+                    warpResumeAfter(appId);
                 });
 
         // Show launcher again when app exits
@@ -2393,9 +2517,12 @@ private:
                     m_runningAppId = "";
                     m_runningProcess = nullptr;
                     proc->deleteLater();
+                    warpResumeAfter(appId);
                 });
 
-        // Start the process (non-blocking)
+        // Start the process (non-blocking); an app that takes the display
+        // gets it from the warp daemon first
+        warpSuspendFor(appId);
         proc->start(program, args);
 
         qDebug() << "Process start initiated for:" << program << "with args:" << args << "App ID:" << appId;
@@ -2425,7 +2552,9 @@ private:
         m_runningProcess->setProcessEnvironment(env);
         m_runningProcess->setWorkingDirectory(workingDir);
 
-        // Launch the program
+        // Launch the program; an app that takes the display gets it from
+        // the warp daemon first
+        warpSuspendFor(appId);
         m_runningProcess->start(program, args);
 
         if (!m_runningProcess->waitForStarted(3000)) {
@@ -2433,6 +2562,7 @@ private:
             QMessageBox::warning(this, "Error", errorMsg);
             m_runningProcess->deleteLater();
             m_runningProcess = nullptr;
+            warpResumeAfter(appId);
             return false;
         }
 
@@ -2454,6 +2584,7 @@ private:
                     m_runningAppId = "";
                     m_runningProcess = nullptr;
                     proc->deleteLater();
+                    warpResumeAfter(appId);
                 });
 
         return true;
@@ -2902,6 +3033,7 @@ int main(int argc, char *argv[])
         qDebug() << "  start-app <app-id>          # Start specific application";
         qDebug() << "  stop-app                    # Stop currently running application";
         qDebug() << "  get-running-app             # Get currently running app or 'none'";
+        qDebug() << "  warp on|off|toggle|status   # 3x QVue warp daemon (qvue-warpd) pass-through";
 	qDebug() << "  reload-config               # Reload JSON configuration from file";
 	qDebug() << "  set-button-enabled <id> <true|false>  # Enable/disable button";
 	qDebug() << "  get-button-status <id>      # Get button status (enabled/disabled)";

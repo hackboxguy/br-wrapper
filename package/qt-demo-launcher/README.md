@@ -157,6 +157,16 @@ echo "get-running-app" | nc -q 0 192.168.1.100 8081
 # Returns: none (if no app is running)
 ```
 
+#### `warp on|off|toggle|status`
+Passed to the 3x QVue realtime warp daemon (`qvue-warpd`, br-wrapper package `qvue-warp`)
+over its socket `/run/qvue-warp/ctl.sock`; the daemon's reply line is returned. Without the
+daemon (every display type but 3x QVue): `ERROR warp daemon not running`.
+
+```bash
+launcher-client --command=warp --command-arg=toggle
+# Returns: OK state=off enabled=0
+```
+
 #### `get-screen`, `screen <n>`, `next-screen`, `prev-screen`
 A grid page with more buttons than `rows` × `columns` is split into screens (see
 [Screens](#screens-more-buttons-than-the-grid-holds)). These show or change the current page's screen;
@@ -352,6 +362,21 @@ subtitle ("Not available" if it printed nothing). The Dual Video button uses it 
 until a USB stick carries `dual-player-video-1.mp4` and `-2.mp4`.
 `notice_file` is read once a second; the System Manager writes `Power cycle required` there after
 a firmware update, and `/tmp` clears it on the next boot.
+
+```json
+"display": "drm"  // Optional: the app takes the display itself (DRM master)
+```
+
+`display: "drm"` marks an app that becomes DRM master (Kodi, `dual-video-player`, the eglfs
+cluster, `disp-tester`, which moves itself from linuxfb to eglfs). On the 3x QVue the realtime warp
+daemon `qvue-warpd` covers fb0 with its own planes; before starting such an app the launcher
+sends it `suspend` over `/run/qvue-warp/ctl.sock` (and waits up to 3 s for the reply), and after
+**any** app exits it sends `resume` (asynchronously; a no-op when nothing is suspended, and it
+also covers `usb-media.sh`, which suspends the warp around its own player child). A starting
+launcher sends `resume` too, in case its predecessor died while the warp was suspended. Without
+the daemon the socket is absent: nothing is sent, nothing waits, and one line is logged per
+launcher start. Apps that draw into fb0 (linuxfb: gallery, settings, network, usb-media's
+editor, ...) need no flag and stay warped.
 
 Icons may be PNG or SVG. In the tiles style they are recoloured with the accent colour,
 so white line-art icons work best. The bundled set lives in [icons/](icons/) and is

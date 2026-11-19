@@ -163,6 +163,11 @@ static void classify(struct media_info *mi, const GstStructure *st, const char *
 		} else if (swsize) {
 			mi->decode = DECODE_SW;
 			mi->slow = TRUE;
+		} else if (g_warp_formats && mi->width == 4500 && mi->height == 298) {
+			/* the 3x QVue canvas 1:1, software decoded and warped by the player
+			 * (only while the warp is active; best at 30 fps, see warp.c) */
+			mi->decode = DECODE_SW;
+			mi->slow = mi->fps_d > 0 && mi->fps_n > 31 * mi->fps_d;
 		} else {
 			g_snprintf(mi->reason, sizeof(mi->reason), "%dx%d too large (max %dx%d)",
 				   mi->width, mi->height, SW_MAX_W, SW_MAX_H);

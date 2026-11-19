@@ -190,7 +190,12 @@ static gboolean build(struct item *it, int disp_w, int disp_h)
 				       h265 ? "avdec_h265" : "avdec_h264");
 		if (!demux || !parse || !dec)
 			goto fail;
-		if (mi->decode == DECODE_HW)
+		/* 3x QVue warp uploading this item's frames (stacked, or larger than a
+		 * panel): no dmabuf export and no video meta (below), so the decoder
+		 * copies each frame into system memory in its own thread - reading
+		 * the dmabuf from the presenter costs ~14 ms per 1500x894 frame */
+		it->sysmem = mi->decode == DECODE_HW && warp_wants_sysmem(mi, it->layout);
+		if (mi->decode == DECODE_HW && !it->sysmem)
 			g_object_set(dec, "capture-io-mode", 4 /* dmabuf */, NULL);
 		gst_bin_add_many(GST_BIN(pl), demux, parse, dec, NULL);
 		if (!gst_element_link(src, demux) || !gst_element_link_many(parse, dec, sink, NULL))
@@ -208,11 +213,14 @@ static gboolean build(struct item *it, int disp_w, int disp_h)
 	/* sync=false: the presenter paces by PTS. Small queue: a prerolled item
 	 * stops after its first frame and never decodes ahead (the hardware
 	 * decoder's throughput is shared with the item on screen). */
-	g_object_set(sink, "sync", FALSE, "max-buffers", 2, "drop", FALSE,
+	/* (warp upload items: 4, the decoder's system-memory copy has jitter and
+	 * the presenter must never wait for it in the frame's short window) */
+	g_object_set(sink, "sync", FALSE, "max-buffers", it->sysmem ? 4 : 2, "drop", FALSE,
 		     "enable-last-sample", FALSE, "caps", caps, NULL);
 	gst_caps_unref(caps);
 	GstPad *spad = gst_element_get_static_pad(sink, "sink");
-	gst_pad_add_probe(spad, GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM, allocation_probe, NULL, NULL);
+	if (!it->sysmem)
+		gst_pad_add_probe(spad, GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM, allocation_probe, NULL, NULL);
 	gst_object_unref(spad);
 	it->pipeline = pl;
 	it->sink = GST_APP_SINK(sink);

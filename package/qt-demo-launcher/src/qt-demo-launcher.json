@@ -108,6 +108,7 @@
       },
       {
         "id": "pattern-generator",
+        "display": "drm",
         "enabled": true,
         "text": "Pattern Generator",
         "icon": "/usr/share/icons/tools-large.png",
@@ -160,6 +161,7 @@
       },
       {
         "id": "media-player",
+        "display": "drm",
         "enabled": true,
         "text": "Media Player",
         "icon": "/usr/share/icons/video-large.png",
@@ -212,6 +214,7 @@
       },
       {
         "id": "cluster-demo",
+        "display": "drm",
         "enabled": true,
         "text": "Cluster Demo",
         "icon": "/usr/share/icons/tools-large.png",

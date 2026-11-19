@@ -15,6 +15,73 @@ Sources: `dual-video-player.c` (options, setup), `mirror.c` (playlist presenter)
 (two-file presenter, commits, statistics), `item.c` (pipelines), `drm.c` (outputs, planes, vblank
 grid), `probe.c`, `playlist.c`, `input.c` (touch, EXIT button), `sync.c` (network sync).
 
+## 3x QVue realtime warp (`warp.c`)
+
+On the 3x QVue (one 4500x298 display) the picture is pre-distorted so that its
+windshield reflection looks straight: br-wrapper's `qvue-warpd` does that for
+the launcher's screens, and the launcher suspends it while this player runs.
+With the warp setting on, the player then warps its own frames through the
+same library (`libqvuewarp`): the factory calibration, the user's trim
+(`/data/qvue-warp/trim.json`) and the same output (one 1500x894 buffer, three
+overlay planes; the player's video and EXIT planes are never used by it).
+
+**Gate**, decided once at start: `--warp=auto` (default) asks the daemon
+(`status` on `/run/qvue-warp/ctl.sock`) and warps when it says `enabled=1`;
+`--warp=on` forces it, `--warp=off` never. Without the socket, with the
+setting off, with two displays or a display that is not 4500x298, or when
+built without libqvuewarp, nothing of the warp runs: every frame takes the
+plane path, unchanged (the DRM state is the stock player's).
+
+**How a frame becomes the picture** (chosen per frame, logged when it changes,
+`warp: frame ... : (a)...`):
+
+| Path | Content | How |
+|---|---|---|
+| (a) | hw-decoded video (H.264 up to 1920x1088) whose placed area is at most one panel | zero copy: the NV12 dmabuf as an external texture |
+| (b) | stacked 1500x894, or hw video placed larger than one panel | the decoder copies frames into system memory, uploaded as NV12 textures |
+| (c) | 4500x298 H.264 (only accepted while the warp is active) | software decoded, I420 uploaded, the Y plane split in two textures (V3D's limit is 4096) |
+| (d) | images | RGBA upload |
+
+YUV is converted to RGB in the warp shader (BT.601/709/2020 and the range from
+the stream). Flat content is placed exactly as the plane path places it
+(`fit()`, centred) and warped where it lands; **stacked** content (the three
+1500x298 panels one above the other in a 1500x894 frame) fills the canvas,
+panel k = rows k*298... A file is stacked when it is exactly 1500x894; a
+playlist item may force it either way:
+
+```json
+{ "items": [ "intro.mp4", { "file": "odd.mp4", "layout": "stacked" }, { "file": "x.mp4", "layout": "flat" } ] }
+```
+
+**Pacing**: the warp is pipelined. A frame is uploaded when it is made and
+drawn into the next buffer at its slot; the buffer drawn at the previous slot
+is committed then. The GPU (~11 ms for a full 3-panel frame) gets a whole frame
+period; the picture is one frame (16.7 ms) later than the plane path's. Frame
+selection is unchanged (PTS on the vblank grid). With `--sync`, a warping rig
+shows each frame one vblank after a rig that does not warp; two warping rigs
+stay in step. Images are committed directly (no pipeline).
+
+**60 fps full-width video: use stacked files.** The Pi's hardware decoder stops
+at 1920 wide; a 4500x298 file is software decoded (best effort: ~1% late at 60
+fps on 2.4 cores, clean at 30 fps). `qvue-stack-video.sh` converts a 4500x298
+file to stacked 1500x894 (H.264 High, level 4.2, CRF 18 capped at 25 Mbit/s,
+BT.709 tags, frame rate kept, audio copied):
+
+```sh
+qvue-stack-video.sh show-4500x298.mp4 show-stacked.mp4
+```
+
+**Failures**: if the warp cannot start or fails while playing (commit, flip,
+upload), it stops (its planes off) and the player continues with its own planes,
+unwarped. A two-file pipeline that delivers no frame within 5 s now ends the
+player (exit 1), as playlist items already did.
+
+Test options: `--warp-dump=F.ppm --warp-dump-at=N` (read back warped frame N as
+4500x298), `--warp-fail=start|mid` (force a failure), `--warp-place=X,Y,W,H`
+(flat video placed there on the canvas instead of fitted). Environment:
+`QW_WARP_TIMING=1` (times per 120 frames), `QW_WARP_FINISH=1` (GPU time),
+`QW_WARP_LATEST_MS` (commit margin before the vblank, default 4).
+
 ## Control socket (`--control`)
 
 While it plays, the player listens on a Unix socket, `/tmp/dual-video-player.sock` by

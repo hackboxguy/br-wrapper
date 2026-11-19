@@ -48,14 +48,28 @@ struct playlist *playlist_load(const char *file, const char *root, GError **err)
 	pl->loop = json_object_get_boolean_member_with_default(o, "loop", FALSE);
 	pl->autostart = json_object_get_boolean_member_with_default(o, "autostart", FALSE);
 	pl->items = g_ptr_array_new_with_free_func(g_free);
+	pl->layouts = g_array_new(FALSE, TRUE, sizeof(int));
 	JsonArray *items = json_object_has_member(o, "items") ?
 			   json_object_get_array_member(o, "items") : NULL;
 	for (guint i = 0; items && i < json_array_get_length(items); i++) {
 		JsonNode *n = json_array_get_element(items, i);
-		const char *rel = JSON_NODE_HOLDS_VALUE(n) ? json_node_get_string(n) : NULL;
+		/* an item is a path, or {"file": path, "layout": "stacked"|"flat"}
+		 * (3x QVue warp: force how a video maps onto the three panels) */
+		const char *rel = NULL;
+		int layout = LAYOUT_AUTO;
+		if (JSON_NODE_HOLDS_VALUE(n)) {
+			rel = json_node_get_string(n);
+		} else if (JSON_NODE_HOLDS_OBJECT(n)) {
+			JsonObject *io = json_node_get_object(n);
+			rel = json_object_get_string_member_with_default(io, "file", NULL);
+			const char *l = json_object_get_string_member_with_default(io, "layout", "");
+			layout = !g_strcmp0(l, "stacked") ? LAYOUT_STACKED : !g_strcmp0(l, "flat") ? LAYOUT_FLAT
+										    : LAYOUT_AUTO;
+		}
 		if (!rel || !*rel || rel[0] == '/' || has_parent_component(rel))
 			continue;   /* relative paths inside the stick only */
 		g_ptr_array_add(pl->items, g_build_filename(pl->root, rel, NULL));
+		g_array_append_val(pl->layouts, layout);
 	}
 	g_object_unref(parser);
 	if (!pl->items->len) {
@@ -74,6 +88,8 @@ void playlist_free(struct playlist *pl)
 	g_free(pl->root);
 	if (pl->items)
 		g_ptr_array_unref(pl->items);
+	if (pl->layouts)
+		g_array_unref(pl->layouts);
 	g_free(pl);
 }
 

@@ -72,6 +72,14 @@ static void usage(const char *prog)
 		"  --image-duration=S  seconds per image, overrides the playlist (fractions allowed)\n"
 		"  --max-loops=N       stop after N passes even if the playlist loops (tests)\n"
 		"  exit: 0 done/stopped, 1 nothing playable/setup error, 2 usage, 3 stick removed\n"
+		"3x QVue realtime warp (one 4500x298 display; see warp.c):\n"
+		"  --warp=auto|on|off  auto (default): warp the frames when qvue-warpd says enabled=1\n"
+		"                      (the launcher has suspended it); off: never\n"
+		"  playlist items may be {\"file\": PATH, \"layout\": \"stacked\"|\"flat\"}: stacked =\n"
+		"                      1500x894 with the three panels one above the other (default by size)\n"
+		"  tests: --warp-dump=F.ppm --warp-dump-at=N (read back warped frame N),\n"
+		"         --warp-fail=start|mid (force a failure), --warp-place=X,Y,W,H (flat video\n"
+		"         placed there on the 4500x298 canvas instead of fitted)\n"
 		"Playlist sync with a player on another rig (frame-level, over the network):\n"
 		"  --sync=master|client|auto  master: serves the clock and the start; client:\n"
 		"                      follows a master (found with Avahi); auto: a master on the\n"
@@ -221,6 +229,7 @@ static int run_playlist(struct player *p, const char *file, const char *root, in
 	}
 	p->master = 0;
 	setup_popup(p);
+	warp_gate(p);
 	if (p->sync && !sync_plan(p->sync, pl, p->image_duration_ns > 0 ? p->image_duration_ns :
 				  (gint64)pl->image_duration_s * GST_SECOND)) {
 		g_printerr("dual-video-player: sync: this playlist cannot be synchronised: playing without sync\n");
@@ -456,6 +465,27 @@ int main(int argc, char **argv)
 			sync_log = argv[i] + 11;
 		else if (!strncmp(argv[i], "--sync-clock-test=", 18))
 			clock_test = atoi(argv[i] + 18);
+		else if (!strncmp(argv[i], "--warp=", 7)) {
+			g_warp_opts.mode = argv[i] + 7;
+			if (strcmp(g_warp_opts.mode, "auto") && strcmp(g_warp_opts.mode, "on") &&
+			    strcmp(g_warp_opts.mode, "off")) {
+				usage(argv[0]);
+				return 2;
+			}
+		} else if (!strncmp(argv[i], "--warp-dump=", 12))
+			g_warp_opts.dump = argv[i] + 12;
+		else if (!strncmp(argv[i], "--warp-dump-at=", 15))
+			g_warp_opts.dump_at = atol(argv[i] + 15);
+		else if (!strncmp(argv[i], "--warp-fail=", 12))
+			g_warp_opts.fail = argv[i] + 12;
+		else if (!strncmp(argv[i], "--warp-place=", 13)) {
+			if (sscanf(argv[i] + 13, "%d,%d,%d,%d", &g_warp_opts.place[0], &g_warp_opts.place[1],
+				   &g_warp_opts.place[2], &g_warp_opts.place[3]) != 4 || g_warp_opts.place[2] < 2 ||
+			    g_warp_opts.place[3] < 2) {
+				usage(argv[0]);
+				return 2;
+			}
+		}
 		else if (argv[i][0] == '-') {
 			usage(argv[0]);
 			return 2;
@@ -620,6 +650,7 @@ int main(int argc, char **argv)
 			p.master = i;
 	}
 	setup_popup(&p);
+	warp_gate(&p);
 	g_print("dual-video-player: pacing on %s (%.2f Hz) for %.2f fps\n",
 		p.out[p.master].name, 1e9 / p.out[p.master].period, p.fps);
 

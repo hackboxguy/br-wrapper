@@ -164,6 +164,8 @@ static void prefetch_after(struct mirror *mr, int index)
 		return;
 	struct item *it = g_new0(struct item, 1);
 	it->index = index;
+	it->layout = mr->p->pl->layouts && (guint)index < mr->p->pl->layouts->len ?
+		     g_array_index(mr->p->pl->layouts, int, index) : LAYOUT_AUTO;
 	it->state = ITEM_PREPARING;
 	mr->next = it;
 	queue_prepare(mr, it);
@@ -231,18 +233,34 @@ static gboolean mount_present(struct mirror *mr)
 }
 
 /* a decoded sample as a framebuffer: imported (hw) or copied into the item's dumb buffers */
-static gboolean make_frame(struct item *it, GstSample *s, struct frame *f)
+static gboolean make_frame(struct mirror *mr, struct item *it, GstSample *s, struct frame *f)
 {
 	GstVideoInfo vi;
 	if (!gst_video_info_from_caps(&vi, gst_sample_get_caps(s)))
 		return FALSE;
 	*f = (struct frame){ .w = GST_VIDEO_INFO_WIDTH(&vi), .h = GST_VIDEO_INFO_HEIGHT(&vi),
 			     .par_n = GST_VIDEO_INFO_PAR_N(&vi), .par_d = GST_VIDEO_INFO_PAR_D(&vi),
-			     .enc = it->yuv ? it->enc : -1, .range = it->range };
-	if (it->mi.decode == DECODE_HW)
+			     .enc = it->yuv ? it->enc : -1, .range = it->range,
+			     .src = s, .serial = frame_serial(), .layout = it->layout };
+	/* the warp renders from the sample itself: no copy into a dumb buffer
+	 * (fb 0 is never committed while the warp is active; if the warp stops,
+	 * the next frame is made the plane way). A hw frame still gets its
+	 * framebuffer when it is a dmabuf, for an immediate fallback. */
+	if (warp_active(mr->p)) {
+		if (it->mi.decode == DECODE_HW && !it->sysmem)
+			f->fb = sample_fb(s, &vi);
+		warp_prepare(mr->p, f);   /* upload now, not in the vblank slot (a failure: plane path) */
+		if (!warp_active(mr->p) && !f->fb)
+			goto plane;   /* the warp just stopped: this frame the plane way */
+		return TRUE;
+	}
+plane:
+	/* (a hw item decoded into system memory for the warp has no dmabuf: after
+	 * a warp failure its frames are copied like software-decoded ones) */
+	if (it->mi.decode == DECODE_HW && !it->sysmem)
 		return (f->fb = sample_fb(s, &vi)) != 0;
 	int slot = 0;
-	if (it->mi.decode == DECODE_SW) {
+	if (it->mi.decode == DECODE_SW || it->sysmem) {
 		slot = it->ring_next;
 		it->ring_next = (it->ring_next + 1) % ITEM_RING;
 	}
@@ -394,6 +412,8 @@ static void replace_next(struct mirror *mr, int index)
 	}
 	struct item *it = g_new0(struct item, 1);
 	it->index = index;
+	it->layout = mr->p->pl->layouts && (guint)index < mr->p->pl->layouts->len ?
+		     g_array_index(mr->p->pl->layouts, int, index) : LAYOUT_AUTO;
 	it->state = ITEM_PREPARING;
 	mr->next = it;
 	queue_prepare(mr, it);
@@ -479,7 +499,7 @@ static int video_control(struct mirror *mr, struct item *it, gint64 *pos, gboole
 				/* frozen: show where the seek landed */
 				GstSample *s = item_pull(it, 3 * GST_SECOND);
 				struct frame f;
-				if (s && make_frame(it, s, &f) &&
+				if (s && make_frame(mr, it, s, &f) &&
 				    show(mr, &f, MAX(mr->last_target, now_idx(mr->m)) + 1, FALSE) >= 0) {
 					GstBuffer *b = gst_sample_get_buffer(s);
 					if (GST_BUFFER_PTS_IS_VALID(b))
@@ -581,7 +601,7 @@ static void detach_hw_frame(struct mirror *mr, struct item *it)
 static void play_item(struct mirror *mr, struct item *it, struct item **old)
 {
 	struct frame f;
-	if (!make_frame(it, it->first, &f)) {
+	if (!make_frame(mr, it, it->first, &f)) {
 		g_printerr("dual-video-player: item %d: cannot show its frame\n", it->index + 1);
 		return;
 	}
@@ -665,7 +685,7 @@ static void play_item(struct mirror *mr, struct item *it, struct item **old)
 			rebase = FALSE;
 		}
 		gint64 target = start + llround((double)pts / mr->m->period);
-		if (!make_frame(it, s, &f)) {
+		if (!make_frame(mr, it, s, &f)) {
 			gst_sample_unref(s);
 			continue;
 		}
@@ -843,7 +863,7 @@ static gboolean begin_pass(struct mirror *mr)
 static void play_item_synced(struct mirror *mr, struct item *it, struct item **old)
 {
 	struct frame f;
-	if (!make_frame(it, it->first, &f)) {
+	if (!make_frame(mr, it, it->first, &f)) {
 		g_printerr("dual-video-player: item %d: cannot show its frame\n", it->index + 1);
 		return;
 	}
@@ -912,7 +932,7 @@ static void play_item_synced(struct mirror *mr, struct item *it, struct item **o
 		if (GST_BUFFER_DURATION_IS_VALID(b))
 			frame_ns = (gint64)GST_BUFFER_DURATION(b);
 		gint64 due = item_start + pts;
-		if (!make_frame(it, s, &f)) {
+		if (!make_frame(mr, it, s, &f)) {
 			gst_sample_unref(s);
 			continue;
 		}

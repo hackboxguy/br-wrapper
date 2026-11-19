@@ -100,6 +100,7 @@
       },
       {
         "id": "demo-video",
+        "display": "drm",
         "enabled": true,
         "text": "Demo Video",
         "subtitle": "Video playback test clip",
@@ -128,6 +129,7 @@
       },
       {
         "id": "dual-video",
+        "display": "drm",
         "enabled": true,
         "text": "Dual Video",
         "subtitle": "Two synced clips, one per HDMI",
@@ -244,6 +246,7 @@
       },
       {
         "id": "cluster-v2-analog",
+        "display": "drm",
         "enabled": true,
         "page": "cluster-v2",
         "text": "Analog",
@@ -276,6 +279,7 @@
       },
       {
         "id": "cluster-v2-ev",
+        "display": "drm",
         "enabled": true,
         "page": "cluster-v2",
         "text": "EV",
@@ -308,6 +312,7 @@
       },
       {
         "id": "cluster-v2-harman",
+        "display": "drm",
         "enabled": true,
         "page": "cluster-v2",
         "text": "Harman",
@@ -340,6 +345,7 @@
       },
       {
         "id": "cluster-v2-tiles",
+        "display": "drm",
         "enabled": true,
         "page": "cluster-v2",
         "text": "Tiles",
@@ -372,6 +378,7 @@
       },
       {
         "id": "cluster-v2-fable1",
+        "display": "drm",
         "enabled": true,
         "page": "cluster-v2",
         "text": "Fable",
@@ -404,6 +411,7 @@
       },
       {
         "id": "cluster-v2-atelier",
+        "display": "drm",
         "enabled": true,
         "page": "cluster-v2",
         "text": "Atelier",
@@ -436,6 +444,7 @@
       },
       {
         "id": "cluster-v2-neo",
+        "display": "drm",
         "enabled": true,
         "page": "cluster-v2",
         "text": "Neo",
@@ -468,6 +477,7 @@
       },
       {
         "id": "cluster-v2-auto",
+        "display": "drm",
         "enabled": true,
         "page": "cluster-v2",
         "text": "Auto",
@@ -500,6 +510,7 @@
       },
       {
         "id": "slideshow",
+        "display": "drm",
         "enabled": false,
         "text": "Slideshow",
         "subtitle": "Picture slideshow",
@@ -556,6 +567,7 @@
       },
       {
         "id": "pattern-generator",
+        "display": "drm",
         "enabled": true,
         "text": "Pattern Generator",
         "subtitle": "Solid, ramp & geometry patterns",
@@ -612,6 +624,7 @@
       },
       {
         "id": "media-player",
+        "display": "drm",
         "enabled": true,
         "text": "Media Player",
         "subtitle": "Kodi media center",
@@ -668,6 +681,7 @@
       },
       {
         "id": "cluster-demo",
+        "display": "drm",
         "enabled": false,
         "text": "Cluster Demo",
         "subtitle": "Animated instrument cluster",
@@ -724,6 +738,7 @@
       },
       {
         "id": "brightness-calibration",
+        "display": "drm",
         "enabled": true,
         "page": "calibration-tools",
         "text": "Brightness Calibration",
@@ -759,6 +774,7 @@
       },
       {
         "id": "live-measurement",
+        "display": "drm",
         "enabled": true,
         "page": "calibration-tools",
         "text": "Live Measurement",
@@ -797,6 +813,7 @@
       },
       {
         "id": "color-matching",
+        "display": "drm",
         "enabled": true,
         "page": "calibration-tools",
         "text": "White Point Matching",
@@ -838,6 +855,7 @@
       },
       {
         "id": "color-matching-new",
+        "display": "drm",
         "enabled": false,
         "page": "calibration-tools",
         "text": "White Point Matching New",
@@ -887,6 +905,7 @@
       },
       {
         "id": "white-point-profiling-new",
+        "display": "drm",
         "enabled": false,
         "page": "calibration-tools",
         "text": "White Point Profiling New",
@@ -928,6 +947,7 @@
       },
       {
         "id": "analyze-local-dimming-apl",
+        "display": "drm",
         "enabled": true,
         "page": "calibration-tools",
         "text": "Analyze Local-Dimming APL",
@@ -977,6 +997,7 @@
       },
       {
         "id": "d65-calibration",
+        "display": "drm",
         "enabled": true,
         "page": "calibration-tools",
         "text": "D65 Calibration",
@@ -1029,6 +1050,7 @@
       },
       {
         "id": "reset-white-point",
+        "display": "drm",
         "enabled": true,
         "page": "calibration-tools",
         "text": "Reset White Point",
@@ -1075,6 +1097,7 @@
       },
       {
         "id": "analyze-color-gamut",
+        "display": "drm",
         "enabled": true,
         "page": "calibration-tools",
         "text": "Analyze Color Gamut",
@@ -1189,6 +1212,7 @@
       },
       {
         "id": "measure-display-profile",
+        "display": "drm",
         "enabled": true,
         "page": "hdr-display-profile",
         "text": "Measure Display Profile",
@@ -1273,6 +1297,7 @@
       },
       {
         "id": "quick-video",
+        "display": "drm",
         "enabled": true,
         "visible": false,
         "page": "_internal",
@@ -1294,6 +1319,7 @@
       },
       {
         "id": "display-analysis-color-gamut-rendering",
+        "display": "drm",
         "enabled": true,
         "visible": false,
         "page": "_internal",
@@ -1314,6 +1340,7 @@
       },
       {
         "id": "display-analysis-local-dimming-apl-rendering",
+        "display": "drm",
         "enabled": true,
         "visible": false,
         "page": "_internal",

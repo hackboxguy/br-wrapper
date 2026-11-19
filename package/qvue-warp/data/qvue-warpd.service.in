@@ -1,0 +1,34 @@
+[Unit]
+Description=QVue realtime warp of the 3x QVue HDMI output
+Documentation=file://@QVUEWARP_DATADIR@/warp.conf
+After=systemd-udevd.service micropanel-display-derive.service data.mount ab-factory-reset.service micropanel-data-skeleton.service
+
+[Service]
+Type=simple
+# only on the 3x QVue display type; any other type skips the unit cleanly
+ExecCondition=/bin/grep -q "^# micropanel-display-type: 3x-qvue *$" /boot/firmware/micropanel-display.txt
+# persistent settings (warp.conf, trim.json) on the data partition of A/B
+# images; without /data the daemon uses ~pi/.config/qvue-warp
+ExecStartPre=+/bin/sh -c 'if [ -d /data ]; then install -d -o pi -g pi -m 0755 /data/qvue-warp; fi'
+ExecStart=@CMAKE_INSTALL_FULL_BINDIR@/qvue-warpd
+ExecReload=/bin/kill -HUP $MAINPID
+# DRM master comes from opening the card first (group video); the GPU render
+# node needs group render. No root needed.
+User=pi
+Group=video
+SupplementaryGroups=render
+LimitRTPRIO=10
+# /run/qvue-warp: ctl.sock (0660 pi:video) and state.json
+RuntimeDirectory=qvue-warp
+RuntimeDirectoryMode=0755
+Restart=on-failure
+RestartSec=3
+# SIGTERM disables the overlay planes; fb0 is shown unwarped again
+KillSignal=SIGTERM
+TimeoutStopSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=qvue-warpd
+
+[Install]
+WantedBy=multi-user.target

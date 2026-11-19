@@ -3,6 +3,8 @@
 
 /* ---- presenter ---- */
 
+#define FIRST_FRAME_TIMEOUT (5 * GST_SECOND)   /* as the playlist items' PREPARE_TIMEOUT */
+
 void on_flip(int fd, unsigned seq, unsigned sec, unsigned usec,
 		    unsigned crtc_id, void *data)
 {
@@ -34,6 +36,13 @@ void on_flip(int fd, unsigned seq, unsigned sec, unsigned usec,
 gint64 submit_time(struct player *p, gint64 v)
 {
 	struct output *m = &p->out[p->master];
+	/* the warp: the frame is uploaded when it is made and ~10 ms of GPU work
+	 * follow the commit, so commit as soon as the presenter gets here, if it
+	 * is early enough for that work (else: too late, as for the planes) */
+	if (p->warp) {
+		gint64 earliest = v - m->period + GUARD_NS, latest = v - warp_latest_ns(), now = mono_ns() + 400 * 1000;
+		return now <= earliest ? earliest : now <= latest ? now : earliest;
+	}
 	gint64 best = v - m->period + GUARD_NS, best_score = -1;
 	for (gint64 t = v - m->period + GUARD_NS; t <= v - GUARD_NS; t += 250 * 1000) {
 		gint64 score = v - t;
@@ -80,6 +89,13 @@ static void fit(const struct output *o, const struct frame *f, int *x, int *y, i
  */
 int commit_frames(struct player *p, const struct frame *const *f)
 {
+	/* 3x QVue warp: the player draws the frame through the warp instead of
+	 * putting it on its plane. If the warp fails it stops (its planes off)
+	 * and this frame and the following ones go the plane way. */
+	if (warp_active(p) && warp_commit(p, f[0]) == 0)
+		return 0;
+	if (!f[0]->fb)
+		return 0;   /* made for a warp that has stopped: the next frame comes with a framebuffer */
 	drmModeAtomicReq *req = drmModeAtomicAlloc();
 	for (int i = 0; i < p->nout; i++) {
 		struct output *o = &p->out[i];
@@ -124,15 +140,17 @@ int commit_frames(struct player *p, const struct frame *const *f)
 }
 
 /* two-file mode: stream i's frame on output i, plane colour left alone */
-int commit(struct player *p, const uint32_t *fb, const GstVideoInfo *vi)
+int commit(struct player *p, const uint32_t *fb, const GstVideoInfo *vi, GstSample *const *src)
 {
 	struct frame fr[2];
 	const struct frame *f[2];
+	guint64 serial = frame_serial();
 	for (int i = 0; i < p->nout; i++) {
 		fr[i] = (struct frame){ .fb = fb[i], .w = GST_VIDEO_INFO_WIDTH(&vi[i]),
 					.h = GST_VIDEO_INFO_HEIGHT(&vi[i]),
 					.par_n = GST_VIDEO_INFO_PAR_N(&vi[i]),
-					.par_d = GST_VIDEO_INFO_PAR_D(&vi[i]), .enc = -1, .range = 0 };
+					.par_d = GST_VIDEO_INFO_PAR_D(&vi[i]), .enc = -1, .range = 0,
+					.src = src[i], .serial = serial, .layout = LAYOUT_AUTO };
 		f[i] = &fr[i];
 	}
 	return commit_frames(p, f);
@@ -150,6 +168,8 @@ void player_wake(struct player *p)
  * console takes the displays back when the fd is closed) */
 void disable_planes(struct player *p)
 {
+	if (p->warp)
+		warp_stop(p);   /* the warp's three planes off, EGL/GBM gone */
 	drmModeAtomicReq *req = drmModeAtomicAlloc();
 	for (int i = 0; i < p->nout; i++)
 		plane_set(req, &p->out[i].video, 0, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -217,7 +237,7 @@ static gboolean twofile_control(struct player *p, GstSample **shown, GstSample *
 				gboolean ok = TRUE;
 				for (int i = 0; i < p->nout; i++)
 					ok &= (fb[i] = sample_fb(next[i], &vi[i])) != 0;
-				if (ok && !commit(p, fb, vi))
+				if (ok && !commit(p, fb, vi, next))
 					for (int i = 0; i < p->nout; i++) {
 						if (shown[i])
 							gst_sample_unref(shown[i]);
@@ -249,7 +269,7 @@ static gboolean twofile_control(struct player *p, GstSample **shown, GstSample *
 			for (int i = 0; i < p->nout; i++)
 				ok &= shown[i] && (fb[i] = sample_fb(shown[i], &vi[i])) != 0;
 			if (ok)
-				commit(p, fb, vi);
+				commit(p, fb, vi, shown);
 		}
 	}
 	if (changed && !control_paused(p))
@@ -268,6 +288,7 @@ gpointer presenter(gpointer data)
 	double ratio = 1e9 / m->period / p->fps;   /* master vblanks per frame */
 	gint64 pos = 0, dur = 0;
 	gboolean rebase = FALSE;
+	gint64 started = mono_ns();
 	gst_element_query_duration(p->pipeline, GST_FORMAT_TIME, &dur);
 
 	while (!g_atomic_int_get(&p->stop)) {
@@ -280,6 +301,16 @@ gpointer presenter(gpointer data)
 		for (int i = 0; i < p->nout && !g_atomic_int_get(&p->stop); i++) {
 			while (!next[i] && !g_atomic_int_get(&p->stop)) {
 				next[i] = gst_app_sink_try_pull_sample(p->sink[i], 100 * GST_MSECOND);
+				/* a pipeline that never delivers its first frame: give up */
+				if (!next[i] && k == 0 && n0 < 0 && mono_ns() - started > FIRST_FRAME_TIMEOUT) {
+					/* the main thread may be stuck in the same pipeline (a
+					 * loop seek on a decoder that delivers nothing never
+					 * returns): planes off and leave from here */
+					g_printerr("dual-video-player: no frame within %d s: giving up\n",
+						   (int)(FIRST_FRAME_TIMEOUT / GST_SECOND));
+					disable_planes(p);
+					_exit(1);
+				}
 				/* the end: EOS (--once), or nothing more after a segment end
 				 * that found the loop switched off (if it is on again by
 				 * now, the restart below takes over) */
@@ -354,7 +385,7 @@ gpointer presenter(gpointer data)
 			p->late++;
 		}
 		sleep_until(t);
-		int r = commit(p, fb, vi);
+		int r = commit(p, fb, vi, next);
 		if (r) {
 			g_printerr("dual-video-player: commit failed: %s\n", strerror(-r));
 			p->ret = 1;
