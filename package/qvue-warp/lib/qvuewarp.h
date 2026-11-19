@@ -38,14 +38,31 @@ double qw_now_ms(void); // CLOCK_MONOTONIC
 // ------------------------------------------------------------------ calibration
 // File format: '#' comment lines, then gw*gh lines "dst_x dst_y" (panel pixels,
 // origin top-left), row-major over a regular gw x gh source grid, top-left point
-// first. ',' and ';' are accepted as separators. The grid size comes from a
-// "# grid 21x9" comment, otherwise from the file name ("...-21x9.txt").
-// reverse=1 reverses the point order (the CES25 files start bottom-right).
+// first. Spaces, tabs, ',' and ';' separate; CRLF is fine. Lines before the
+// first point that do not start with a number are skipped as a header (the
+// vendor's grid files: "=====", "VI size", "Activ area", "-----");
+// after the first point every line must be a point. The grid size comes from
+// opts gw/gh (panelN.grid), a "# grid 21x9" comment, the file name
+// ("...-21x9.txt"), or, without any of these, 21x9 when there are 189 points.
+// reverse=1 reverses the point order (the CES25 and vendor files start
+// bottom-right). flip_x / flip_y (panelN.calib_flip_*) then mirror the
+// destination points inside the panel (x -> 1499-x, y -> 297-y): the warp's
+// shape is mirrored, the source grid node of each point stays the same.
 struct qw_calib {
     int gw, gh;
     float *pts; // gw*gh*2: x, y
+    int flip_x, flip_y; // calib_flip applied: the trim lattice and handle markers follow it
+};
+struct qw_calib_opts {
+    int reverse, flip_x, flip_y;
+    int gw, gh; // 0: from the file
 };
 int qw_calib_load(const char *path, int reverse, struct qw_calib *out, char *err, size_t errlen);
+int qw_calib_load_opts(const char *path, const struct qw_calib_opts *o, struct qw_calib *out, char *err,
+                       size_t errlen);
+// grid coordinate of trim handle h (0..8, tl t tr l c r bl b br) on calibration
+// c: handle names stay physical panel positions after calib_flip
+void qw_calib_handle_pos(const struct qw_calib *c, int h, float *fi, float *fj);
 void qw_calib_free(struct qw_calib *c);
 // destination for continuous grid coordinates (fi in [0,gw-1], fj in [0,gh-1]),
 // bicubic Catmull-Rom with linear extrapolation past the grid edge

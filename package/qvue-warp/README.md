@@ -28,11 +28,11 @@ linuxfb apps ──CPU──► /dev/fb0 (4500x298 XR24, primary plane, unchange
 | `lib/` → `libqvuewarp.a` | calibration loading (`calib.c`), forward mesh with integer or fractional source mapping (`mesh.c`), trim model (`trim.c`), tuning overlay geometry (`overlay.c`), GL programs and draw with per-panel source formats - RGB, external OES, NV12, I420 with YUV→RGB in the shader (`render.c`), stacked output stage: card by driver name or the caller's DRM fd with excluded planes, GBM/EGL, atomic flip in event-loop steps (`output.c`), the shared loader of `warp.conf` layers, calibration and the state directory (`qw_config.c`). Used by `qvue-warpd` and by `dual-video-player` (micropanel-media-player), which warps its own video while the daemon is suspended |
 | `src/` → `qvue-warpd` | fb0 dmabuf source and its per-frame copy (`fb0src.c`), built-in test grid (`gridsrc.c`), atomic file writes and directories (`persist.c`), states, control socket, frame statistics (`qvue-warpd.c`) |
 | `src/` → `qvue-warpctl` | the socket client: `qvue-warpctl COMMAND [ARGS]`, exit 0 for `OK`, 1 for `ERROR`, 2 without a daemon |
-| `data/` | factory calibration `3xqvue-panel{1,2,3}-21x9.txt`, default `warp.conf`, `qvue-warpd.service.in` |
+| `data/` | factory calibration `calib/3xqvue-vendor-panel{1,2,3}.txt` (vendor, default) and `calib/3xqvue-panel{1,2,3}-21x9.txt` (recovered, alternative), default `warp.conf`, `qvue-warpd.service.in` |
 | `tools/` | host-side tests: `warp_ref.py` (numpy reference renderer + golden test), `dot_test.py` |
 
 Installed (prefix `/home/pi/micropanel`): `bin/qvue-warpd`, `bin/qvue-warpctl`,
-`share/qvue-warp/{3xqvue-panel*-21x9.txt,warp.conf}`,
+`share/qvue-warp/{3xqvue-vendor-panel*.txt,3xqvue-panel*-21x9.txt,warp.conf}`,
 `lib/systemd/system/qvue-warpd.service`.
 
 Build dependencies: `libdrm-dev libgbm-dev libegl-dev libgles-dev` (cmake
@@ -47,8 +47,36 @@ triangles. Vertex = destination pixel centre, texture coordinate = source
 pixel centre. Outside the mesh: black. Bilinear sampling.
 
 Calibration files: `#` comments, then `gw*gh` lines `dst_x dst_y`, row-major,
-top-left point first. The grid size comes from a `# grid 21x9` comment or the
-file name. Files that start bottom-right (CES25) need `panelN.reverse = true`.
+top-left point first; spaces, tabs, `,` or `;` between the numbers, LF or
+CRLF. Lines before the first point that do not start with a number are a
+header and skipped (the vendor files); after it every line must be a point.
+The grid size comes from `panelN.grid`, a `# grid 21x9` comment, the file
+name, or (189 points) 21x9. Files that start bottom-right (the vendor files,
+CES25) need `panelN.reverse = true`.
+
+The factory calibration is the vendor's grid files for the 3x QVue,
+installed verbatim: `3xqvue-vendor-panel1.txt` (panel 1),
+`3xqvue-vendor-panel2.txt` (panel 2), `3xqvue-vendor-panel3.txt`
+(panel 3); the defaults name them with `reverse = true`. Kept verbatim so they
+can be compared with the vendor's originals byte for byte. Their header names
+an active area of 1450x258 px; the full 1500x298 panel area is still mapped
+onto the grid (`panelN.src = 25 20 1450 258` etc. maps only the active area,
+see `warp.conf`). `3xqvue-panel{1,2,3}-21x9.txt` is the set recovered earlier
+from the rig's test pattern by `png-dots-to-calib.py`, an alternative
+(`panelN.calib = .../3xqvue-panelN-21x9.txt`, `panelN.reverse = false`): it
+agrees with the vendor files to ~1 px inside, up to 5 px at the bottom-left
+corner, whose vendor point lies below the panel (y 300-302), where the test
+pattern's dot is cut off.
+
+`panelN.calib_flip_x` / `calib_flip_y` mirror the calibration's shape inside
+the panel (point destinations x -> 1499-x, y -> 297-y; the source grid node of
+each point unchanged): alone it mirrors the whole warped panel (curve and
+picture), with
+`mirror_y` / `mirror_x` only the curve is flipped and the picture stays
+upright. It is not `reverse` (which file point belongs to which grid node) and
+not `mirror_x` / `mirror_y` (the picture only). The trim lattice and the handle
+markers follow the flip, so handle names stay panel positions and an arrow
+moves the picture that way on the panel. Config file only.
 
 ## Trim (fine tuning)
 
@@ -129,7 +157,8 @@ every 5 s while ON. The Stream Deck keys (streamdeck-ctrl
 | Path | What |
 |---|---|
 | `<datadir>/qvue-warp/warp.conf` | defaults, documented there (read first) |
-| `<datadir>/qvue-warp/3xqvue-panel{1,2,3}-21x9.txt` | factory calibration |
+| `<datadir>/qvue-warp/3xqvue-vendor-panel{1,2,3}.txt` | factory calibration (vendor, default) |
+| `<datadir>/qvue-warp/3xqvue-panel{1,2,3}-21x9.txt` | recovered calibration (alternative) |
 | `/data/qvue-warp/warp.conf` | the writable layer read on top: `on`/`off`/`toggle` set `enabled`, `mirror` sets `mirror_x`/`mirror_y` here (atomic write, other lines kept) |
 | `/data/qvue-warp/trim.json` | saved trim |
 | `/run/qvue-warp/ctl.sock`, `state.json` | runtime (`RuntimeDirectory=` of the unit) |
@@ -140,7 +169,7 @@ under the unit) for single-slot images. `--state-dir`, `--run-dir` and
 `--config` override them.
 
 Config keys: `enabled`, `mirror_x`, `mirror_y`, `subdiv`, `rt_priority`, `stats_interval`,
-`copy_source`, `pipeline`, and per panel `calib`, `reverse`, `flip_x`,
+`copy_source`, `pipeline`, and per panel `calib`, `reverse`, `grid`, `calib_flip_x`, `calib_flip_y`, `flip_x`,
 `flip_y`, `src`. `--on` / `--off` override `enabled` at start without saving
 it. SIGHUP (`systemctl reload`) is the same as `reload`. SIGTERM / SIGINT
 disable the planes and exit. If the warp cannot start (for example another
@@ -199,8 +228,9 @@ Only one DRM master at a time: stop the service first, or use the socket's
 `dump` while it runs. On the host:
 
 ```sh
-tools/warp_ref.py --src src.ppm --compare out.ppm data/calib/3xqvue-panel{1,2,3}-21x9.txt
-tools/warp_ref.py --src src.ppm --compare out.ppm --trim trim.json data/calib/3xqvue-panel{1,2,3}-21x9.txt
+C="data/calib/3xqvue-vendor-panel1.txt data/calib/3xqvue-vendor-panel2.txt data/calib/3xqvue-vendor-panel3.txt"
+tools/warp_ref.py --src src.ppm --compare out.ppm --reverse $C
+tools/warp_ref.py --src src.ppm --compare out.ppm --reverse --trim trim.json $C
 tools/dot_test.py out.ppm warping-images/qvue-warping-calibration-test-pattern.png   # gallery showing the straight grid
 ```
 

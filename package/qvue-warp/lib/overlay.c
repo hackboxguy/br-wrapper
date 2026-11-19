@@ -59,7 +59,9 @@ int qw_overlay_build(const struct qw_calib *g, int subdiv, int sel, float **out,
                 int is_sel = sel == QW_NHANDLE || sel == h;
                 if (is_sel != pass) continue;
                 float x, y;
-                qw_calib_eval(g, (h % 3) * 0.5f * (g->gw - 1), (h / 3) * 0.5f * (g->gh - 1), &x, &y);
+                float fi, fj;
+                qw_calib_handle_pos(g, h, &fi, &fj);
+                qw_calib_eval(g, fi, fj, &x, &y);
                 if (is_sel) {
                     bad |= square(&tris, x, y, 7, magenta);
                     bad |= square(&tris, x, y, 3, black);

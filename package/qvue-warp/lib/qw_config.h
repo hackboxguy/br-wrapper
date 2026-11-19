@@ -17,6 +17,8 @@ struct warp_config {
     int mirror_x, mirror_y; // canvas mirror: left-right across all panels / top-bottom
     char calib[QW_NPANEL][PATH_MAX];
     int reverse[QW_NPANEL];
+    int calib_flip_x[QW_NPANEL], calib_flip_y[QW_NPANEL]; // mirror the calibration's shape
+    int grid_w[QW_NPANEL], grid_h[QW_NPANEL];             // panelN.grid; 0: from the file
     struct qw_panel_map map[QW_NPANEL];
 };
 

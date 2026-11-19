@@ -20,7 +20,13 @@ void config_defaults(struct warp_config *c, const char *datadir) {
     c->pipeline = 0;
     c->copy_source = 1;
     for (int k = 0; k < QW_NPANEL; k++) {
-        snprintf(c->calib[k], sizeof c->calib[k], "%s/3xqvue-panel%d-21x9.txt", datadir, k + 1);
+        // factory calibration: the vendor's grid files, verbatim (they list the
+        // points bottom-right first, hence reverse)
+        static const char *const vendor[QW_NPANEL] = { "3xqvue-vendor-panel1.txt",
+                                                       "3xqvue-vendor-panel2.txt",
+                                                       "3xqvue-vendor-panel3.txt" };
+        snprintf(c->calib[k], sizeof c->calib[k], "%s/%s", datadir, vendor[k]);
+        c->reverse[k] = 1;
         c->map[k] = (struct qw_panel_map){ 0, 0, k * QW_PW, 0, QW_PW, QW_PH };
     }
 }
@@ -83,6 +89,14 @@ int config_load(struct warp_config *c, const char *path, char *err, size_t errle
         else if (k >= 0 && !strcmp(sub, "flip_x")) bad = parse_bool(val, &n.map[k].flip_x);
         else if (k >= 0 && !strcmp(sub, "flip_y")) bad = parse_bool(val, &n.map[k].flip_y);
         else if (k >= 0 && !strcmp(sub, "reverse")) bad = parse_bool(val, &n.reverse[k]);
+        else if (k >= 0 && !strcmp(sub, "calib_flip_x")) bad = parse_bool(val, &n.calib_flip_x[k]);
+        else if (k >= 0 && !strcmp(sub, "calib_flip_y")) bad = parse_bool(val, &n.calib_flip_y[k]);
+        else if (k >= 0 && !strcmp(sub, "grid")) {
+            char extra;
+            int w, h;
+            if (sscanf(val, "%d%*[xX]%d %c", &w, &h, &extra) != 2 || w < 2 || h < 2 || w > 1024 || h > 1024) bad = 1;
+            else { n.grid_w[k] = w; n.grid_h[k] = h; }
+        }
         else if (k >= 0 && !strcmp(sub, "calib")) {
             if (!*val || strlen(val) >= sizeof n.calib[k]) bad = 1;
             else snprintf(n.calib[k], sizeof n.calib[k], "%s", val);
@@ -115,8 +129,9 @@ void config_log(const struct warp_config *c) {
             c->pipeline, c->copy_source);
     for (int k = 0; k < QW_NPANEL; k++) {
         const struct qw_panel_map *m = &c->map[k];
-        QW_INFO("config: panel%d calib=%s reverse=%d flip_x=%d flip_y=%d src=%d %d %d %d", k + 1, c->calib[k],
-                c->reverse[k], m->flip_x, m->flip_y, m->src_x, m->src_y, m->src_w, m->src_h);
+        QW_INFO("config: panel%d calib=%s reverse=%d calib_flip=%d,%d flip_x=%d flip_y=%d src=%d %d %d %d", k + 1,
+                c->calib[k], c->reverse[k], c->calib_flip_x[k], c->calib_flip_y[k], m->flip_x, m->flip_y, m->src_x,
+                m->src_y, m->src_w, m->src_h);
     }
 }
 
@@ -162,7 +177,8 @@ int qw_setup_calib(const struct warp_config *c, struct qw_calib calib[QW_NPANEL]
     for (int k = 0; k < QW_NPANEL; k++) {
         qw_calib_free(&calib[k]);
         char e[512];
-        if (qw_calib_load(c->calib[k], c->reverse[k], &calib[k], e, sizeof e)) {
+        struct qw_calib_opts o = { c->reverse[k], c->calib_flip_x[k], c->calib_flip_y[k], c->grid_w[k], c->grid_h[k] };
+        if (qw_calib_load_opts(c->calib[k], &o, &calib[k], e, sizeof e)) {
             if (!rc) snprintf(err, errlen, "panel %d calibration: %s", k + 1, e);
             rc = -1;
         }

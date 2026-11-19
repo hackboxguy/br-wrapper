@@ -34,10 +34,13 @@ PW, PH, NP = 1500, 298, 3
 FW = PW * NP
 
 
-def load_calib(path, reverse=False):
+def load_calib(path, reverse=False, flip_x=False, flip_y=False):
+    """as calib.c: '#' comments, a header before the first point (vendor
+    files), grid from '# grid WxH', the file name or 189 points = 21x9;
+    reverse, then calib_flip (destination mirrored inside the panel)"""
     gw = gh = None
     pts = []
-    for line in open(path):
+    for line in open(path, encoding="latin-1"):
         s = line.strip()
         if not s:
             continue
@@ -46,15 +49,24 @@ def load_calib(path, reverse=False):
             if m and gw is None:
                 gw, gh = int(m.group(1)), int(m.group(2))
             continue
+        if not pts and not re.match(r"[+-]?\.?\d", s):
+            continue   # header line
         x, y = s.replace(",", " ").replace(";", " ").split()[:2]
         pts.append((float(x), float(y)))
     if gw is None:
         m = re.findall(r"(\d+)[xX](\d+)", path.split("/")[-1])
-        gw, gh = int(m[-1][0]), int(m[-1][1])
+        if m:
+            gw, gh = int(m[-1][0]), int(m[-1][1])
+        elif len(pts) == 21 * 9:
+            gw, gh = 21, 9
     pts = np.array(pts, np.float64)
-    assert len(pts) == gw * gh, f"{path}: {len(pts)} points, grid {gw}x{gh}"
+    assert gw and len(pts) == gw * gh, f"{path}: {len(pts)} points, grid {gw}x{gh}"
     if reverse:
         pts = pts[::-1]
+    if flip_x:
+        pts[:, 0] = (PW - 1) - pts[:, 0]
+    if flip_y:
+        pts[:, 1] = (PH - 1) - pts[:, 1]
     return pts.reshape(gh, gw, 2)
 
 
@@ -63,11 +75,16 @@ def lagrange(t):
     return np.stack([2 * (t - 0.5) * (t - 1), -4 * t * (t - 1), 2 * t * (t - 0.5)], -1)
 
 
-def apply_trim(g, handles):
+def apply_trim(g, handles, flip_x=False, flip_y=False):
     """add the trim displacement (plan section 6) to every grid node.
-    handles: 9 x (dx, dy) in the order tl t tr l c r bl b br"""
+    handles: 9 x (dx, dy) in the order tl t tr l c r bl b br. After a
+    calib_flip the lattice is mirrored with it (handles stay panel places)."""
     gh, gw, _ = g.shape
     h = np.asarray(handles, np.float64).reshape(3, 3, 2)          # [row][col]
+    if flip_x:
+        h = h[:, ::-1]
+    if flip_y:
+        h = h[::-1]
     bu = lagrange(np.arange(gw) / (gw - 1))                        # (gw, 3)
     bv = lagrange(np.arange(gh) / (gh - 1))                        # (gh, 3)
     d = np.einsum("jr,ic,rcx->jix", bv, bu, h)
@@ -172,7 +189,7 @@ def render_panel(img, mesh):
 
 
 def render(img, calibs, subdiv=8, reverse=False, srcs=None, flip_x=False, flip_y=False, trim=None,
-           mirror_x=False, mirror_y=False, flips=None):
+           mirror_x=False, mirror_y=False, flips=None, calib_flips=None):
     """mirror_x / mirror_y: the canvas mirror of warp.conf, done here by
     mirroring the source image itself (pixel x -> 4499-x), independently of
     the daemon's rectangle arithmetic. flips: per panel (flip_x, flip_y), the
@@ -184,9 +201,10 @@ def render(img, calibs, subdiv=8, reverse=False, srcs=None, flip_x=False, flip_y
         img = img[::-1]
     out = np.zeros((PH, FW, 3))
     for k in range(NP):
-        g = load_calib(calibs[min(k, len(calibs) - 1)], reverse)
+        cf = calib_flips[k] if calib_flips else (False, False)
+        g = load_calib(calibs[min(k, len(calibs) - 1)], reverse, *cf)
         if trim is not None:
-            g = apply_trim(g, trim[k])
+            g = apply_trim(g, trim[k], *cf)
         src = srcs[k] if srcs else (k * PW, 0, PW, PH)
         fx, fy = flips[k] if flips else (flip_x, flip_y)
         out[:, k * PW:(k + 1) * PW] = render_panel(img, build_mesh(g, src, subdiv, fx, fy))
@@ -218,7 +236,19 @@ def main():
     ap.add_argument("--mirror-y", action="store_true", help="warp.conf mirror_y = true")
     ap.add_argument("--flip", action="append", default=[], metavar="N:x|y|xy",
                     help="panelN.flip_x / flip_y = true (repeatable)")
+    ap.add_argument("--panel-src", action="append", default=[], metavar="N:X,Y,W,H",
+                    help="panelN.src = X Y W H (repeatable)")
+    ap.add_argument("--calib-flip", action="append", default=[], metavar="N:x|y|xy",
+                    help="panelN.calib_flip_x / calib_flip_y = true (repeatable)")
     a = ap.parse_args()
+    srcs = [(k * PW, 0, PW, PH) for k in range(NP)]
+    for f in a.panel_src:
+        n, r = f.split(":")
+        srcs[int(n) - 1] = tuple(int(v) for v in r.split(","))
+    calib_flips = [[False, False] for _ in range(NP)]
+    for f in a.calib_flip:
+        n, axes = f.split(":")
+        calib_flips[int(n) - 1] = ["x" in axes, "y" in axes]
 
     flips = [[False, False] for _ in range(NP)]
     for f in a.flip:
@@ -227,7 +257,7 @@ def main():
     src = np.array(Image.open(a.src).convert("RGB"))
     assert src.shape == (PH, FW, 3), src.shape
     ref = render(src, a.calib, a.subdiv, a.reverse, trim=load_trim(a.trim) if a.trim else None,
-                 mirror_x=a.mirror_x, mirror_y=a.mirror_y, flips=flips)
+                 srcs=srcs, mirror_x=a.mirror_x, mirror_y=a.mirror_y, flips=flips, calib_flips=calib_flips)
     ref8 = np.clip(np.rint(ref), 0, 255).astype(np.uint8)
     if a.out:
         Image.fromarray(ref8).save(a.out)

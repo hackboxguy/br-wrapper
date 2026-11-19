@@ -42,17 +42,32 @@ int qw_calib_trimmed(const struct qw_calib *in, const float h[QW_NHANDLE][2], st
     size_t n = (size_t)in->gw * in->gh;
     out->gw = in->gw;
     out->gh = in->gh;
+    out->flip_x = in->flip_x;
+    out->flip_y = in->flip_y;
     out->pts = malloc(n * 2 * sizeof *out->pts);
     if (!out->pts) return -1;
     for (int j = 0; j < in->gh; j++)
         for (int i = 0; i < in->gw; i++) {
             size_t q = (size_t)j * in->gw + i;
-            float dx, dy;
-            qw_trim_displacement(h, (float)i / (in->gw - 1), (float)j / (in->gh - 1), &dx, &dy);
+            float dx, dy, u = (float)i / (in->gw - 1), v = (float)j / (in->gh - 1);
+            // the 3x3 lattice is in panel space: after calib_flip, grid node
+            // (i, j) sits at the mirrored place of the panel, so it takes the
+            // trim of that place (tl stays the panel's top-left corner)
+            if (in->flip_x) u = 1 - u;
+            if (in->flip_y) v = 1 - v;
+            qw_trim_displacement(h, u, v, &dx, &dy);
             out->pts[2 * q] = in->pts[2 * q] + dx;
             out->pts[2 * q + 1] = in->pts[2 * q + 1] + dy;
         }
     return 0;
+}
+
+void qw_calib_handle_pos(const struct qw_calib *c, int h, float *fi, float *fj) {
+    float u = (h % 3) * 0.5f, v = (h / 3) * 0.5f;
+    if (c->flip_x) u = 1 - u;
+    if (c->flip_y) v = 1 - v;
+    *fi = u * (c->gw - 1);
+    *fj = v * (c->gh - 1);
 }
 
 int qw_trim_is_zero(const struct qw_trim *t) {

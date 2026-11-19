@@ -41,8 +41,11 @@ add_executable(qvue-warpctl src/qvue-warpctl.c)
 target_compile_options(qvue-warpctl PRIVATE -Wall -Wextra)
 
 install(TARGETS qvue-warpd qvue-warpctl RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-# factory calibration (recovered from the 3x QVue test pattern) and default config
-install(FILES data/calib/3xqvue-panel1-21x9.txt data/calib/3xqvue-panel2-21x9.txt
+# factory calibration: the vendor's grid files (verbatim, the default), the set
+# recovered earlier from the rig's test pattern (an alternative), default config
+install(FILES data/calib/3xqvue-vendor-panel1.txt data/calib/3xqvue-vendor-panel2.txt
+              data/calib/3xqvue-vendor-panel3.txt
+              data/calib/3xqvue-panel1-21x9.txt data/calib/3xqvue-panel2-21x9.txt
               data/calib/3xqvue-panel3-21x9.txt data/warp.conf
         DESTINATION ${CMAKE_INSTALL_DATADIR}/qvue-warp)
 

@@ -40,7 +40,20 @@ static int parse_grid(const char *s, int *gw, int *gh) {
     return found;
 }
 
+// a point line starts with a number: a digit, or a sign or '.' before one
+static int numeric_start(const char *s) {
+    if (*s == '+' || *s == '-') s++;
+    if (*s == '.') s++;
+    return isdigit((unsigned char)*s);
+}
+
 int qw_calib_load(const char *path, int reverse, struct qw_calib *out, char *err, size_t errlen) {
+    struct qw_calib_opts o = { .reverse = reverse };
+    return qw_calib_load_opts(path, &o, out, err, errlen);
+}
+
+int qw_calib_load_opts(const char *path, const struct qw_calib_opts *o, struct qw_calib *out, char *err,
+                       size_t errlen) {
     memset(out, 0, sizeof *out);
     FILE *f = fopen(path, "r");
     if (!f) { snprintf(err, errlen, "%s: %m", path); return -1; }
@@ -50,13 +63,17 @@ int qw_calib_load(const char *path, int reverse, struct qw_calib *out, char *err
     while (fgets(line, sizeof line, f)) {
         lineno++;
         char *s = line;
-        while (isspace((unsigned char)*s)) s++;
+        while (isspace((unsigned char)*s)) s++; // also the vendor files' \r
         if (!*s) continue;
         if (*s == '#') {
             char *g = strstr(s, "grid");
             if (g && !have_grid && parse_grid(g, &gw, &gh)) have_grid = 1;
             continue;
         }
+        // header lines before the first point (the vendor files: "=====",
+        // " VI size (...)", " Activ area (...)", "-----") are skipped; after
+        // the first point every line must be one
+        if (n == 0 && !numeric_start(s)) continue;
         for (char *c = s; *c; c++) if (*c == ',' || *c == ';') *c = ' ';
         float x, y;
         char extra;
@@ -69,25 +86,37 @@ int qw_calib_load(const char *path, int reverse, struct qw_calib *out, char *err
         pts[2 * n] = x; pts[2 * n + 1] = y; n++;
     }
     fclose(f);
+    if (o->gw >= 2 && o->gh >= 2) { // panelN.grid wins over hints in the file
+        gw = o->gw; gh = o->gh; have_grid = 1;
+    }
     if (!have_grid) {
         const char *base = strrchr(path, '/');
         have_grid = parse_grid(base ? base + 1 : path, &gw, &gh);
     }
+    if (!have_grid && n == 21 * 9) { // the QVue grid (vendor files carry no size)
+        gw = 21; gh = 9; have_grid = 1;
+    }
     if (!have_grid) {
-        snprintf(err, errlen, "%s: grid size unknown (add a \"# grid 21x9\" comment or put 21x9 in the name)", path);
+        snprintf(err, errlen, "%s: grid size unknown (add a \"# grid 21x9\" comment, put 21x9 in the name or set "
+                 "panelN.grid)", path);
         free(pts); return -1;
     }
     if (n != gw * gh) {
         snprintf(err, errlen, "%s: %d points, grid %dx%d needs %d", path, n, gw, gh, gw * gh);
         free(pts); return -1;
     }
-    if (reverse)
+    if (o->reverse)
         for (int a = 0, b = n - 1; a < b; a++, b--) {
             float t0 = pts[2 * a], t1 = pts[2 * a + 1];
             pts[2 * a] = pts[2 * b]; pts[2 * a + 1] = pts[2 * b + 1];
             pts[2 * b] = t0; pts[2 * b + 1] = t1;
         }
+    for (int q = 0; q < n; q++) { // calib_flip: the shape, not the source assignment
+        if (o->flip_x) pts[2 * q] = (QW_PW - 1) - pts[2 * q];
+        if (o->flip_y) pts[2 * q + 1] = (QW_PH - 1) - pts[2 * q + 1];
+    }
     out->gw = gw; out->gh = gh; out->pts = pts;
+    out->flip_x = o->flip_x; out->flip_y = o->flip_y;
     return 0;
 }
 
