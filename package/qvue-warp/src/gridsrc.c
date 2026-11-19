@@ -1,11 +1,18 @@
 // Built-in straight-grid test source (tune source grid): per panel a 1500x298
-// texture with the regular 21x9 source grid the calibration refers to: grey
-// grid lines, white 5x5 dots on the nodes and a border in the panel colour
-// (green, red, blue, as in the reference test pattern). Warped, the dots must
-// land on the calibration points, so the tuning does not depend on the app.
+// texture with the regular 21x9 source grid the calibration refers to, made to
+// judge straightness by eye: light grey grid lines 3 px wide, white 5x5 dots on
+// the nodes, a 3 px border and a 5 px centre cross in the panel colour (green,
+// red, blue, as in the reference test pattern), orange corner-to-corner
+// diagonals and an orange circle round the centre (curvature and shear show at
+// once). Warped, the dots must land on the calibration points, so the tuning
+// does not depend on the app. While it is the picture the tuning overlay draws
+// only its handle markers (its lines would lie on the grid lines).
+// Only the dots are white: lines and colours stay at or below 150 in at least
+// one channel, so dot detection (any channel > 150 in all three) sees dots only.
 // A label "PANEL n" in the panel colour sits in the second cell from the top
 // left; it is part of the picture, so with mirror_x / mirror_y it shows up
 // mirrored (and on the other panel), which makes the mirror state visible.
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -44,32 +51,49 @@ static void text(uint8_t *img, int x, int y, int scale, const char *t, const uin
         }
 }
 
+static int node_x(int i) { return (int)(i * (QW_PW - 1) / (double)(GW - 1) + 0.5); }
+static int node_y(int j) { return (int)(j * (QW_PH - 1) / (double)(GH - 1) + 0.5); }
+
+// a line of width w (odd) from (x0, y0) to (x1, y1)
+static void line(uint8_t *img, double x0, double y0, double x1, double y1, int w, const uint8_t c[3]) {
+    int n = (int)ceil(fmax(fabs(x1 - x0), fabs(y1 - y0))) * 2 + 1;
+    for (int s = 0; s <= n; s++) {
+        double t = (double)s / n;
+        int x = (int)lround(x0 + t * (x1 - x0)), y = (int)lround(y0 + t * (y1 - y0));
+        for (int dy = -w / 2; dy <= w / 2; dy++)
+            for (int dx = -w / 2; dx <= w / 2; dx++) px(img, x + dx, y + dy, c);
+    }
+}
+
 void gridsrc_image(int k, uint8_t *img) {
     static const uint8_t border[QW_NPANEL][3] = { { 0, 255, 0 }, { 255, 0, 0 }, { 0, 80, 255 } };
-    static const uint8_t grey[3] = { 110, 110, 110 }, white[3] = { 255, 255, 255 };
+    static const uint8_t grey[3] = { 150, 150, 150 }, white[3] = { 255, 255, 255 }, orange[3] = { 255, 140, 0 };
+    const int W = QW_PW - 1, H = QW_PH - 1;
     memset(img, 0, (size_t)QW_PW * QW_PH * 4);
     for (size_t i = 0; i < (size_t)QW_PW * QW_PH; i++) img[4 * i + 3] = 255;
-    for (int i = 0; i < GW; i++) {
-        int x = (int)(i * (QW_PW - 1) / (double)(GW - 1) + 0.5);
-        for (int y = 0; y < QW_PH; y++) px(img, x, y, grey);
+    for (int i = 0; i < GW; i++) line(img, node_x(i), 0, node_x(i), H, 3, grey);
+    for (int j = 0; j < GH; j++) line(img, 0, node_y(j), W, node_y(j), 3, grey);
+    line(img, 0, 0, W, H, 3, orange);
+    line(img, 0, H, W, 0, 3, orange);
+    double cx = node_x(GW / 2), cy = node_y(GH / 2), r = node_y(GH / 2) - node_y(1);
+    for (int s = 0; s < 720; s++) {
+        double a0 = s * M_PI / 360, a1 = (s + 1) * M_PI / 360;
+        line(img, cx + r * cos(a0), cy + r * sin(a0), cx + r * cos(a1), cy + r * sin(a1), 3, orange);
     }
-    for (int j = 0; j < GH; j++) {
-        int y = (int)(j * (QW_PH - 1) / (double)(GH - 1) + 0.5);
-        for (int x = 0; x < QW_PW; x++) px(img, x, y, grey);
-    }
-    for (int x = 0; x < QW_PW; x++) { px(img, x, 0, border[k]); px(img, x, QW_PH - 1, border[k]); }
-    for (int y = 0; y < QW_PH; y++) { px(img, 0, y, border[k]); px(img, QW_PW - 1, y, border[k]); }
+    line(img, cx, cy - 2 * (node_y(1) - node_y(0)), cx, cy + 2 * (node_y(1) - node_y(0)), 5, border[k]);
+    line(img, cx - 2 * (node_x(1) - node_x(0)), cy, cx + 2 * (node_x(1) - node_x(0)), cy, 5, border[k]);
+    line(img, 1, 1, W - 1, 1, 3, border[k]);
+    line(img, 1, H - 1, W - 1, H - 1, 3, border[k]);
+    line(img, 1, 1, 1, H - 1, 3, border[k]);
+    line(img, W - 1, 1, W - 1, H - 1, 3, border[k]);
     // between grid rows 1 and 2 (y 37..74), clear of the dots
     char label[] = "PANEL 1";
     label[6] = (char)('1' + k);
     text(img, 81, 45, 3, label, border[k]);
     for (int j = 0; j < GH; j++)
-        for (int i = 0; i < GW; i++) {
-            int x = (int)(i * (QW_PW - 1) / (double)(GW - 1) + 0.5);
-            int y = (int)(j * (QW_PH - 1) / (double)(GH - 1) + 0.5);
+        for (int i = 0; i < GW; i++)
             for (int dy = -2; dy <= 2; dy++)
-                for (int dx = -2; dx <= 2; dx++) px(img, x + dx, y + dy, white);
-        }
+                for (int dx = -2; dx <= 2; dx++) px(img, node_x(i) + dx, node_y(j) + dy, white);
 }
 
 int gridsrc_create(GLuint tex[QW_NPANEL]) {

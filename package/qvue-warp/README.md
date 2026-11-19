@@ -60,6 +60,20 @@ middle bow, the centre bulge. Selecting `panel` moves all nine handles of the
 panel (a translation), `all` every handle of all three panels. The trim is
 applied on the next frame; `save` writes `trim.json`.
 
+## Test pattern (`tune source grid`)
+
+A 1500x298 picture per panel (`gridsrc.c`), shown instead of the apps while
+tuning: the regular 21x9 grid the calibration refers to as light grey lines
+(3 px), white dots on the nodes, a border and a centre cross in the panel
+colour (green, red, blue), orange corner-to-corner diagonals and an orange
+circle round the panel centre, and a "PANEL n" label. Warped correctly, the
+reflection shows straight lines, a round circle and straight diagonals; the
+dots land on the calibration points. While it is shown, the tuning overlay
+draws only its handle markers: its yellow lines would lie exactly on the
+pattern's grid lines and hide them. Only the dots are white (every other
+colour has a channel at or below 150), so the dot test works on its
+read-back.
+
 ## Mirror
 
 For a reflection that needs a mirrored picture, `mirror_x` (left-right) and
@@ -73,7 +87,7 @@ keys `panelN.src` / `flip_x` / `flip_y` apply to the mirrored canvas as they
 always did. The calibration, the trim and the tuning overlay stay with the
 physical panel: only the picture is mirrored, and an arrow press still moves
 the picture that way on the panel (`nudge -1 0` moves it left). The built-in
-test grid (`tune source grid`) is mirrored with the picture; its "PANEL n"
+test pattern (`tune source grid`) is mirrored with the picture; its "PANEL n"
 labels then read mirrored and sit on the mirrored panel, which shows the
 state. `mirror x|y on|off|toggle` and `mirror off` change it live (a geometry
 rebuild, no restart) and save it in the writable `warp.conf` like `enabled`.
@@ -93,8 +107,8 @@ reply line `OK ...` or `ERROR ...`. `qvue-warpctl` sends one request.
 | `on` / `off` / `toggle` | the warp setting, saved in `warp.conf` |
 | `mirror x\|y on\|off\|toggle`, `mirror off` | mirror the picture left-right (x) / top-bottom (y), saved in `warp.conf`; `mirror` alone shows it |
 | `suspend` / `resume` | give the display to a DRM-master app and take it back |
-| `tune on` / `tune off` | tuning overlay (grid of the selected panel, handle markers) |
-| `tune source grid` / `tune source fb0` | built-in straight test grid instead of the apps (reset by `tune off`) |
+| `tune on` / `tune off` | tuning overlay on the selected panel: its warp grid as yellow lines over the apps' picture and the 3x3 handle markers (cyan, the selected one magenta) |
+| `tune source grid` / `tune source fb0` | built-in test pattern instead of the apps (reset by `tune off`); while it is shown the overlay draws only the handle markers, the warped pattern itself is the grid |
 | `select panel 1\|2\|3\|next\|prev` | the panel the arrows move |
 | `select handle tl\|t\|tr\|l\|c\|r\|bl\|b\|br\|panel\|all`, `select next\|prev` | what the arrows move |
 | `nudge DX DY` | move the selection by DX, DY steps (integers -100..100) |

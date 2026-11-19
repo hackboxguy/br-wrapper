@@ -283,7 +283,11 @@ static int build_geometry(void) {
             int nl, nt;
             int sel = (D.sel == SEL_PANEL || D.sel == SEL_ALL) ? QW_NHANDLE : D.sel;
             if (qw_overlay_build(&tc, D.cfg.subdiv, sel, &v, &nl, &nt) == 0) {
-                qw_renderer_set_overlay(&D.ren, k, v, nl, nt);
+                // with the test grid as the picture, the warped grid is the
+                // grid: the overlay's lines would lie exactly on it and hide
+                // it, so only the handle markers are drawn (they follow the lines)
+                if (D.source_grid) qw_renderer_set_overlay(&D.ren, k, v + 5 * (size_t)nl, 0, nt);
+                else qw_renderer_set_overlay(&D.ren, k, v, nl, nt);
                 free(v);
             }
         } else {
