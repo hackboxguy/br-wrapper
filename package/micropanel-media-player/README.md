@@ -53,6 +53,16 @@ playlist item may force it either way:
 { "items": [ "intro.mp4", { "file": "odd.mp4", "layout": "stacked" }, { "file": "x.mp4", "layout": "flat" } ] }
 ```
 
+**Mirror and per-panel keys**: `mirror_x` / `mirror_y` and `panelN.src` /
+`flip_x` / `flip_y` from `warp.conf` apply exactly as in `qvue-warpd` (see its
+README): the canvas holding the placed picture is mirrored, then each panel
+shows its rectangle of it. A fitted clip at x 1853..2647 stays centred and is
+shown right to left; an off-centre `--warp-place` lands at its mirror position.
+For stacked content `mirror_x` reverses the band order and flips each band.
+A change saved by the daemon while the player runs (`qvue-warpctl mirror ...`,
+the Stream Deck's Mirror keys) is picked up within a second, at the next frame
+(a still image at the next item). Unwarped playback is never mirrored.
+
 **Pacing**: the warp is pipelined. A frame is uploaded when it is made and
 drawn into the next buffer at its slot; the buffer drawn at the previous slot
 is committed then. The GPU (~11 ms for a full 3-panel frame) gets a whole frame

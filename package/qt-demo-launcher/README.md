@@ -157,14 +157,17 @@ echo "get-running-app" | nc -q 0 192.168.1.100 8081
 # Returns: none (if no app is running)
 ```
 
-#### `warp on|off|toggle|status`
+#### `warp on|off|toggle|status`, `warp mirror [x|y on|off|toggle]`, `warp mirror off`
 Passed to the 3x QVue realtime warp daemon (`qvue-warpd`, br-wrapper package `qvue-warp`)
 over its socket `/run/qvue-warp/ctl.sock`; the daemon's reply line is returned. Without the
-daemon (every display type but 3x QVue): `ERROR warp daemon not running`.
+daemon (every display type but 3x QVue): `ERROR warp daemon not running`. `mirror` mirrors the
+warped picture left-right (`x`) or top-bottom (`y`); the daemon saves it like the on/off setting.
 
 ```bash
 launcher-client --command=warp --command-arg=toggle
 # Returns: OK state=off enabled=0
+launcher-client --command=warp --command-arg="mirror x toggle"
+# Returns: OK mirror_x=1 mirror_y=0
 ```
 
 #### `get-screen`, `screen <n>`, `next-screen`, `prev-screen`

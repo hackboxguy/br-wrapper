@@ -57,6 +57,13 @@ int qw_mesh_build_affine(const struct qw_calib *calib, const struct qw_src_affin
     return 0;
 }
 
+void qw_panel_map_mirror(const struct qw_panel_map *in, int mirror_x, int mirror_y, struct qw_panel_map *out) {
+    // pixel centre x -> FW-1-x: [x, x+w) becomes [FW-x-w, FW-x), read the other way round
+    *out = *in;
+    if (mirror_x) { out->src_x = QW_FW - in->src_x - in->src_w; out->flip_x = !in->flip_x; }
+    if (mirror_y) { out->src_y = QW_PH - in->src_y - in->src_h; out->flip_y = !in->flip_y; }
+}
+
 void qw_mesh_free(struct qw_mesh *m) {
     free(m->v);
     m->v = NULL;

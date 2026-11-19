@@ -1338,10 +1338,17 @@ private:
         } else if (cmd == "warp") {
             // pass-through to the 3x QVue warp daemon
             const QString sub = parts.size() == 2 ? parts[1].toLower() : QString();
-            if (sub != "on" && sub != "off" && sub != "toggle" && sub != "status") {
-                m_networkInterface->sendResponse("ERROR: usage: warp on|off|toggle|status");
+            // warp mirror x|y on|off|toggle, warp mirror off, warp mirror (state)
+            const QString axis = parts.size() == 4 ? parts[2].toLower() : QString();
+            const QString val = parts.size() == 4 ? parts[3].toLower() : QString();
+            const bool mirror = parts.size() >= 2 && parts[1].toLower() == "mirror" &&
+                ((parts.size() == 2) || (parts.size() == 3 && parts[2].toLower() == "off") ||
+                 ((axis == "x" || axis == "y") && (val == "on" || val == "off" || val == "toggle")));
+            if (!mirror && sub != "on" && sub != "off" && sub != "toggle" && sub != "status") {
+                m_networkInterface->sendResponse(
+                    "ERROR: usage: warp on|off|toggle|status | warp mirror [x|y on|off|toggle] | warp mirror off");
             } else {
-                const QString r = warpRequest(sub, 5000);
+                const QString r = warpRequest(mirror ? parts.mid(1).join(' ').toLower() : sub, 5000);
                 m_networkInterface->sendResponse(r.isEmpty() ? QStringLiteral("ERROR warp daemon not running") : r);
             }
         }

@@ -77,6 +77,8 @@ int config_load(struct warp_config *c, const char *path, char *err, size_t errle
         else if (k < 0 && !strcmp(key, "rt_priority")) bad = parse_int(val, 0, 99, &n.rt_priority);
         else if (k < 0 && !strcmp(key, "pipeline")) bad = parse_bool(val, &n.pipeline);
         else if (k < 0 && !strcmp(key, "copy_source")) bad = parse_bool(val, &n.copy_source);
+        else if (k < 0 && !strcmp(key, "mirror_x")) bad = parse_bool(val, &n.mirror_x);
+        else if (k < 0 && !strcmp(key, "mirror_y")) bad = parse_bool(val, &n.mirror_y);
         else if (k < 0 && !strcmp(key, "stats_interval")) bad = parse_int(val, 0, 86400, &n.stats_interval);
         else if (k >= 0 && !strcmp(sub, "flip_x")) bad = parse_bool(val, &n.map[k].flip_x);
         else if (k >= 0 && !strcmp(sub, "flip_y")) bad = parse_bool(val, &n.map[k].flip_y);
@@ -108,13 +110,18 @@ int config_load(struct warp_config *c, const char *path, char *err, size_t errle
 }
 
 void config_log(const struct warp_config *c) {
-    QW_INFO("config: enabled=%d subdiv=%d rt_priority=%d stats_interval=%d pipeline=%d copy_source=%d",
-            c->enabled, c->subdiv, c->rt_priority, c->stats_interval, c->pipeline, c->copy_source);
+    QW_INFO("config: enabled=%d mirror_x=%d mirror_y=%d subdiv=%d rt_priority=%d stats_interval=%d pipeline=%d "
+            "copy_source=%d", c->enabled, c->mirror_x, c->mirror_y, c->subdiv, c->rt_priority, c->stats_interval,
+            c->pipeline, c->copy_source);
     for (int k = 0; k < QW_NPANEL; k++) {
         const struct qw_panel_map *m = &c->map[k];
         QW_INFO("config: panel%d calib=%s reverse=%d flip_x=%d flip_y=%d src=%d %d %d %d", k + 1, c->calib[k],
                 c->reverse[k], m->flip_x, m->flip_y, m->src_x, m->src_y, m->src_w, m->src_h);
     }
+}
+
+void qw_config_maps(const struct warp_config *c, struct qw_panel_map out[QW_NPANEL]) {
+    for (int k = 0; k < QW_NPANEL; k++) qw_panel_map_mirror(&c->map[k], c->mirror_x, c->mirror_y, &out[k]);
 }
 
 static int usable_dir(const char *dir) {

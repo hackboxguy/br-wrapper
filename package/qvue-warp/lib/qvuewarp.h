@@ -58,6 +58,13 @@ struct qw_panel_map {
     int flip_x, flip_y;
     int src_x, src_y, src_w, src_h;
 };
+// The canvas mirror (warp.conf mirror_x / mirror_y): the map a panel gets when
+// the whole 4500x298 source canvas is mirrored before the per-panel keys
+// apply. The source rectangle moves to its mirror position on the canvas and
+// the panel's flip toggles: with the default maps, mirror_x gives panel 1 the
+// columns of panel 3 right to left (a true mirror image of the whole canvas).
+// The calibration and the trim stay with the physical panel.
+void qw_panel_map_mirror(const struct qw_panel_map *in, int mirror_x, int mirror_y, struct qw_panel_map *out);
 // Vertex: ndc_x, ndc_y (destination pixel centre inside the panel viewport),
 // sx, sy (source pixel centre, absolute source pixel coordinates).
 struct qw_mesh {

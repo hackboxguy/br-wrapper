@@ -3,6 +3,9 @@
 // grid lines, white 5x5 dots on the nodes and a border in the panel colour
 // (green, red, blue, as in the reference test pattern). Warped, the dots must
 // land on the calibration points, so the tuning does not depend on the app.
+// A label "PANEL n" in the panel colour sits in the second cell from the top
+// left; it is part of the picture, so with mirror_x / mirror_y it shows up
+// mirrored (and on the other panel), which makes the mirror state visible.
 #include <stdlib.h>
 #include <string.h>
 
@@ -15,6 +18,30 @@ static void px(uint8_t *img, int x, int y, const uint8_t c[3]) {
     if (x < 0 || y < 0 || x >= QW_PW || y >= QW_PH) return;
     uint8_t *p = img + 4 * ((size_t)y * QW_PW + x);
     p[0] = c[0]; p[1] = c[1]; p[2] = c[2]; p[3] = 255;
+}
+
+// 5x7 glyphs, one byte per row, bit 4 = left column
+static const struct { char c; uint8_t row[7]; } font[] = {
+    { 'P', { 0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10 } },
+    { 'A', { 0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11 } },
+    { 'N', { 0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11 } },
+    { 'E', { 0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f } },
+    { 'L', { 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f } },
+    { '1', { 0x04, 0x0c, 0x04, 0x04, 0x04, 0x04, 0x0e } },
+    { '2', { 0x0e, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1f } },
+    { '3', { 0x1f, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0e } },
+};
+
+static void text(uint8_t *img, int x, int y, int scale, const char *t, const uint8_t c[3]) {
+    for (; *t; t++, x += 6 * scale)
+        for (size_t g = 0; g < sizeof font / sizeof font[0]; g++) {
+            if (font[g].c != *t) continue;
+            for (int r = 0; r < 7; r++)
+                for (int b = 0; b < 5; b++)
+                    if (font[g].row[r] & (0x10 >> b))
+                        for (int sy = 0; sy < scale; sy++)
+                            for (int sx = 0; sx < scale; sx++) px(img, x + b * scale + sx, y + r * scale + sy, c);
+        }
 }
 
 void gridsrc_image(int k, uint8_t *img) {
@@ -32,6 +59,10 @@ void gridsrc_image(int k, uint8_t *img) {
     }
     for (int x = 0; x < QW_PW; x++) { px(img, x, 0, border[k]); px(img, x, QW_PH - 1, border[k]); }
     for (int y = 0; y < QW_PH; y++) { px(img, 0, y, border[k]); px(img, QW_PW - 1, y, border[k]); }
+    // between grid rows 1 and 2 (y 37..74), clear of the dots
+    char label[] = "PANEL 1";
+    label[6] = (char)('1' + k);
+    text(img, 81, 45, 3, label, border[k]);
     for (int j = 0; j < GH; j++)
         for (int i = 0; i < GW; i++) {
             int x = (int)(i * (QW_PW - 1) / (double)(GW - 1) + 0.5);

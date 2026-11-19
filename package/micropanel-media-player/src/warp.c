@@ -57,6 +57,7 @@ void warp_stop(struct player *p) { (void)p; }
 
 #include <pthread.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 
 #include "qvuewarp.h"
@@ -108,8 +109,13 @@ struct warp {
 	guint64 serial;            /* the picture the textures hold */
 	enum wpath path;
 	int fw, fh;                /* frame size of that picture */
+	/* the writable warp.conf, looked at once a second for mirror changes */
+	char conf[PATH_MAX];
+	struct timespec conf_mtime;
+	gint64 conf_checked;
+	int cfg_gen;               /* bumped when the mirror or the panel maps change */
 	/* geometry key: rebuild the meshes when it changes */
-	int g_w, g_h, g_layout, g_px, g_py, g_pw, g_ph;
+	int g_w, g_h, g_layout, g_px, g_py, g_pw, g_ph, g_cfg_gen;
 	enum wpath g_path;
 	float x0[QW_NPANEL], x1[QW_NPANEL];   /* frame columns each panel samples */
 	long frames;
@@ -319,6 +325,13 @@ static int warp_start(struct warp *w)
 	snprintf(conf, sizeof(conf), "%s/warp.conf", dir);
 	snprintf(trim, sizeof(trim), "%s/trim.json", dir);
 	qw_setup_config(&w->cfg, QW_DATADIR, have_dir ? conf : NULL);
+	if (have_dir) {
+		struct stat st;
+		snprintf(w->conf, sizeof(w->conf), "%s", conf);
+		if (!stat(conf, &st))
+			w->conf_mtime = st.st_mtim;
+		w->conf_checked = g_get_monotonic_time();
+	}
 	if (qw_setup_calib(&w->cfg, w->calib, err, sizeof(err)))
 		goto fail;
 	int tr = have_dir ? qw_trim_load(trim, &w->trim, err, sizeof(err)) : 1;
@@ -343,8 +356,9 @@ static int warp_start(struct warp *w)
 		snprintf(err, sizeof(err), "no EGLImage entry points");
 		goto fail;
 	}
-	log_w("started: overlays %u %u %u, calibration %s.., trim %s, subdiv %d", w->out.ov[0], w->out.ov[1],
-	      w->out.ov[2], w->cfg.calib[0], tr == 0 ? trim : "none", w->cfg.subdiv);
+	log_w("started: overlays %u %u %u, calibration %s.., trim %s, subdiv %d, mirror_x %d, mirror_y %d",
+	      w->out.ov[0], w->out.ov[1], w->out.ov[2], w->cfg.calib[0], tr == 0 ? trim : "none", w->cfg.subdiv,
+	      w->cfg.mirror_x, w->cfg.mirror_y);
 	w->started = TRUE;
 	w->timing = g_getenv("QW_WARP_TIMING") != NULL;
 	w->finish = g_getenv("QW_WARP_FINISH") != NULL;
@@ -575,32 +589,68 @@ gboolean warp_wants_sysmem(const struct media_info *mi, int layout)
 	return (long)pw * ph > PANEL_AREA;
 }
 
-/* rebuild the meshes when the frame size, layout, placement or path changed */
+/* a mirror change saved by qvue-warpd (qvue-warpctl mirror ..., the Stream
+ * Deck keys) while the player runs: picked up within a second, at the next
+ * frame. The rest of warp.conf (calibration files, subdiv) stays as started. */
+static void check_conf(struct warp *w)
+{
+	gint64 now = g_get_monotonic_time();
+	if (!w->conf[0] || now - w->conf_checked < G_USEC_PER_SEC)
+		return;
+	w->conf_checked = now;
+	struct stat st;
+	if (stat(w->conf, &st) || (st.st_mtim.tv_sec == w->conf_mtime.tv_sec &&
+				    st.st_mtim.tv_nsec == w->conf_mtime.tv_nsec))
+		return;
+	w->conf_mtime = st.st_mtim;
+	struct warp_config c;
+	qw_setup_config(&c, QW_DATADIR, w->conf);
+	if (c.mirror_x == w->cfg.mirror_x && c.mirror_y == w->cfg.mirror_y &&
+	    !memcmp(c.map, w->cfg.map, sizeof(c.map)))
+		return;
+	w->cfg.mirror_x = c.mirror_x;
+	w->cfg.mirror_y = c.mirror_y;
+	memcpy(w->cfg.map, c.map, sizeof(c.map));
+	w->cfg_gen++;
+	log_w("mirror_x %d, mirror_y %d (warp.conf changed)", c.mirror_x, c.mirror_y);
+}
+
+/* rebuild the meshes when the frame size, layout, placement, path or the
+ * mirror changed. Each panel shows the canvas rectangle of its map
+ * (qw_config_maps: mirror_x / mirror_y applied, then panelN.src / flip_x /
+ * flip_y), exactly as qvue-warpd does with fb0; here the canvas holds the
+ * placed picture (flat) or the three bands side by side (stacked). */
 static int geometry(struct warp *w, const struct frame *f, enum wpath path, int fw, int fh, gboolean stacked)
 {
 	int px = 0, py = 0, pw = 0, ph = 0;
 	if (!stacked)
 		place(f, &px, &py, &pw, &ph);
 	if (w->g_w == fw && w->g_h == fh && w->g_layout == stacked && w->g_px == px && w->g_py == py &&
-	    w->g_pw == pw && w->g_ph == ph && w->g_path == path)
+	    w->g_pw == pw && w->g_ph == ph && w->g_path == path && w->g_cfg_gen == w->cfg_gen)
 		return 0;
 	char err[256];
+	struct qw_panel_map maps[QW_NPANEL];
+	qw_config_maps(&w->cfg, maps);
 	for (int k = 0; k < QW_NPANEL; k++) {
-		struct qw_src_affine a = { .flip_x = w->cfg.map[k].flip_x, .flip_y = w->cfg.map[k].flip_y };
+		const struct qw_panel_map *m = &maps[k];
+		struct qw_src_affine a = { .flip_x = m->flip_x, .flip_y = m->flip_y };
 		if (stacked) {
-			/* panel k = band k of the frame */
+			/* canvas panel j = band j of the frame (rows j*fh/3..); a
+			 * rectangle is taken from the band of the canvas panel its
+			 * centre is in */
+			int j = CLAMP((m->src_x + m->src_w / 2) / QW_PW, 0, QW_NPANEL - 1);
 			double bw = fw, bh = fh / 3.0;
-			a.x0 = (float)(0.5 * bw / QW_PW - 0.5);
-			a.dx = (float)((QW_PW - 1) * bw / QW_PW);
-			a.y0 = (float)(k * bh + 0.5 * bh / QW_PH - 0.5);
-			a.dy = (float)((QW_PH - 1) * bh / QW_PH);
+			a.x0 = (float)((m->src_x - j * QW_PW + 0.5) * bw / QW_PW - 0.5);
+			a.dx = (float)((m->src_w - 1) * bw / QW_PW);
+			a.y0 = (float)(j * bh + (m->src_y + 0.5) * bh / QW_PH - 0.5);
+			a.dy = (float)((m->src_h - 1) * bh / QW_PH);
 		} else {
-			/* the panel's canvas pixels -> frame pixels of the placed picture */
+			/* the canvas pixels of the map's rectangle -> frame pixels of the placed picture */
 			double sx = (double)fw / pw, sy = (double)fh / ph;
-			a.x0 = (float)((k * QW_PW + 0.5 - px) * sx - 0.5);
-			a.dx = (float)((QW_PW - 1) * sx);
-			a.y0 = (float)((0.5 - py) * sy - 0.5);
-			a.dy = (float)((QW_PH - 1) * sy);
+			a.x0 = (float)((m->src_x + 0.5 - px) * sx - 0.5);
+			a.dx = (float)((m->src_w - 1) * sx);
+			a.y0 = (float)((m->src_y + 0.5 - py) * sy - 0.5);
+			a.dy = (float)((m->src_h - 1) * sy);
 		}
 		w->x0[k] = MIN(a.x0, a.x0 + a.dx);
 		w->x1[k] = MAX(a.x0, a.x0 + a.dx);
@@ -622,12 +672,16 @@ static int geometry(struct warp *w, const struct frame *f, enum wpath path, int 
 		if (r)
 			return -1;
 	}
+	const char *mir = w->cfg.mirror_x && w->cfg.mirror_y ? ", mirrored x+y" : w->cfg.mirror_x ? ", mirrored x" :
+			  w->cfg.mirror_y ? ", mirrored y" : "";
 	if (stacked)
-		log_w("frame %dx%d stacked (panel k = rows k*%d..): %s", fw, fh, fh / 3, wpath_name[path]);
+		log_w("frame %dx%d stacked (panel k = rows k*%d..)%s: %s", fw, fh, fh / 3, mir, wpath_name[path]);
 	else
-		log_w("frame %dx%d placed at %d,%d %dx%d on the canvas: %s", fw, fh, px, py, pw, ph, wpath_name[path]);
+		log_w("frame %dx%d placed at %d,%d %dx%d on the canvas%s: %s", fw, fh, px, py, pw, ph, mir,
+		      wpath_name[path]);
 	w->g_w = fw; w->g_h = fh; w->g_layout = stacked; w->g_px = px; w->g_py = py; w->g_pw = pw; w->g_ph = ph;
 	w->g_path = path;
+	w->g_cfg_gen = w->cfg_gen;
 	return 0;
 }
 
@@ -725,6 +779,7 @@ static int update(struct warp *w, const struct frame *f)
 		return -1;
 	}
 	qw_renderer_set_yuv(&w->ren, enc, full);
+	check_conf(w);
 	if (geometry(w, f, path, fw, fh, stacked) || sources(w, path, oes, fw, fh))
 		return -1;
 	w->path = path;

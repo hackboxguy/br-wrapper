@@ -23,7 +23,8 @@ int main(int argc, char **argv) {
     }
     if (i >= argc) {
         fprintf(stderr, "usage: %s [--socket PATH] [--timeout SEC] COMMAND [ARGS...]\n"
-                        "commands: status | on | off | toggle | suspend | resume | tune on|off |\n"
+                        "commands: status | on | off | toggle | mirror [x|y on|off|toggle] | mirror off |\n"
+                        "  suspend | resume | tune on|off |\n"
                         "  tune source grid|fb0 | select panel N|next|prev | select handle NAME |\n"
                         "  select next|prev | nudge DX DY | step N | save | revert | reset | reload |\n"
                         "  dump /OUT.ppm [/FB0.ppm] | help\n", argv[0]);

@@ -105,7 +105,7 @@ int fb0src_open(struct fb0src *s, struct qw_output *o, char *err, size_t errlen)
     return 0;
 }
 
-int fb0src_enable_copy(struct fb0src *s, const struct qw_panel_map map[QW_NPANEL]) {
+void fb0src_set_columns(struct fb0src *s, const struct qw_panel_map map[QW_NPANEL]) {
     for (int k = 0; k < s->ntex; k++) { s->cx0[k] = s->tex_w[k]; s->cx1[k] = 0; }
     for (int p = 0; p < QW_NPANEL; p++) {
         int t = fb0src_texture_for(s, map[p].src_x, map[p].src_w);
@@ -125,6 +125,13 @@ int fb0src_enable_copy(struct fb0src *s, const struct qw_panel_map map[QW_NPANEL
     if (!getenv("QW_COPY_COLUMNS"))
         for (int k = 0; k < s->ntex; k++)
             if (s->cx1[k] > s->cx0[k]) { s->cx0[k] = 0; s->cx1[k] = s->tex_w[k]; }
+    if (s->copy)
+        for (int k = 0; k < s->ntex; k++)
+            QW_INFO("fb0: texture %d now blits columns %d..%d", k, s->cx0[k], s->cx1[k] - 1);
+}
+
+int fb0src_enable_copy(struct fb0src *s, const struct qw_panel_map map[QW_NPANEL]) {
+    fb0src_set_columns(s, map);
     glGenTextures(s->ntex, s->ctex);
     glGenFramebuffers(s->ntex, s->rfbo);
     glGenFramebuffers(s->ntex, s->dfbo);

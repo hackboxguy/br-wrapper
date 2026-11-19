@@ -196,11 +196,13 @@ static void write_state(void) {
     }
     esc[j] = 0;
     int n = snprintf(buf, sizeof buf,
-                     "{\"state\": \"%s\", \"enabled\": %s, \"warping\": %s, \"resuming\": %s, \"tune\": %s, "
+                     "{\"state\": \"%s\", \"enabled\": %s, \"warping\": %s, \"resuming\": %s, \"mirror_x\": %s, "
+                     "\"mirror_y\": %s, \"tune\": %s, "
                      "\"source\": \"%s\", \"panel\": %d, \"handle\": \"%s\", \"step\": %d, \"trim_unsaved\": %s, "
                      "\"fps\": %.2f, \"frames\": %ld, \"late\": %ld, \"error\": \"%s\"}\n",
                      state_names[D.state], D.enabled ? "true" : "false", D.state == ST_ON ? "true" : "false",
-                     D.resume_until > 0 ? "true" : "false", D.tune ? "true" : "false",
+                     D.resume_until > 0 ? "true" : "false", D.cfg.mirror_x ? "true" : "false",
+                     D.cfg.mirror_y ? "true" : "false", D.tune ? "true" : "false",
                      D.source_grid ? "grid" : "fb0", D.sel_panel + 1, sel_name(), D.step,
                      trim_unsaved() ? "true" : "false", D.state == ST_ON ? D.fps : 0.0, D.total.frames,
                      D.total.late, esc);
@@ -237,8 +239,10 @@ static void set_rt(int prio) {
 // meshes (calibration + trim) and the tuning overlay
 static int build_geometry(void) {
     char err[256];
+    struct qw_panel_map maps[QW_NPANEL];
+    qw_config_maps(&D.cfg, maps); // mirror_x / mirror_y applied
     for (int k = 0; k < QW_NPANEL; k++) {
-        const struct qw_panel_map *m = &D.cfg.map[k];
+        const struct qw_panel_map *m = &maps[k];
         struct qw_calib tc = { 0 };
         if (!D.o.identity && qw_calib_trimmed(&D.calib[k], (const float(*)[2])D.trim.h[k], &tc)) {
             set_error("out of memory");
@@ -255,7 +259,11 @@ static int build_geometry(void) {
             rc = 0;
             D.ren.nidx[k] = 0;
         } else if (D.source_grid) {
-            rc = qw_renderer_set_panel(&D.ren, k, &mesh, D.grid[k], k * QW_PW, QW_PW, QW_PH);
+            // the test grid stands in for fb0: each panel samples the grid
+            // texture of the canvas panel its (mirrored) source rectangle is in
+            int g = (m->src_x + m->src_w / 2) / QW_PW;
+            if (g >= QW_NPANEL) g = QW_NPANEL - 1;
+            rc = qw_renderer_set_panel(&D.ren, k, &mesh, D.grid[g], g * QW_PW, QW_PW, QW_PH);
         } else {
             int t = fb0src_texture_for(&D.src, m->src_x, m->src_w);
             if (t < 0) {
@@ -313,7 +321,9 @@ static int warp_start(void) {
     D.out_open = 1;
     if (fb0src_open(&D.src, &D.out, err, sizeof err)) { set_error("warp start: %s", err); goto fail; }
     D.src_open = 1;
-    if (D.cfg.copy_source && fb0src_enable_copy(&D.src, D.cfg.map)) { set_error("warp start: fb0 copy textures failed"); goto fail; }
+    struct qw_panel_map maps[QW_NPANEL];
+    qw_config_maps(&D.cfg, maps);
+    if (D.cfg.copy_source && fb0src_enable_copy(&D.src, maps)) { set_error("warp start: fb0 copy textures failed"); goto fail; }
     if (qw_renderer_init(&D.ren, err, sizeof err)) { set_error("warp start: %s", err); goto fail; }
     D.ren_open = 1;
     if (gridsrc_create(D.grid)) { set_error("warp start: test grid textures failed"); goto fail; }
@@ -406,7 +416,9 @@ static void check_primary_fb(void) {
         return;
     }
     D.src_open = 1;
-    if (D.cfg.copy_source && fb0src_enable_copy(&D.src, D.cfg.map)) {
+    struct qw_panel_map maps[QW_NPANEL];
+    qw_config_maps(&D.cfg, maps);
+    if (D.cfg.copy_source && fb0src_enable_copy(&D.src, maps)) {
         set_error("fb0 re-import: copy textures failed");
         warp_failed();
         return;
@@ -521,9 +533,10 @@ static void reply(int fd, const char *fmt, ...) {
 
 static void status_line(char *buf, size_t len) {
     snprintf(buf, len,
-             "state=%s enabled=%d resuming=%d tune=%d source=%s panel=%d handle=%s step=%d unsaved=%d "
-             "fps=%.2f frames=%ld late=%ld pipeline=%d copy=%d retries=%d error=\"%s\"",
-             state_names[D.state], D.enabled, D.resume_until > 0, D.tune, D.source_grid ? "grid" : "fb0",
+             "state=%s enabled=%d resuming=%d mirror_x=%d mirror_y=%d tune=%d source=%s panel=%d handle=%s "
+             "step=%d unsaved=%d fps=%.2f frames=%ld late=%ld pipeline=%d copy=%d retries=%d error=\"%s\"",
+             state_names[D.state], D.enabled, D.resume_until > 0, D.cfg.mirror_x, D.cfg.mirror_y, D.tune,
+             D.source_grid ? "grid" : "fb0",
              D.sel_panel + 1, sel_name(), D.step, trim_unsaved(), D.state == ST_ON ? D.fps : 0.0,
              D.total.frames, D.total.late, D.cfg.pipeline, D.cfg.copy_source, D.retry_n > NRETRY ? NRETRY : D.retry_n,
              D.error);
@@ -539,6 +552,29 @@ static void set_enabled(int fd, int en) {
     if (apply_state()) reply(fd, "ERROR warp could not start: %s", D.error);
     else if (!saved) reply(fd, "ERROR state=%s, but the setting was not saved: %s", state_names[D.state], err);
     else reply(fd, "OK state=%s enabled=%d", state_names[D.state], D.enabled);
+}
+
+// mirror_x / mirror_y: kept in the writable warp.conf like "enabled", applied
+// at once (a geometry rebuild; while off or suspended it waits for the start)
+static void set_mirror(int fd, int mx, int my) {
+    char err[256];
+    if (mx != D.cfg.mirror_x || my != D.cfg.mirror_y)
+        QW_INFO("mirror_x=%d mirror_y=%d (was %d %d)", mx, my, D.cfg.mirror_x, D.cfg.mirror_y);
+    D.cfg.mirror_x = mx;
+    D.cfg.mirror_y = my;
+    if (D.src_open && D.src.copy) {
+        struct qw_panel_map maps[QW_NPANEL];
+        qw_config_maps(&D.cfg, maps);
+        fb0src_set_columns(&D.src, maps);
+    }
+    D.geom_dirty = 1;
+    const char *k[] = { "mirror_x", "mirror_y" }, *v[] = { mx ? "true" : "false", my ? "true" : "false" };
+    if (conf_set_keys(D.conf_path, k, v, 2, err, sizeof err)) {
+        QW_ERR("saving the mirror setting: %s", err);
+        reply(fd, "ERROR mirror_x=%d mirror_y=%d, but the setting was not saved: %s", mx, my, err);
+    } else {
+        reply(fd, "OK mirror_x=%d mirror_y=%d", mx, my);
+    }
 }
 
 static void nudge(float dx, float dy) {
@@ -588,6 +624,21 @@ static void command(int fd, char *line) {
     } else if (!strcmp(cmd, "on") || !strcmp(cmd, "off") || !strcmp(cmd, "toggle")) {
         if (argc != 1) USAGE("on | off | toggle");
         set_enabled(fd, !strcmp(cmd, "on") ? 1 : !strcmp(cmd, "off") ? 0 : !D.enabled);
+    } else if (!strcmp(cmd, "mirror")) {
+        int mx = D.cfg.mirror_x, my = D.cfg.mirror_y;
+        if (argc == 1) {
+            reply(fd, "OK mirror_x=%d mirror_y=%d", mx, my);
+            return;
+        } else if (argc == 2 && !strcmp(argv[1], "off")) {
+            mx = my = 0;
+        } else if (argc == 3 && (!strcmp(argv[1], "x") || !strcmp(argv[1], "y")) &&
+                   (!strcmp(argv[2], "on") || !strcmp(argv[2], "off") || !strcmp(argv[2], "toggle"))) {
+            int *m = argv[1][0] == 'x' ? &mx : &my;
+            *m = !strcmp(argv[2], "on") ? 1 : !strcmp(argv[2], "off") ? 0 : !*m;
+        } else {
+            USAGE("mirror | mirror x|y on|off|toggle | mirror off");
+        }
+        set_mirror(fd, mx, my);
     } else if (!strcmp(cmd, "suspend")) {
         if (argc != 1) USAGE("suspend");
         D.resume_until = 0;
@@ -701,8 +752,8 @@ static void command(int fd, char *line) {
         D.dump_client = fd; // replied after the next frame
         return;
     } else if (!strcmp(cmd, "help")) {
-        reply(fd, "OK commands: status on off toggle suspend resume tune select nudge step save revert reset "
-                  "reload dump help");
+        reply(fd, "OK commands: status on off toggle mirror suspend resume tune select nudge step save revert "
+                  "reset reload dump help");
         return;
     } else {
         reply(fd, "ERROR unknown command '%s' (try help)", cmd);

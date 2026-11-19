@@ -60,6 +60,28 @@ middle bow, the centre bulge. Selecting `panel` moves all nine handles of the
 panel (a translation), `all` every handle of all three panels. The trim is
 applied on the next frame; `save` writes `trim.json`.
 
+## Mirror
+
+For a reflection that needs a mirrored picture, `mirror_x` (left-right) and
+`mirror_y` (top-bottom) mirror the whole 4500x298 source canvas before it is
+warped. `mirror_x` reverses the panel order and flips each panel, so a
+full-width picture becomes its true mirror image (panel 1 shows source panel
+3, right to left). Implementation: each panel's source rectangle moves to its
+mirrored position on the canvas and the panel's flip toggles
+(`qw_panel_map_mirror`); the canvas is mirrored first, then the per-panel
+keys `panelN.src` / `flip_x` / `flip_y` apply to the mirrored canvas as they
+always did. The calibration, the trim and the tuning overlay stay with the
+physical panel: only the picture is mirrored, and an arrow press still moves
+the picture that way on the panel (`nudge -1 0` moves it left). The built-in
+test grid (`tune source grid`) is mirrored with the picture; its "PANEL n"
+labels then read mirrored and sit on the mirrored panel, which shows the
+state. `mirror x|y on|off|toggle` and `mirror off` change it live (a geometry
+rebuild, no restart) and save it in the writable `warp.conf` like `enabled`.
+dual-video-player mirrors its warped video the same way (it reads the same
+files, and picks up a change within a second while it plays). Only the warp
+mirrors: with the warp off or suspended for an app that takes the display
+itself (Kodi, eglfs apps, disp-tester) the picture is not mirrored.
+
 ## Control socket
 
 `/run/qvue-warp/ctl.sock` (0660 pi:video), one text line per request, one
@@ -67,8 +89,9 @@ reply line `OK ...` or `ERROR ...`. `qvue-warpctl` sends one request.
 
 | Command | Effect |
 |---|---|
-| `status` | `OK state=on enabled=1 resuming=0 tune=0 source=fb0 panel=1 handle=c step=1 unsaved=0 fps=59.98 frames=N late=N pipeline=0 copy=1 error="..."` |
+| `status` | `OK state=on enabled=1 resuming=0 mirror_x=0 mirror_y=0 tune=0 source=fb0 panel=1 handle=c step=1 unsaved=0 fps=59.98 frames=N late=N pipeline=0 copy=1 error="..."` |
 | `on` / `off` / `toggle` | the warp setting, saved in `warp.conf` |
+| `mirror x\|y on\|off\|toggle`, `mirror off` | mirror the picture left-right (x) / top-bottom (y), saved in `warp.conf`; `mirror` alone shows it |
 | `suspend` / `resume` | give the display to a DRM-master app and take it back |
 | `tune on` / `tune off` | tuning overlay (grid of the selected panel, handle markers) |
 | `tune source grid` / `tune source fb0` | built-in straight test grid instead of the apps (reset by `tune off`) |
@@ -82,7 +105,7 @@ reply line `OK ...` or `ERROR ...`. `qvue-warpctl` sends one request.
 | `help` | the command list |
 
 After every change the daemon rewrites `/run/qvue-warp/state.json`
-(state, enabled, warping, resuming, tune, source, panel, handle, step,
+(state, enabled, warping, resuming, mirror_x, mirror_y, tune, source, panel, handle, step,
 trim_unsaved, fps, frames, late, error); fps and the counters are refreshed
 every 5 s while ON. The Stream Deck keys (streamdeck-ctrl
 `scripts/qvue-warp.sh`) watch it.
@@ -93,7 +116,7 @@ every 5 s while ON. The Stream Deck keys (streamdeck-ctrl
 |---|---|
 | `<datadir>/qvue-warp/warp.conf` | defaults, documented there (read first) |
 | `<datadir>/qvue-warp/3xqvue-panel{1,2,3}-21x9.txt` | factory calibration |
-| `/data/qvue-warp/warp.conf` | the writable layer read on top: `on`/`off`/`toggle` set `enabled` here (atomic write) |
+| `/data/qvue-warp/warp.conf` | the writable layer read on top: `on`/`off`/`toggle` set `enabled`, `mirror` sets `mirror_x`/`mirror_y` here (atomic write, other lines kept) |
 | `/data/qvue-warp/trim.json` | saved trim |
 | `/run/qvue-warp/ctl.sock`, `state.json` | runtime (`RuntimeDirectory=` of the unit) |
 
@@ -102,7 +125,7 @@ it, owned by pi), otherwise `~/.config/qvue-warp` (`/home/pi/.config/qvue-warp`
 under the unit) for single-slot images. `--state-dir`, `--run-dir` and
 `--config` override them.
 
-Config keys: `enabled`, `subdiv`, `rt_priority`, `stats_interval`,
+Config keys: `enabled`, `mirror_x`, `mirror_y`, `subdiv`, `rt_priority`, `stats_interval`,
 `copy_source`, `pipeline`, and per panel `calib`, `reverse`, `flip_x`,
 `flip_y`, `src`. `--on` / `--off` override `enabled` at start without saving
 it. SIGHUP (`systemctl reload`) is the same as `reload`. SIGTERM / SIGINT

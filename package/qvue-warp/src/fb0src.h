@@ -29,6 +29,8 @@ int fb0src_open(struct fb0src *s, struct qw_output *o, char *err, size_t errlen)
 // copy mode: allocate tiled copies of the imported textures (after open);
 // only the columns the panel maps sample (plus a bilinear margin) are blitted
 int fb0src_enable_copy(struct fb0src *s, const struct qw_panel_map map[QW_NPANEL]);
+// copy mode: the columns to blit for these maps (after a mirror change)
+void fb0src_set_columns(struct fb0src *s, const struct qw_panel_map map[QW_NPANEL]);
 // copy mode: blit fb0 into the copies (once per frame, before drawing)
 void fb0src_copy(struct fb0src *s);
 // texture to sample for index k (the copy in copy mode)

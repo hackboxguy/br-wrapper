@@ -15,6 +15,9 @@ OUT.ppm --dump-src SRC.ppm) and compare:
 
     warp_ref.py --src SRC.ppm --compare OUT.ppm [--out REF.png] calib1 calib2 calib3
 
+--mirror-x / --mirror-y / --flip N:x|y|xy give the reference the daemon's
+mirror_x / mirror_y / panelN.flip_* settings.
+
 Prints the mean absolute difference and, from the bright dots in the image,
 the geometric offset between reference and daemon. Exit status 1 if the mean
 difference is >= 2 grey levels or the median dot offset is > 0.5 px.
@@ -168,15 +171,25 @@ def render_panel(img, mesh):
     return out
 
 
-def render(img, calibs, subdiv=8, reverse=False, srcs=None, flip_x=False, flip_y=False, trim=None):
+def render(img, calibs, subdiv=8, reverse=False, srcs=None, flip_x=False, flip_y=False, trim=None,
+           mirror_x=False, mirror_y=False, flips=None):
+    """mirror_x / mirror_y: the canvas mirror of warp.conf, done here by
+    mirroring the source image itself (pixel x -> 4499-x), independently of
+    the daemon's rectangle arithmetic. flips: per panel (flip_x, flip_y), the
+    panelN.flip_* keys, applied to the mirrored canvas."""
     img = img.astype(np.float64)
+    if mirror_x:
+        img = img[:, ::-1]
+    if mirror_y:
+        img = img[::-1]
     out = np.zeros((PH, FW, 3))
     for k in range(NP):
         g = load_calib(calibs[min(k, len(calibs) - 1)], reverse)
         if trim is not None:
             g = apply_trim(g, trim[k])
         src = srcs[k] if srcs else (k * PW, 0, PW, PH)
-        out[:, k * PW:(k + 1) * PW] = render_panel(img, build_mesh(g, src, subdiv, flip_x, flip_y))
+        fx, fy = flips[k] if flips else (flip_x, flip_y)
+        out[:, k * PW:(k + 1) * PW] = render_panel(img, build_mesh(g, src, subdiv, fx, fy))
     return out
 
 
@@ -201,11 +214,20 @@ def main():
     ap.add_argument("--subdiv", type=int, default=8)
     ap.add_argument("--reverse", action="store_true")
     ap.add_argument("--trim", help="trim.json written by qvue-warpd (save)")
+    ap.add_argument("--mirror-x", action="store_true", help="warp.conf mirror_x = true")
+    ap.add_argument("--mirror-y", action="store_true", help="warp.conf mirror_y = true")
+    ap.add_argument("--flip", action="append", default=[], metavar="N:x|y|xy",
+                    help="panelN.flip_x / flip_y = true (repeatable)")
     a = ap.parse_args()
 
+    flips = [[False, False] for _ in range(NP)]
+    for f in a.flip:
+        n, axes = f.split(":")
+        flips[int(n) - 1] = ["x" in axes, "y" in axes]
     src = np.array(Image.open(a.src).convert("RGB"))
     assert src.shape == (PH, FW, 3), src.shape
-    ref = render(src, a.calib, a.subdiv, a.reverse, trim=load_trim(a.trim) if a.trim else None)
+    ref = render(src, a.calib, a.subdiv, a.reverse, trim=load_trim(a.trim) if a.trim else None,
+                 mirror_x=a.mirror_x, mirror_y=a.mirror_y, flips=flips)
     ref8 = np.clip(np.rint(ref), 0, 255).astype(np.uint8)
     if a.out:
         Image.fromarray(ref8).save(a.out)

@@ -14,6 +14,7 @@ struct warp_config {
     int stats_interval;     // seconds between frame statistics log lines, 0 = off
     int pipeline;           // keep one finished frame queued (+1 frame latency, ~2 frames of GPU time)
     int copy_source;        // blit fb0 into tiled textures each frame instead of sampling it raster
+    int mirror_x, mirror_y; // canvas mirror: left-right across all panels / top-bottom
     char calib[QW_NPANEL][PATH_MAX];
     int reverse[QW_NPANEL];
     struct qw_panel_map map[QW_NPANEL];
@@ -23,6 +24,9 @@ void config_defaults(struct warp_config *c, const char *datadir);
 // Missing file: returns 1 and leaves the defaults. Error: -1 with err set.
 int config_load(struct warp_config *c, const char *path, char *err, size_t errlen);
 void config_log(const struct warp_config *c);
+// The panel maps to draw with: the canvas mirror applied, then the per-panel
+// keys (src, flip_x, flip_y) as written, interpreted on the mirrored canvas.
+void qw_config_maps(const struct warp_config *c, struct qw_panel_map out[QW_NPANEL]);
 
 // ---- shared by qvue-warpd and the video player: one loader for one set of files
 // The writable state directory: /data/qvue-warp when /data exists (created if
